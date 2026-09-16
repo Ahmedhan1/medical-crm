@@ -2,6 +2,7 @@ import { getPool, type PoolClient } from '../../db/pool.js';
 import { ForbiddenError } from '../../domain/errors.js';
 import { Permission } from '../governance/permissions.js';
 import { hasPermission, type Principal } from '../governance/rbac.js';
+import { subordinateUserIds } from './hierarchy.js';
 
 type Runner = Pick<PoolClient, 'query'>;
 
@@ -98,5 +99,81 @@ export async function assertHcpInScope(
   );
   if (!rows[0]!.ok) {
     throw new ForbiddenError('This HCP is not targeted in a territory assigned to you');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FIELD-FORCE SCOPE — territory AND hierarchy, combined.
+// ---------------------------------------------------------------------------
+
+/**
+ * Field-force visibility has TWO dimensions, and either one alone is wrong.
+ *
+ *  * TERRITORY answers "whose HCPs are these". It is the rule enforced by
+ *    {@link territoryScopeFor} and it is unchanged: a representative reaches
+ *    only HCPs targeted in a territory currently assigned to them.
+ *  * HIERARCHY answers "whose work is this". A district manager must see the
+ *    calls of the people who report to them, including calls in territories the
+ *    manager was never personally assigned.
+ *
+ * Neither dimension subsumes the other. A manager with no territory of their own
+ * still sees their team's work; a manager with a territory does NOT thereby see
+ * the work of reps outside their reporting line who happen to share it.
+ * Field-force reads therefore combine them as a UNION:
+ *
+ *     visible = own work
+ *             ∪ work of everyone beneath me in the hierarchy
+ *             ∪ work in a territory explicitly assigned to me
+ *
+ * `clinicWide` preserves the existing {@link isClinicWidePrincipal} judgement
+ * untouched: a data steward, medical affairs or a territory manager keeps the
+ * clinic-wide reach they already had. The hierarchy dimension exists for the
+ * principals that judgement deliberately leaves scoped — which is every field
+ * user, including a field district/regional manager who holds no head-office
+ * permission.
+ */
+export interface FieldForceScope {
+  /** Unrestricted within the clinic — the pre-existing clinic-wide judgement. */
+  clinicWide: boolean;
+  /** The principal plus everyone beneath them in the reporting chain. */
+  userIds: string[];
+  /** Territories the principal is explicitly assigned to today. */
+  territoryIds: string[];
+}
+
+export async function fieldForceScopeFor(
+  principal: Principal,
+  runner: Runner = getPool(),
+): Promise<FieldForceScope> {
+  if (isClinicWidePrincipal(principal)) {
+    return { clinicWide: true, userIds: [], territoryIds: [] };
+  }
+  const [subordinates, territoryIds] = await Promise.all([
+    subordinateUserIds(principal.clinicId, principal.userId, runner),
+    activeTerritoryIds(runner, principal.clinicId, principal.userId),
+  ]);
+  const userIds = [...new Set([principal.userId, ...subordinates])];
+  return { clinicWide: false, userIds, territoryIds };
+}
+
+/**
+ * Assert the principal may act on another field user's data.
+ *
+ * Used by writes that name a representative (planning on behalf of someone,
+ * reading their profile). A manager reaches their subtree; everyone else
+ * reaches only themselves.
+ */
+export async function assertFieldUserInScope(
+  principal: Principal,
+  targetUserId: string,
+  runner: Runner = getPool(),
+): Promise<void> {
+  if (targetUserId === principal.userId) return;
+  const scope = await fieldForceScopeFor(principal, runner);
+  if (scope.clinicWide) return;
+  if (!scope.userIds.includes(targetUserId)) {
+    throw new ForbiddenError(
+      'That field user does not report to you, so their field data is outside your scope',
+    );
   }
 }
