@@ -8,9 +8,30 @@ import {
 } from '../../modules/identity/patients.service.js';
 import { issuePatientQr, resolveQr } from '../../modules/qr/qr.service.js';
 import { getPatientTimeline } from '../../modules/clinical/timeline.service.js';
+import {
+  addContact,
+  addIdentifier,
+  findDuplicateCandidates,
+  listContacts,
+  listIdentifiers,
+  mergePatients,
+  removeContact,
+  removeIdentifier,
+  setPatientStatus,
+  updatePatient,
+} from '../../modules/identity/patients.lifecycle.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
+/** `:id` plus a sub-resource id, whatever the route names the second param. */
+const SubResourceParams = z
+  .object({
+    id: z.string().uuid(),
+    identifierId: z.string().uuid().optional(),
+    contactId: z.string().uuid().optional(),
+  })
+  .transform((v) => ({ id: v.id, subId: (v.identifierId ?? v.contactId)! }))
+  .refine((v) => !!v.subId, { message: 'Missing sub-resource id' });
 const SearchQuery = z.object({
   q: z.string().min(2),
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -48,6 +69,77 @@ export async function patientRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) throw new ValidationError('Invalid id');
     const patient = await getPatient(principalOf(req), parsed.data.id);
     return reply.send(patient);
+  });
+
+  // ---- Patient lifecycle (Phase 1) -----------------------------------------
+
+  app.patch('/patients/:id', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    return reply.send(await updatePatient(principalOf(req), parsed.data.id, req.body));
+  });
+
+  app.post('/patients/:id/status', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    return reply.send(await setPatientStatus(principalOf(req), parsed.data.id, req.body));
+  });
+
+  /** Deterministic duplicate candidates, for the merge workflow. */
+  app.get('/patients/:id/duplicates', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    const candidates = await findDuplicateCandidates(principalOf(req), parsed.data.id);
+    return reply.send({ candidates });
+  });
+
+  /** Merge a duplicate INTO this patient; `:id` is the surviving record. */
+  app.post('/patients/:id/merge', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    return reply.send(await mergePatients(principalOf(req), parsed.data.id, req.body));
+  });
+
+  app.post('/patients/:id/identifiers', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    const identifier = await addIdentifier(principalOf(req), parsed.data.id, req.body);
+    return reply.code(201).send(identifier);
+  });
+
+  app.get('/patients/:id/identifiers', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    const identifiers = await listIdentifiers(principalOf(req), parsed.data.id);
+    return reply.send({ identifiers });
+  });
+
+  app.delete('/patients/:id/identifiers/:identifierId', async (req, reply) => {
+    const parsed = SubResourceParams.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid identifiers');
+    await removeIdentifier(principalOf(req), parsed.data.id, parsed.data.subId);
+    return reply.code(204).send();
+  });
+
+  app.post('/patients/:id/contacts', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    const contact = await addContact(principalOf(req), parsed.data.id, req.body);
+    return reply.code(201).send(contact);
+  });
+
+  app.get('/patients/:id/contacts', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    const contacts = await listContacts(principalOf(req), parsed.data.id);
+    return reply.send({ contacts });
+  });
+
+  app.delete('/patients/:id/contacts/:contactId', async (req, reply) => {
+    const parsed = SubResourceParams.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid identifiers');
+    await removeContact(principalOf(req), parsed.data.id, parsed.data.subId);
+    return reply.code(204).send();
   });
 
   // Longitudinal clinical history (§4.3)

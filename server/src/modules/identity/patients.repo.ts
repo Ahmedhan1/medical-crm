@@ -1,4 +1,7 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { toIsoDate } from '../clinical/dates.js';
+
+export type PatientStatus = 'active' | 'inactive' | 'deceased' | 'merged';
 
 export interface Patient {
   id: string;
@@ -9,6 +12,12 @@ export interface Patient {
   birthDate: string | null;
   phone: string | null;
   nationalId: string | null;
+  status: PatientStatus;
+  deceasedDate: string | null;
+  mergedIntoId: string | null;
+  preferredLanguage: string | null;
+  email: string | null;
+  address: string | null;
   createdAt: string;
 }
 
@@ -18,22 +27,35 @@ interface PatientDbRow {
   mrn: string;
   full_name: string;
   sex: Patient['sex'];
-  birth_date: string | null;
+  birth_date: string | Date | null;
   phone: string | null;
   national_id: string | null;
+  status: PatientStatus;
+  deceased_date: string | Date | null;
+  merged_into_id: string | null;
+  preferred_language: string | null;
+  email: string | null;
+  address: string | null;
   created_at: string;
 }
 
-function mapPatient(row: PatientDbRow): Patient {
+export function mapPatient(row: PatientDbRow): Patient {
   return {
     id: row.id,
     clinicId: row.clinic_id,
     mrn: row.mrn,
     fullName: row.full_name,
     sex: row.sex,
-    birthDate: row.birth_date,
+    // Date-only columns are normalized: see modules/clinical/dates.ts.
+    birthDate: toIsoDate(row.birth_date),
     phone: row.phone,
     nationalId: row.national_id,
+    status: row.status,
+    deceasedDate: toIsoDate(row.deceased_date),
+    mergedIntoId: row.merged_into_id,
+    preferredLanguage: row.preferred_language,
+    email: row.email,
+    address: row.address,
     createdAt: row.created_at,
   };
 }

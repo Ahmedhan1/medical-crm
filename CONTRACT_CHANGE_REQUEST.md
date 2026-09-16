@@ -144,6 +144,47 @@ inside your own feature module; adding a new table in your migration range.
   reach pharma today, by construction. Owner for the deferred build: Agent 1 +
   Agent 2.
 
+### CCR-006 — Patient record extension (lifecycle, identifiers, contacts, merge)
+- Status: PROPOSED
+- Requested by: Agent 2 (Clinical Platform)
+- Date: 2026-09-16
+- Affects: any workstream reading `patient` — Agent 3 (messaging recipients,
+  automation conditions), Agent 4 (intelligence de-identification).
+- Contract file(s): none edited. `patient` is extended by migration 0104 in
+  Agent 2's own range; no existing column, constraint or index changes.
+- Change:
+  1. `patient` gains `status` (`active|inactive|deceased|merged`, default
+     `active`), `deceased_date`, `merged_into_id`, `preferred_language`,
+     `email`, `address`, `updated_by`. All nullable or defaulted.
+  2. New tables `patient_identifier`, `patient_contact`, `patient_merge`
+     (append-only).
+  3. **`GET /patients/:id` response changes shape**: `birthDate` now serializes
+     as `"1980-04-02"` instead of `"1980-04-02T00:00:00.000Z"`. See below.
+- Reason: the patient record had no status, no contact detail, no external
+  identifiers and no update path at all; duplicate resolution was impossible.
+- **Consumer notes:**
+  - `status` matters to anyone acting on a patient. `merged` means the record
+    is superseded — messaging and automation should target `merged_into_id`.
+    Clinical writes and check-in already refuse a `merged` or `deceased` record.
+  - `preferred_language` is a BCP-47 tag owned here and intended for Agent 3's
+    template `locale` selection, which currently defaults to `en`. Wiring it in
+    is Agent 3's call; nothing changes until they do.
+  - A merge LINKS, it does not rewrite: historical rows keep their original
+    `patient_id`. Any longitudinal read over `patient_id` should resolve lineage
+    (`resolvePatientLineage`) or it will under-report a merged patient's history.
+    The clinical timeline already does.
+- Backward compatibility: additive at the schema level. The one behavioural
+  change is `birthDate`, which was a **bug**: input is validated as
+  `YYYY-MM-DD` but output was a UTC timestamp, so any client in a timezone west
+  of UTC rendered the wrong day for a date of birth. Fixed to match the
+  documented input contract. Called out here because it is a visible response
+  change, not silently.
+- Tests: `test/integration/patient-lifecycle.test.ts` (28) covers status
+  transitions, merge semantics and lineage, identifier uniqueness as a duplicate
+  signal, contact primary-demotion, PHI containment in audit metadata, RBAC per
+  role, and cross-tenant isolation. Full suite 398 green.
+- Decision (Agent 1): _pending_
+
 ### CCR-005 — Additional pharma role keys (fix ADMIN over-grant)
 - Status: **APPROVED** — implemented at integration
 - Requested by: Agent 4 (originally filed as CCR-002 on its branch)
