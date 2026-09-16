@@ -17,10 +17,25 @@ type Runner = Pick<PoolClient, 'query'>;
 export interface Visit {
   id: string;
   clinicId: string;
-  hcpId: string;
+  /**
+   * NULL for an INSTITUTIONAL call — a visit to an organisation (a pharmacy
+   * chain's head office, a hospital procurement department) with no individual
+   * professional as its subject. `visit_has_subject` guarantees at least one of
+   * `hcpId` / `hcoId` is present.
+   */
+  hcpId: string | null;
   hcpName?: string;
   territoryId: string | null;
   hcoId: string | null;
+  hcoName?: string;
+  /** HOW the interaction happened, independent of why (`visitType`). */
+  modality:
+    | 'face_to_face'
+    | 'virtual'
+    | 'phone'
+    | 'conference'
+    | 'scientific_meeting'
+    | 'institutional';
   practiceLocationId: string | null;
   repUserId: string;
   status: 'planned' | 'confirmed' | 'completed' | 'cancelled' | 'no_access';
@@ -36,10 +51,12 @@ export interface Visit {
 interface VisitRow {
   id: string;
   clinic_id: string;
-  hcp_id: string;
-  hcp_name?: string;
+  hcp_id: string | null;
+  hcp_name?: string | null;
   territory_id: string | null;
   hco_id: string | null;
+  hco_name?: string | null;
+  modality: Visit['modality'];
   practice_location_id: string | null;
   rep_user_id: string;
   status: Visit['status'];
@@ -57,9 +74,11 @@ function mapVisit(row: VisitRow): Visit {
     id: row.id,
     clinicId: row.clinic_id,
     hcpId: row.hcp_id,
-    ...(row.hcp_name !== undefined ? { hcpName: row.hcp_name } : {}),
+    ...(row.hcp_name !== undefined ? { hcpName: row.hcp_name ?? undefined } : {}),
     territoryId: row.territory_id,
     hcoId: row.hco_id,
+    ...(row.hco_name !== undefined ? { hcoName: row.hco_name ?? undefined } : {}),
+    modality: row.modality,
     practiceLocationId: row.practice_location_id,
     repUserId: row.rep_user_id,
     status: row.status,
@@ -77,12 +96,13 @@ export async function insertVisit(
   runner: Runner,
   input: {
     clinicId: string;
-    hcpId: string;
+    hcpId: string | null;
     territoryId: string | null;
     hcoId: string | null;
     practiceLocationId: string | null;
     repUserId: string;
     visitType: Visit['visitType'];
+    modality: Visit['modality'];
     plannedAt: string;
     objective: string | null;
     createdBy: string;
@@ -91,8 +111,8 @@ export async function insertVisit(
   const { rows } = await runner.query<VisitRow>(
     `INSERT INTO visit
        (clinic_id, hcp_id, territory_id, hco_id, practice_location_id, rep_user_id,
-        visit_type, planned_at, objective, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        visit_type, modality, planned_at, objective, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING *`,
     [
       input.clinicId,
@@ -102,6 +122,7 @@ export async function insertVisit(
       input.practiceLocationId,
       input.repUserId,
       input.visitType,
+      input.modality,
       input.plannedAt,
       input.objective,
       input.createdBy,
@@ -116,8 +137,10 @@ export async function getVisitById(
   runner: Runner = getPool(),
 ): Promise<Visit | null> {
   const { rows } = await runner.query<VisitRow>(
-    `SELECT v.*, h.full_name AS hcp_name
-       FROM visit v JOIN hcp h ON h.id = v.hcp_id
+    `SELECT v.*, h.full_name AS hcp_name, o.name AS hco_name
+       FROM visit v
+       LEFT JOIN hcp h ON h.id = v.hcp_id
+       LEFT JOIN hco o ON o.id = v.hco_id
       WHERE v.id = $1 AND v.clinic_id = $2`,
     [id, clinicId],
   );
@@ -136,11 +159,88 @@ export async function getVisitForUpdate(
   return rows[0] ? mapVisit(rows[0]) : null;
 }
 
+/**
+ * Append-only transition log for a visit (0309).
+ *
+ * The visit row carries the CURRENT status; this carries how it got there. It
+ * is the difference between "this call was a no-access" and "this call was
+ * planned, confirmed, then recorded as a no-access at 16:40 by this rep" —
+ * which is the version a compliance review actually needs. Refuses UPDATE and
+ * DELETE at the database, so the trail cannot be tidied afterwards.
+ */
+export interface VisitEvent {
+  id: string;
+  visitId: string;
+  fromStatus: Visit['status'] | null;
+  toStatus: Visit['status'];
+  reason: string | null;
+  actorId: string | null;
+  occurredAt: string;
+}
+
+export async function insertVisitEvent(
+  runner: Runner,
+  input: {
+    clinicId: string;
+    visitId: string;
+    fromStatus: Visit['status'] | null;
+    toStatus: Visit['status'];
+    reason: string | null;
+    actorId: string | null;
+  },
+): Promise<void> {
+  await runner.query(
+    `INSERT INTO visit_event (clinic_id, visit_id, from_status, to_status, reason, actor_id)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [
+      input.clinicId,
+      input.visitId,
+      input.fromStatus,
+      input.toStatus,
+      input.reason,
+      input.actorId,
+    ],
+  );
+}
+
+export async function listVisitEvents(
+  clinicId: string,
+  visitId: string,
+  runner: Runner = getPool(),
+): Promise<VisitEvent[]> {
+  const { rows } = await runner.query<{
+    id: string;
+    visit_id: string;
+    from_status: Visit['status'] | null;
+    to_status: Visit['status'];
+    reason: string | null;
+    actor_id: string | null;
+    occurred_at: string;
+  }>(
+    `SELECT id::text AS id, visit_id, from_status, to_status, reason, actor_id, occurred_at
+       FROM visit_event
+      WHERE clinic_id = $1 AND visit_id = $2
+      ORDER BY occurred_at, id`,
+    [clinicId, visitId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    visitId: row.visit_id,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    reason: row.reason,
+    actorId: row.actor_id,
+    occurredAt: row.occurred_at,
+  }));
+}
+
 export interface VisitListFilter {
   repUserId: string | null;
   hcpId: string | null;
+  hcoId: string | null;
   territoryIds: string[] | null;
   status: Visit['status'] | null;
+  modality: Visit['modality'] | null;
   from: string | null;
   to: string | null;
   limit: number;
@@ -148,8 +248,10 @@ export interface VisitListFilter {
 
 export async function listVisits(clinicId: string, filter: VisitListFilter): Promise<Visit[]> {
   const { rows } = await getPool().query<VisitRow>(
-    `SELECT v.*, h.full_name AS hcp_name
-       FROM visit v JOIN hcp h ON h.id = v.hcp_id
+    `SELECT v.*, h.full_name AS hcp_name, o.name AS hco_name
+       FROM visit v
+       LEFT JOIN hcp h ON h.id = v.hcp_id
+       LEFT JOIN hco o ON o.id = v.hco_id
       WHERE v.clinic_id = $1
         AND ($2::uuid IS NULL OR v.rep_user_id = $2)
         AND ($3::uuid IS NULL OR v.hcp_id = $3)
@@ -157,8 +259,10 @@ export async function listVisits(clinicId: string, filter: VisitListFilter): Pro
         AND ($5::text IS NULL OR v.status = $5)
         AND ($6::timestamptz IS NULL OR v.planned_at >= $6)
         AND ($7::timestamptz IS NULL OR v.planned_at < $7)
+        AND ($8::uuid IS NULL OR v.hco_id = $8)
+        AND ($9::text IS NULL OR v.modality = $9)
       ORDER BY v.planned_at
-      LIMIT $8`,
+      LIMIT $10`,
     [
       clinicId,
       filter.repUserId,
@@ -167,6 +271,8 @@ export async function listVisits(clinicId: string, filter: VisitListFilter): Pro
       filter.status,
       filter.from,
       filter.to,
+      filter.hcoId,
+      filter.modality,
       filter.limit,
     ],
   );
@@ -210,7 +316,9 @@ export async function updateVisitStatus(
 export interface CallReport {
   id: string;
   visitId: string;
-  hcpId: string;
+  /** NULL on an institutional call; `hcoId` carries the subject instead. */
+  hcpId: string | null;
+  hcoId: string | null;
   repUserId: string;
   summary: string;
   hcpSentiment: 'positive' | 'neutral' | 'negative' | 'unknown';
@@ -222,7 +330,8 @@ export interface CallReport {
 interface CallReportRow {
   id: string;
   visit_id: string;
-  hcp_id: string;
+  hcp_id: string | null;
+  hco_id: string | null;
   rep_user_id: string;
   summary: string;
   hcp_sentiment: CallReport['hcpSentiment'];
@@ -236,6 +345,7 @@ function mapCallReport(row: CallReportRow): CallReport {
     id: row.id,
     visitId: row.visit_id,
     hcpId: row.hcp_id,
+    hcoId: row.hco_id,
     repUserId: row.rep_user_id,
     summary: row.summary,
     hcpSentiment: row.hcp_sentiment,
@@ -250,7 +360,8 @@ export async function insertCallReport(
   input: {
     clinicId: string;
     visitId: string;
-    hcpId: string;
+    hcpId: string | null;
+    hcoId: string | null;
     repUserId: string;
     summary: string;
     hcpSentiment: CallReport['hcpSentiment'];
@@ -260,13 +371,14 @@ export async function insertCallReport(
 ): Promise<CallReport> {
   const { rows } = await client.query<CallReportRow>(
     `INSERT INTO call_report
-       (clinic_id, visit_id, hcp_id, rep_user_id, summary, hcp_sentiment, next_step, follow_up_date)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       (clinic_id, visit_id, hcp_id, hco_id, rep_user_id, summary, hcp_sentiment, next_step, follow_up_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING *`,
     [
       input.clinicId,
       input.visitId,
       input.hcpId,
+      input.hcoId,
       input.repUserId,
       input.summary,
       input.hcpSentiment,
@@ -332,7 +444,8 @@ export async function insertObjection(
   input: {
     clinicId: string;
     callReportId: string;
-    hcpId: string;
+    hcpId: string | null;
+    hcoId: string | null;
     medicationId: string | null;
     objectionType: string;
     objectionText: string;
@@ -340,12 +453,13 @@ export async function insertObjection(
 ): Promise<void> {
   await client.query(
     `INSERT INTO visit_objection
-       (clinic_id, call_report_id, hcp_id, medication_id, objection_type, objection_text)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
+       (clinic_id, call_report_id, hcp_id, hco_id, medication_id, objection_type, objection_text)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [
       input.clinicId,
       input.callReportId,
       input.hcpId,
+      input.hcoId,
       input.medicationId,
       input.objectionType,
       input.objectionText,
@@ -358,7 +472,8 @@ export async function insertCompetitorMention(
   input: {
     clinicId: string;
     callReportId: string;
-    hcpId: string;
+    hcpId: string | null;
+    hcoId: string | null;
     competitorName: string;
     competitorProduct: string | null;
     context: string | null;
@@ -367,12 +482,13 @@ export async function insertCompetitorMention(
 ): Promise<void> {
   await client.query(
     `INSERT INTO call_report_competitor
-       (clinic_id, call_report_id, hcp_id, competitor_name, competitor_product, context, sentiment)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+       (clinic_id, call_report_id, hcp_id, hco_id, competitor_name, competitor_product, context, sentiment)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [
       input.clinicId,
       input.callReportId,
       input.hcpId,
+      input.hcoId,
       input.competitorName,
       input.competitorProduct,
       input.context,
@@ -575,7 +691,9 @@ export async function listScientificRequests(
 
 export interface FollowUpAction {
   id: string;
-  hcpId: string;
+  /** NULL when the action is owed to an organisation rather than a person. */
+  hcpId: string | null;
+  hcoId: string | null;
   visitId: string | null;
   ownerUserId: string;
   action: string;
@@ -587,7 +705,8 @@ export interface FollowUpAction {
 
 interface FollowUpRow {
   id: string;
-  hcp_id: string;
+  hcp_id: string | null;
+  hco_id: string | null;
   visit_id: string | null;
   owner_user_id: string;
   action: string;
@@ -601,6 +720,7 @@ function mapFollowUp(row: FollowUpRow): FollowUpAction {
   return {
     id: row.id,
     hcpId: row.hcp_id,
+    hcoId: row.hco_id,
     visitId: row.visit_id,
     ownerUserId: row.owner_user_id,
     action: row.action,
@@ -615,7 +735,8 @@ export async function insertFollowUp(
   client: PoolClient,
   input: {
     clinicId: string;
-    hcpId: string;
+    hcpId: string | null;
+    hcoId: string | null;
     visitId: string | null;
     callReportId: string | null;
     ownerUserId: string;
@@ -626,12 +747,13 @@ export async function insertFollowUp(
 ): Promise<FollowUpAction> {
   const { rows } = await client.query<FollowUpRow>(
     `INSERT INTO follow_up_action
-       (clinic_id, hcp_id, visit_id, call_report_id, owner_user_id, action, due_date, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       (clinic_id, hcp_id, hco_id, visit_id, call_report_id, owner_user_id, action, due_date, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING *`,
     [
       input.clinicId,
       input.hcpId,
+      input.hcoId,
       input.visitId,
       input.callReportId,
       input.ownerUserId,

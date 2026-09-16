@@ -60,8 +60,10 @@ export async function hcp360(principal: Principal, hcpId: string) {
     field.listVisits(principal.clinicId, {
       repUserId: null,
       hcpId,
+      hcoId: null,
       territoryIds: null,
       status: null,
+      modality: null,
       from: null,
       to: null,
       limit: 20,

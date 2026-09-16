@@ -5,14 +5,21 @@ import { emitEvent, EventType } from '../../domain/events.js';
 import { auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { hasPermission, requirePermission, type Principal } from '../governance/rbac.js';
+import { getHcoById } from '../hcp/hco.repo.js';
 import { getHcpById, listHcpSpecialties, listInterests } from '../hcp/hcp.repo.js';
 import * as content from './content.repo.js';
 import { isUsable } from './content.service.js';
 import * as repo from './field.repo.js';
 import { today } from './dates.js';
 import { assertFreeTextClean } from './guards.js';
+import { subordinateUserIds } from './hierarchy.js';
 import { territoriesForHcp } from './territory.repo.js';
 import { assertHcpInScope, territoryScopeFor } from './visibility.js';
+import {
+  assertVisitTransition,
+  VISIT_MODALITIES,
+  type VisitStatus,
+} from './visit-lifecycle.js';
 
 /**
  * Medical-representative platform: visit planning, the day's calls, the
@@ -27,17 +34,27 @@ import { assertHcpInScope, territoryScopeFor } from './visibility.js';
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 const TEXT = (max: number) => z.string().trim().min(1).max(max);
 
-export const PlanVisitSchema = z.object({
-  hcpId: z.string().uuid(),
-  plannedAt: z.string().datetime({ offset: true }),
-  visitType: z.enum(['detail', 'follow_up', 'scientific', 'courtesy', 'event']).default('detail'),
-  territoryId: z.string().uuid().optional(),
-  hcoId: z.string().uuid().optional(),
-  practiceLocationId: z.string().uuid().optional(),
-  objective: z.string().trim().max(1000).optional(),
-  /** Managers may plan on behalf of a rep; a rep may only plan for themselves. */
-  repUserId: z.string().uuid().optional(),
-});
+export const PlanVisitSchema = z
+  .object({
+    /** Omitted for an INSTITUTIONAL call, which has an organisation as subject. */
+    hcpId: z.string().uuid().optional(),
+    plannedAt: z.string().datetime({ offset: true }),
+    visitType: z.enum(['detail', 'follow_up', 'scientific', 'courtesy', 'event']).default('detail'),
+    /** HOW the call happens, independent of why. Compliance reporting needs both. */
+    modality: z.enum(VISIT_MODALITIES as unknown as [string, ...string[]]).default('face_to_face'),
+    territoryId: z.string().uuid().optional(),
+    hcoId: z.string().uuid().optional(),
+    practiceLocationId: z.string().uuid().optional(),
+    objective: z.string().trim().max(1000).optional(),
+    /** Managers may plan on behalf of a rep; a rep may only plan for themselves. */
+    repUserId: z.string().uuid().optional(),
+  })
+  // Mirrors the `visit_has_subject` CHECK: a call with neither a professional
+  // nor an organisation is not a call, it is a diary entry.
+  .refine((v) => v.hcpId !== undefined || v.hcoId !== undefined, {
+    message: 'A visit needs a subject: provide hcpId, hcoId, or both',
+    path: ['hcpId'],
+  });
 
 export const CloseVisitSchema = z.object({
   status: z.enum(['confirmed', 'cancelled', 'no_access']),
@@ -127,7 +144,9 @@ export async function planVisit(principal: Principal, raw: unknown): Promise<rep
   requirePermission(principal, Permission.VISIT_PLAN);
   const input = parse(PlanVisitSchema, raw, 'visit');
   assertFreeTextClean({ objective: input.objective ?? null });
-  await assertHcpInScope(principal, input.hcpId);
+  // Territory scope applies to the professional. An institutional call has no
+  // professional subject, so it is scoped by the organisation's territory below.
+  if (input.hcpId) await assertHcpInScope(principal, input.hcpId);
 
   const isManager = hasPermission(principal, Permission.TERRITORY_MANAGE);
   const repUserId = input.repUserId ?? principal.userId;
@@ -136,12 +155,26 @@ export async function planVisit(principal: Principal, raw: unknown): Promise<rep
   }
 
   return withTransaction(async (client) => {
-    const hcp = await getHcpById(principal.clinicId, input.hcpId, client);
-    if (!hcp) throw new NotFoundError('HCP');
-    if (hcp.status === 'merged') {
-      throw new ConflictError('This HCP record was merged; plan against the surviving record', {
-        mergedIntoHcpId: hcp.mergedIntoHcpId,
-      });
+    if (input.hcpId) {
+      const hcp = await getHcpById(principal.clinicId, input.hcpId, client);
+      if (!hcp) throw new NotFoundError('HCP');
+      if (hcp.status === 'merged') {
+        throw new ConflictError('This HCP record was merged; plan against the surviving record', {
+          mergedIntoHcpId: hcp.mergedIntoHcpId,
+        });
+      }
+    }
+    if (input.hcoId) {
+      const { rows: hco } = await client.query<{ operating_status: string }>(
+        `SELECT operating_status FROM hco WHERE id = $1 AND clinic_id = $2`,
+        [input.hcoId, principal.clinicId],
+      );
+      if (hco.length === 0) throw new NotFoundError('HCO');
+      if (hco[0]!.operating_status === 'merged') {
+        throw new ConflictError(
+          'This organisation record was merged; plan against the surviving record',
+        );
+      }
     }
     const { rows } = await client.query(`SELECT 1 FROM app_user WHERE id = $1 AND clinic_id = $2`, [
       repUserId,
@@ -149,25 +182,46 @@ export async function planVisit(principal: Principal, raw: unknown): Promise<rep
     ]);
     if (rows.length === 0) throw new NotFoundError('Representative');
 
-    // Default the territory from the HCP's targeting so a visit is always
-    // attributable to a territory for later aggregation.
+    // Default the territory so a visit is always attributable to one for later
+    // aggregation: from the HCP's targeting, or — for an institutional call —
+    // from the organisation's own sites.
     let territoryId = input.territoryId ?? null;
-    if (!territoryId) {
+    if (!territoryId && input.hcpId) {
       const territories = await territoriesForHcp(principal.clinicId, input.hcpId);
       territoryId = territories[0]?.territoryId ?? null;
+    }
+    if (!territoryId && input.hcoId) {
+      const { rows: sites } = await client.query<{ territory_id: string }>(
+        `SELECT territory_id FROM hco_location
+          WHERE clinic_id = $1 AND hco_id = $2 AND territory_id IS NOT NULL
+          ORDER BY is_primary DESC
+          LIMIT 1`,
+        [principal.clinicId, input.hcoId],
+      );
+      territoryId = sites[0]?.territory_id ?? null;
     }
 
     const visit = await repo.insertVisit(client, {
       clinicId: principal.clinicId,
-      hcpId: input.hcpId,
+      hcpId: input.hcpId ?? null,
       territoryId,
       hcoId: input.hcoId ?? null,
       practiceLocationId: input.practiceLocationId ?? null,
       repUserId,
       visitType: input.visitType,
+      modality: input.modality as repo.Visit['modality'],
       plannedAt: input.plannedAt,
       objective: input.objective ?? null,
       createdBy: principal.userId,
+    });
+
+    await repo.insertVisitEvent(client, {
+      clinicId: principal.clinicId,
+      visitId: visit.id,
+      fromStatus: null,
+      toStatus: visit.status,
+      reason: null,
+      actorId: principal.userId,
     });
 
     await emitEvent(client, {
@@ -192,7 +246,9 @@ export async function planVisit(principal: Principal, raw: unknown): Promise<rep
 
 export interface ListVisitsParams {
   hcpId?: string;
+  hcoId?: string;
   status?: string;
+  modality?: string;
   from?: string;
   to?: string;
   mineOnly?: boolean;
@@ -206,13 +262,20 @@ export async function listVisits(
   requirePermission(principal, Permission.VISIT_READ);
   const scope = await territoryScopeFor(principal);
   if (scope !== null && scope.length === 0) return [];
-  // A representative sees their own calls; a manager sees the territory.
+  // A representative sees their own calls; a clinic-wide principal sees all of
+  // them (or only their own, on request).
   const repUserId = scope === null ? (params.mineOnly ? principal.userId : null) : principal.userId;
+  // For a scoped principal OWNERSHIP is the scope, and it is the stronger one:
+  // every visit returned is already theirs. Also filtering by territory could
+  // only subtract from that — and did, silently hiding an institutional call
+  // whose organisation has no sited location, i.e. a rep's own work.
   return repo.listVisits(principal.clinicId, {
     repUserId,
     hcpId: params.hcpId ?? null,
-    territoryIds: scope,
+    hcoId: params.hcoId ?? null,
+    territoryIds: null,
     status: (params.status as never) ?? null,
+    modality: (params.modality as never) ?? null,
     from: params.from ?? null,
     to: params.to ?? null,
     limit: Math.min(Math.max(params.limit ?? 50, 1), 200),
@@ -229,8 +292,10 @@ export async function todaysVisits(principal: Principal): Promise<repo.Visit[]> 
   return repo.listVisits(principal.clinicId, {
     repUserId: principal.userId,
     hcpId: null,
+    hcoId: null,
     territoryIds: null,
     status: null,
+    modality: null,
     from: start.toISOString(),
     to: end.toISOString(),
     limit: 200,
@@ -245,13 +310,26 @@ export async function updateVisitStatus(principal: Principal, visitId: string, r
     const visit = await repo.getVisitForUpdate(client, principal.clinicId, visitId);
     if (!visit) throw new NotFoundError('Visit');
     await assertVisitOwnership(principal, visit);
-    if (visit.status === 'completed') {
-      throw new ConflictError('A completed visit cannot change status; it has a call report');
-    }
+    // The whole rule set — legal edges, terminal states and "a negative outcome
+    // must say why" — lives in `visit-lifecycle.ts`, so no caller can invent a
+    // path between states and every edge is unit-testable without a database.
+    assertVisitTransition(
+      visit.status as VisitStatus,
+      input.status as VisitStatus,
+      input.reason ?? null,
+    );
 
     const after = await repo.updateVisitStatus(client, principal.clinicId, visitId, {
       status: input.status,
       outcomeReason: input.reason ?? null,
+    });
+    await repo.insertVisitEvent(client, {
+      clinicId: principal.clinicId,
+      visitId,
+      fromStatus: visit.status,
+      toStatus: input.status,
+      reason: input.reason ?? null,
+      actorId: principal.userId,
     });
     if (input.status === 'cancelled' || input.status === 'no_access') {
       await emitEvent(client, {
@@ -275,11 +353,44 @@ export async function updateVisitStatus(principal: Principal, visitId: string, r
   });
 }
 
+/**
+ * May this principal act on this visit?
+ *
+ * Three ways in, in order of how specific they are:
+ *  1. it is their own call;
+ *  2. the representative reports to them, directly or indirectly — the field
+ *     hierarchy from `field_rep_profile`, walked with cycle and depth guards in
+ *     `hierarchy.ts`. This is what lets a district manager supervise their own
+ *     people WITHOUT a clinic-wide grant;
+ *  3. they hold `territory:manage` — deliberately clinic-wide, because that
+ *     permission owns the territory model itself. It is granted to
+ *     PHARMA_MANAGER and never to a representative, and the trade-off is
+ *     recorded in `docs/agent-state/agent-4.md` rather than left implicit.
+ */
 async function assertVisitOwnership(principal: Principal, visit: repo.Visit): Promise<void> {
+  if (visit.repUserId === principal.userId) return;
   if (hasPermission(principal, Permission.TERRITORY_MANAGE)) return;
-  if (visit.repUserId !== principal.userId) {
-    throw new ForbiddenError('This visit belongs to another representative');
-  }
+  const reports = await subordinateUserIds(principal.clinicId, principal.userId);
+  if (reports.includes(visit.repUserId)) return;
+  throw new ForbiddenError('This visit belongs to another representative');
+}
+
+/**
+ * The status trail of a visit (0309).
+ *
+ * Scoped exactly like the visit itself — own call, a report's call, or a
+ * `territory:manage` holder — so the history cannot be used to learn about
+ * another representative's day.
+ */
+export async function visitHistory(
+  principal: Principal,
+  visitId: string,
+): Promise<repo.VisitEvent[]> {
+  requirePermission(principal, Permission.VISIT_READ);
+  const visit = await repo.getVisitById(principal.clinicId, visitId);
+  if (!visit) throw new NotFoundError('Visit');
+  await assertVisitOwnership(principal, visit);
+  return repo.listVisitEvents(principal.clinicId, visitId);
 }
 
 // --- Pre-visit briefing -----------------------------------------------------
@@ -292,53 +403,70 @@ export async function preVisitBriefing(principal: Principal, visitId: string) {
   requirePermission(principal, Permission.VISIT_READ);
   const visit = await repo.getVisitById(principal.clinicId, visitId);
   if (!visit) throw new NotFoundError('Visit');
-  await assertHcpInScope(principal, visit.hcpId);
+  const hcpId = visit.hcpId;
+  if (hcpId) await assertHcpInScope(principal, hcpId);
 
-  const hcp = await getHcpById(principal.clinicId, visit.hcpId);
-  if (!hcp) throw new NotFoundError('HCP');
+  const hcp = hcpId ? await getHcpById(principal.clinicId, hcpId) : null;
+  if (hcpId && !hcp) throw new NotFoundError('HCP');
 
+  // An INSTITUTIONAL call has no professional subject, so the per-HCP sections
+  // are empty rather than absent: the briefing keeps one shape, and a caller
+  // never has to branch on which kind of call it is opening.
   const [specialties, interests, territories, recentCalls, openObjections, openRequests, followUps] =
-    await Promise.all([
-      listHcpSpecialties(principal.clinicId, visit.hcpId),
-      listInterests(principal.clinicId, visit.hcpId),
-      territoriesForHcp(principal.clinicId, visit.hcpId),
-      repo.listCallReportsForHcp(principal.clinicId, visit.hcpId, 3),
-      repo.listOpenObjectionsForHcp(principal.clinicId, visit.hcpId, 10),
-      repo.listScientificRequests(principal.clinicId, {
-        hcpId: visit.hcpId,
-        status: 'open',
-        territoryIds: null,
-        limit: 10,
-      }),
-      repo.listFollowUps(principal.clinicId, {
-        ownerUserId: null,
-        hcpId: visit.hcpId,
-        status: 'open',
-        limit: 10,
-      }),
-    ]);
+    hcpId
+      ? await Promise.all([
+          listHcpSpecialties(principal.clinicId, hcpId),
+          listInterests(principal.clinicId, hcpId),
+          territoriesForHcp(principal.clinicId, hcpId),
+          repo.listCallReportsForHcp(principal.clinicId, hcpId, 3),
+          repo.listOpenObjectionsForHcp(principal.clinicId, hcpId, 10),
+          repo.listScientificRequests(principal.clinicId, {
+            hcpId,
+            status: 'open',
+            territoryIds: null,
+            limit: 10,
+          }),
+          repo.listFollowUps(principal.clinicId, {
+            ownerUserId: null,
+            hcpId,
+            status: 'open',
+            limit: 10,
+          }),
+        ])
+      : ([[], [], [], [], [], [], []] as const);
 
   // Only content that is approved and inside its window today may be taken in.
-  const usableContent = await content.listContent(principal.clinicId, {
-    jurisdiction: hcp.provenance.jurisdiction,
-    medicationId: null,
-    contentType: null,
-    usableOnly: true,
-    onDate: today(),
-    limit: 20,
-  });
+  // With no professional subject the jurisdiction comes from the organisation's
+  // own record, never guessed.
+  let jurisdiction = hcp?.provenance.jurisdiction ?? null;
+  if (!jurisdiction && visit.hcoId) {
+    const hco = await getHcoById(principal.clinicId, visit.hcoId);
+    jurisdiction = hco?.provenance.jurisdiction ?? null;
+  }
+  const usableContent = jurisdiction
+    ? await content.listContent(principal.clinicId, {
+        jurisdiction,
+        medicationId: null,
+        contentType: null,
+        usableOnly: true,
+        onDate: today(),
+        limit: 20,
+      })
+    : [];
 
   return {
     visit,
-    hcp: {
-      id: hcp.id,
-      fullName: hcp.fullName,
-      title: hcp.title,
-      preferredLanguage: hcp.preferredLanguage,
-      verificationStatus: hcp.provenance.verificationStatus,
-      lastVerifiedAt: hcp.provenance.lastVerifiedAt,
-      jurisdiction: hcp.provenance.jurisdiction,
-    },
+    hcp: hcp
+      ? {
+          id: hcp.id,
+          fullName: hcp.fullName,
+          title: hcp.title,
+          preferredLanguage: hcp.preferredLanguage,
+          verificationStatus: hcp.provenance.verificationStatus,
+          lastVerifiedAt: hcp.provenance.lastVerifiedAt,
+          jurisdiction: hcp.provenance.jurisdiction,
+        }
+      : null,
     specialties,
     interests,
     territories,
@@ -346,6 +474,7 @@ export async function preVisitBriefing(principal: Principal, visitId: string) {
     openObjections,
     openScientificRequests: openRequests,
     openFollowUps: followUps,
+    statusHistory: await repo.listVisitEvents(principal.clinicId, visitId),
     approvedContent: usableContent.map((c) => ({
       id: c.id,
       title: c.title,
@@ -389,6 +518,7 @@ export async function submitCallReport(principal: Principal, visitId: string, ra
         clinicId: principal.clinicId,
         visitId,
         hcpId: visit.hcpId,
+        hcoId: visit.hcoId,
         repUserId: visit.repUserId,
         summary: input.summary,
         hcpSentiment: input.hcpSentiment,
@@ -428,6 +558,7 @@ export async function submitCallReport(principal: Principal, visitId: string, ra
         clinicId: principal.clinicId,
         callReportId: report.id,
         hcpId: visit.hcpId,
+        hcoId: visit.hcoId,
         medicationId: objection.medicationId ?? null,
         objectionType: objection.objectionType,
         objectionText: objection.objectionText,
@@ -439,6 +570,7 @@ export async function submitCallReport(principal: Principal, visitId: string, ra
         clinicId: principal.clinicId,
         callReportId: report.id,
         hcpId: visit.hcpId,
+        hcoId: visit.hcoId,
         competitorName: competitor.competitorName,
         competitorProduct: competitor.competitorProduct ?? null,
         context: competitor.context ?? null,
@@ -451,6 +583,7 @@ export async function submitCallReport(principal: Principal, visitId: string, ra
       const created = await repo.insertFollowUp(client, {
         clinicId: principal.clinicId,
         hcpId: visit.hcpId,
+        hcoId: visit.hcoId,
         visitId,
         callReportId: report.id,
         ownerUserId: visit.repUserId,
@@ -469,12 +602,24 @@ export async function submitCallReport(principal: Principal, visitId: string, ra
       });
     }
 
-    // Submitting the report closes the visit.
+    // Submitting the report closes the visit. The lifecycle decides whether
+    // that is legal, and the transition joins the same append-only trail as
+    // every other one — a call that completed by being reported must not be
+    // invisible in its own history.
+    assertVisitTransition(visit.status as VisitStatus, 'completed', null);
     const now = new Date().toISOString();
     await repo.updateVisitStatus(client, principal.clinicId, visitId, {
       status: 'completed',
       startedAt: visit.startedAt ?? now,
       endedAt: now,
+    });
+    await repo.insertVisitEvent(client, {
+      clinicId: principal.clinicId,
+      visitId,
+      fromStatus: visit.status,
+      toStatus: 'completed',
+      reason: null,
+      actorId: principal.userId,
     });
 
     await emitEvent(client, {
@@ -516,7 +661,7 @@ export async function getCallReport(principal: Principal, visitId: string) {
   requirePermission(principal, Permission.CALL_REPORT_READ);
   const visit = await repo.getVisitById(principal.clinicId, visitId);
   if (!visit) throw new NotFoundError('Visit');
-  await assertHcpInScope(principal, visit.hcpId);
+  if (visit.hcpId) await assertHcpInScope(principal, visit.hcpId);
   const report = await repo.getCallReportByVisit(principal.clinicId, visitId);
   if (!report) throw new NotFoundError('Call report');
   return report;

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ValidationError } from '../../domain/errors.js';
 import * as field from '../../modules/pharma/field.service.js';
+import * as fieldforce from '../../modules/pharma/fieldforce.service.js';
 import * as territory from '../../modules/pharma/territory.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
 
@@ -70,6 +71,20 @@ export async function repRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(await field.completeFollowUp(principalOf(req), id));
   });
 
+  // --- Field force (rep profiles and the reporting hierarchy) ---------------
+  app.put('/field-force/profiles', async (req, reply) => {
+    return reply.send(await fieldforce.upsertFieldRepProfile(principalOf(req), req.body));
+  });
+
+  app.get('/field-force/profiles', async (req, reply) => {
+    return reply.send({ results: await fieldforce.listFieldForce(principalOf(req), req.query) });
+  });
+
+  app.get('/field-force/profiles/:id', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await fieldforce.fieldRepProfile(principalOf(req), id));
+  });
+
   // --- Visits ---------------------------------------------------------------
   app.post('/visits', async (req, reply) => {
     const created = await field.planVisit(principalOf(req), req.body);
@@ -80,7 +95,18 @@ export async function repRoutes(app: FastifyInstance): Promise<void> {
     const query = params(
       z.object({
         hcpId: z.string().uuid().optional(),
+        hcoId: z.string().uuid().optional(),
         status: z.enum(['planned', 'confirmed', 'completed', 'cancelled', 'no_access']).optional(),
+        modality: z
+          .enum([
+            'face_to_face',
+            'virtual',
+            'phone',
+            'conference',
+            'scientific_meeting',
+            'institutional',
+          ])
+          .optional(),
         from: z.string().datetime({ offset: true }).optional(),
         to: z.string().datetime({ offset: true }).optional(),
         mineOnly: z.coerce.boolean().optional(),
@@ -96,6 +122,12 @@ export async function repRoutes(app: FastifyInstance): Promise<void> {
   app.get('/visits/:id/briefing', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     return reply.send(await field.preVisitBriefing(principalOf(req), id));
+  });
+
+  /** How this visit reached its current status — the append-only trail (0309). */
+  app.get('/visits/:id/history', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send({ events: await field.visitHistory(principalOf(req), id) });
   });
 
   app.post('/visits/:id/status', async (req, reply) => {

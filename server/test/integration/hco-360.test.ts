@@ -31,7 +31,7 @@ let northTerritoryId: string;
 let northHcpId: string;
 let southHcpId: string;
 
-async function post(url: string, user: TestUser, payload: unknown) {
+async function post(url: string, user: TestUser, payload: Record<string, unknown>) {
   const res = await app.inject({ method: 'POST', url, headers: auth(user), payload });
   if (res.statusCode >= 400) {
     throw new Error(`POST ${url} -> ${res.statusCode} ${res.body}`);
