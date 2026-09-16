@@ -1,14 +1,14 @@
 # Agent 2 — Clinical Platform — State
 
 ## Current Status
-Clinical Platform program **CP-1 and CP-2 delivered** on branch
+Clinical Platform program **CP-1, CP-2, CP-3 and CP-8 delivered** on branch
 `claude/inspiring-cori-tk3ej8`, which is fast-forwarded onto
 `integration/medcore-v1` (Agent 1's integrated tree, including I001 hardening
 and platform Phase 1). The earlier C001–C007 Clinical Core series is merged and
 live in the integrated branch.
 
-Suite: **431 tests / 32 files green.** Typecheck, build and a from-empty
-migration run (14 migrations) all clean.
+Suite: **469 tests / 34 files green.** Typecheck, build and a from-empty
+migration run (16 migrations) all clean.
 
 ## Completed
 
@@ -55,8 +55,33 @@ episodes, report engine, prescriptions + follow-ups. See git history.
   patient on the existing queue; done before the appointment transaction so a
   failure cannot leave an appointment arrived with no visit.
 
+### CP-3 — Extensible observation engine *(migration 0106)*
+- `observation_definition` (per-clinic config catalog: value type, unit,
+  physiological bounds, reference range, allowed codes) and `observation`
+  (FHIR-Observation-shaped values). A specialty measurement is a definition row,
+  not new code.
+- **Reference ranges are DATA** — the abnormal flag is computed at record time
+  from the definition and stored. This is the one thing the `vital` fast-path
+  hard-codes, now per-clinic configurable.
+- Does NOT replace `vital`; the universal vital set keeps its fast, CHECK-
+  constrained path. Observations are the open extension for everything else.
+- Value coercion/bounds are driven by the definition's value type, so a
+  clinic-defined observation is validated exactly like a built-in one.
+
+### CP-8 — Allergy & prescribing safety *(migration 0107)* — HIGHEST RISK, CLOSED
+- `allergy` — structured record (substance, kind, category, severity, status,
+  verification, onset); partial unique on active substance. `safety_override` —
+  append-only ledger of every prescribe-through-alert.
+- Deterministic prescribing check (`safety.service.ts`): allergy match
+  (whole-word, conservative, ref-match definitive) + duplicate-medication.
+  Reads the patient's merge lineage.
+- Refuse-then-acknowledge: blocked by default, returns the alerts; a doctor with
+  `safety:override` prescribes through with a required reason, ledgered and
+  audited. AI cannot bypass (no prescribing principal; override is a human act).
+- Dry-run preview endpoint; allergies on the workspace.
+
 ## Database Changes
-Migration range **0100–0199**. Used: 0100, 0101, 0102, 0103, **0104, 0105**.
+Migration range **0100–0199**. Used: 0100–0103, **0104, 0105, 0106, 0107**.
 0105 requires the `btree_gist` contrib extension (created by the migration; a
 role that cannot `CREATE EXTENSION` needs a DBA to enable it first).
 
@@ -70,14 +95,24 @@ New in CP-2: `POST|GET /appointments`, `GET|PATCH /appointments/:id`,
 `POST /appointments/:id/status`, `GET /patients/:id/appointments`,
 `POST|GET /schedule/resources`, `POST|GET /appointment-types`.
 
+New in CP-3: `POST|GET /observation-definitions`, `POST /observations`,
+`GET /encounters/:id/observations`, `GET /patients/:id/observations`.
+
+New in CP-8: `POST|GET /patients/:id/allergies`,
+`PATCH /patients/:id/allergies/:allergyId`,
+`POST /encounters/:id/prescription-safety-check`.
+
 Changed: `GET /patients/:id` — `birthDate` is now `YYYY-MM-DD` (see CCR-006).
-No other existing endpoint changed shape.
+`POST /encounters/:id/prescriptions` gains optional `acknowledgeAlerts` +
+`overrideReason` (additive; absent = old behaviour unless an alert fires). No
+existing endpoint changed response shape incompatibly.
 
 ## Permission Changes
 Added (own file, not a contract change): `patient:update`, `patient:merge`,
 `patient:contact:read|write`, `patient:identifier:read|write`,
 `appointment:read|schedule|update|cancel|arrival|overbook`,
-`schedule:config:read|manage`.
+`schedule:config:read|manage`, `observation:record|read`,
+`observation:config:read|manage`, `allergy:read|write`, `safety:override`.
 
 Grants keep the operational/clinical split: reception runs the patient index and
 the front desk; nurse reads contacts/identifiers and moves patients through the
@@ -91,7 +126,8 @@ Added: `PATIENT_UPDATED`, `PATIENT_STATUS_CHANGED`, `PATIENT_MERGED`,
 `APPOINTMENT_SCHEDULED`, `APPOINTMENT_CONFIRMED`, `APPOINTMENT_RESCHEDULED`,
 `APPOINTMENT_CANCELLED`, `APPOINTMENT_NO_SHOW`,
 `APPOINTMENT_LEFT_WITHOUT_BEING_SEEN`, `APPOINTMENT_COMPLETED`,
-`PATIENT_ARRIVED`.
+`PATIENT_ARRIVED`, `OBSERVATION_RECORDED`, `ALLERGY_RECORDED`, `ALLERGY_UPDATED`,
+`SAFETY_ALERT_OVERRIDDEN`.
 
 Naming stays SCREAMING_SNAKE. The program brief suggests `appointment.created`
 style, but Agent 3's automation matches `automation_rule.event_type` as a plain
@@ -100,6 +136,8 @@ string, so renaming would silently break every existing rule. Raised, not change
 ## Tests
 - `test/integration/patient-lifecycle.test.ts` — 28
 - `test/integration/appointments.test.ts` — 33
+- `test/integration/observations.test.ts` — 18
+- `test/integration/allergies-safety.test.ts` — 20
 Covering lifecycle transitions, merge semantics and lineage, identifier
 uniqueness, contact primary-demotion, room double-booking (and slot release),
 deliberate overbooking, encounter-driven appointment status, arrival atomicity,
@@ -111,6 +149,9 @@ None. Runtime deps remain `fastify`, `pg`, `qrcode`, `zod` (Agent 1's governance
 allowlist test passes). One PostgreSQL contrib extension: `btree_gist`.
 
 ## Contract Changes
+- **CCR-007 (PROPOSED)** — coded drug↔allergen cross-reference to make the
+  prescribing safety check precise once the drug master exposes codes. Additive;
+  the engine already prefers a ref match. Governed read only.
 - **CCR-006 (PROPOSED)** — patient record extension. Additive schema plus the
   `birthDate` serialization fix. Consumer notes for Agent 3 (a `merged` record
   should not be messaged; `preferred_language` is available for template locale)
@@ -121,11 +162,7 @@ allowlist test passes). One PostgreSQL contrib extension: `btree_gist`.
 - No shared/contract file edited.
 
 ## Known Issues / Open Risks
-1. **Allergies are free text only (CP-8).** `intake.allergies` is a text field;
-   there is no structured allergy record and therefore **no prescribing safety
-   check anywhere in the platform**. This is the highest-severity clinical gap
-   and is the intended next major increment after CP-3.
-2. **PDF reports are Latin-1 only.** Arabic renders as `?`. Tracked by Agent 1
+1. **PDF reports are Latin-1 only.** Arabic renders as `?`. Tracked by Agent 1
    as roadmap F-03/Phase 5 (needs an embedded Unicode font).
 3. **Recurring appointments and the waitlist are not built.** Deferred
    deliberately; recurrence needs a series table plus an expansion/exception
@@ -136,11 +173,11 @@ allowlist test passes). One PostgreSQL contrib extension: `btree_gist`.
 None.
 
 ## Next Tasks
-- **CP-3** — triage engine with extensible structured observations (units,
-  reference ranges, custom observations, performer/source), keeping the core
-  specialty-neutral and FHIR-Observation-shaped.
-- **CP-8** — allergy & safety engine, then deterministic prescribing checks.
+- **CP-9** — document management (DocumentReference-shaped): lab/imaging/consent
+  documents linked to patient/encounter/episode, metadata only (no blob storage
+  in-DB), access-policy aware.
+- **CP-10** — referral & care-coordination.
 See `docs/workstreams/clinical-core.md` for the full CP-1..CP-21 status table.
 
 ## Last Commit
-- `platform(clinical P2): appointment and scheduling engine`
+- `platform(clinical P8): allergy record and deterministic prescribing safety`
