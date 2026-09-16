@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { patientRoutes } from '../routes/patients.routes.js';
 import { workflowRoutes } from '../routes/workflow.routes.js';
 import { intakeRoutes } from '../routes/intake.routes.js';
+import { encounterRoutes } from '../routes/encounters.routes.js';
 
 /**
  * CLINICAL CORE feature routes — owned by Agent 2.
@@ -13,4 +14,5 @@ export async function clinicalFeature(app: FastifyInstance): Promise<void> {
   await app.register(patientRoutes);
   await app.register(workflowRoutes);
   await app.register(intakeRoutes);
+  await app.register(encounterRoutes);
 }

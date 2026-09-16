@@ -22,6 +22,12 @@ export const ClinicalPermission = {
   INTAKE_READ: 'intake:read',
   VITALS_RECORD: 'vitals:record',
   VITALS_READ: 'vitals:read',
+  ENCOUNTER_CLINICAL_READ: 'encounter:clinical:read',
+  ENCOUNTER_CLINICAL_WRITE: 'encounter:clinical:write',
+  ENCOUNTER_COMPLETE: 'encounter:complete',
+  DIAGNOSIS_WRITE: 'diagnosis:write',
+  TREATMENT_WRITE: 'treatment:write',
+  NOTE_WRITE: 'note:write',
 } as const;
 
 export const clinicalPermissions: WorkstreamPermissions = {
@@ -40,6 +46,13 @@ export const clinicalPermissions: WorkstreamPermissions = {
     [ClinicalPermission.INTAKE_READ]: 'View clinical intake',
     [ClinicalPermission.VITALS_RECORD]: 'Record a set of vital signs',
     [ClinicalPermission.VITALS_READ]: 'View recorded vital signs',
+    [ClinicalPermission.ENCOUNTER_CLINICAL_READ]: 'View the clinical record of an encounter',
+    [ClinicalPermission.ENCOUNTER_CLINICAL_WRITE]:
+      'Open a consultation and write complaint, examination and assessment',
+    [ClinicalPermission.ENCOUNTER_COMPLETE]: 'Close a consultation',
+    [ClinicalPermission.DIAGNOSIS_WRITE]: 'Record or revise a diagnosis',
+    [ClinicalPermission.TREATMENT_WRITE]: 'Record or revise a treatment plan',
+    [ClinicalPermission.NOTE_WRITE]: 'Append a clinical note',
   },
   roleGrants: {
     [RoleKey.RECEPTION]: [
@@ -64,6 +77,7 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.INTAKE_READ,
       ClinicalPermission.VITALS_RECORD,
       ClinicalPermission.VITALS_READ,
+      ClinicalPermission.ENCOUNTER_CLINICAL_READ,
     ],
     [RoleKey.DOCTOR]: [
       ClinicalPermission.PATIENT_READ,
@@ -75,6 +89,12 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.INTAKE_READ,
       ClinicalPermission.VITALS_RECORD,
       ClinicalPermission.VITALS_READ,
+      ClinicalPermission.ENCOUNTER_CLINICAL_READ,
+      ClinicalPermission.ENCOUNTER_CLINICAL_WRITE,
+      ClinicalPermission.ENCOUNTER_COMPLETE,
+      ClinicalPermission.DIAGNOSIS_WRITE,
+      ClinicalPermission.TREATMENT_WRITE,
+      ClinicalPermission.NOTE_WRITE,
     ],
   },
 };

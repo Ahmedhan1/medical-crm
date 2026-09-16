@@ -8,9 +8,13 @@ IN PROGRESS. Working the C0xx series on branch `claude/inspiring-cori-tk3ej8`
 - **C001 — Clinical intake + vitals.** Structured intake (chief complaint +
   history) and vitals capture on an encounter, plus the encounter status
   machine (`checked_in → intake → ready`, cancel).
+- **C002 — Doctor workspace + encounter clinical fields.** Consultation
+  lifecycle (claim / audited handover / complete), complaint, examination,
+  assessment, diagnoses, treatment plan, append-only clinical notes, and the
+  permission-shaped workspace read with previous visits.
 
 ## In Progress
-- C002 — Doctor workspace + encounter clinical fields.
+- C003 — Save & Next (queue advance).
 
 ## Database Changes
 Reserved migration range **0100–0199**.
@@ -22,6 +26,16 @@ Reserved migration range **0100–0199**.
     hard physiological CHECK bounds on every measurement; `bmi` is a GENERATED
     STORED column; CHECKs reject an empty set, an unpaired blood pressure, and
     systolic ≤ diastolic.
+- `0101_clinical_encounter.sql`
+  - `encounter_clinical` — 1:1 consultation record (complaint, examination,
+    `attending_doctor_id`, `started_at`, `completed_at`). Kept out of the
+    foundation-owned `encounter` table so no shared table changes shape.
+  - `assessment` — 1:1, summary + severity.
+  - `diagnosis` — many per encounter; partial unique index allows at most one
+    `primary`; CHECK rejects a code without its coding system.
+  - `treatment_plan` — 1:1, summary, instructions, `follow_up_in_days`.
+  - `clinical_note` — append-only (statement-level trigger, same as `event` and
+    `audit_log`); a correction is a new note linked via `supersedes_id`.
 
 ## API Changes
 | Method | Path | Permission | Notes |
@@ -31,35 +45,58 @@ Reserved migration range **0100–0199**.
 | POST | `/encounters/:id/vitals` | `vitals:record` | Returns `{ vital, abnormal[] }` |
 | GET | `/encounters/:id/vitals` | `vitals:read` | Newest first |
 | POST | `/encounters/:id/status` | `encounter:status` | `intake`/`ready`/`cancelled` only |
+| GET | `/encounters/:id` | `encounter:read` | Sections shaped by permission |
+| POST | `/encounters/:id/start` | `encounter:clinical:write` | Claim or audited handover |
+| PATCH | `/encounters/:id/clinical` | `encounter:clinical:write` (+`treatment:write` for the plan) | Partial |
+| POST | `/encounters/:id/diagnoses` | `diagnosis:write` | |
+| PATCH | `/encounters/:id/diagnoses/:diagnosisId` | `diagnosis:write` | Audited before/after |
+| POST | `/encounters/:id/notes` | `note:write` | Append-only |
+| POST | `/encounters/:id/complete` | `encounter:complete` | Requires assessment or diagnosis |
 
 No existing endpoint changed shape.
 
 ## Permission Changes
 Added to `permissions.clinical.ts` (own file — not a contract change):
 `encounter:status`, `intake:record`, `intake:read`, `vitals:record`,
-`vitals:read`. Granted: `encounter:status` → RECEPTION, NURSE, DOCTOR; the
-intake/vitals permissions → NURSE, DOCTOR only. RECEPTION deliberately gets **no**
-clinical read or write — it keeps operational authority only. ADMIN inherits all.
+`vitals:read`, `encounter:clinical:read`, `encounter:clinical:write`,
+`encounter:complete`, `diagnosis:write`, `treatment:write`, `note:write`.
+
+Grants — the operational/clinical authority split:
+- RECEPTION: `encounter:status` only. **No** clinical read or write.
+- NURSE: intake + vitals record/read, `encounter:clinical:read` (read-only).
+- DOCTOR: everything above plus every clinical write and `encounter:complete`.
+- ADMIN inherits all automatically.
 
 ## Event Changes
-Added to `events.clinical.ts`: `INTAKE_RECORDED`, `VITALS_RECORDED`.
-Both payloads carry identifiers and shape only — intake carries no complaint or
-history text, vitals carry abnormal **field names** but never measured values.
+Added to `events.clinical.ts`: `INTAKE_RECORDED`, `VITALS_RECORDED`,
+`ENCOUNTER_STARTED`, `ENCOUNTER_CLINICAL_UPDATED`, `DIAGNOSIS_RECORDED`,
+`DIAGNOSIS_REVISED`, `TREATMENT_PLAN_RECORDED`, `CLINICAL_NOTE_ADDED`,
+`ENCOUNTER_COMPLETED`.
+
+Every payload carries identifiers and shape only: intake carries no complaint or
+history text; vitals carry abnormal **field names** but never measured values;
+clinical updates carry the names of the sections touched, never their content.
 
 ## Files Owned / Modified
-- Added: `modules/clinical/{encounter.repo,status.service,intake.repo,intake.service,vitals.repo,vitals.service}.ts`,
-  `http/routes/intake.routes.ts`, `db/migrations/0100_clinical_intake_vitals.sql`,
-  `test/integration/intake.test.ts`.
+- Added: `modules/clinical/{encounter.repo,status.service,intake.repo,intake.service,vitals.repo,vitals.service,encounter.clinical.repo,workspace.service}.ts`,
+  `http/routes/{intake,encounters}.routes.ts`,
+  `db/migrations/{0100_clinical_intake_vitals,0101_clinical_encounter}.sql`,
+  `test/integration/{intake,workspace}.test.ts`.
 - Modified (all Agent-2 owned): `permissions.clinical.ts`, `events.clinical.ts`,
   `http/features/clinical.feature.ts`, `modules/workflow/checkin.service.ts`
   (now reuses the shared `encounter.repo` types instead of redeclaring them).
 
 ## Tests
-`test/integration/intake.test.ts` — 24 tests: intake upsert semantics, status
-auto-advance, AI-confirmation gate, validation, vitals range/pair/empty-set
-rejection, BMI derivation, abnormal flagging, RBAC denial for RECEPTION,
-cross-clinic 404, and no-PHI-in-audit/event assertions.
-Suite: **54 passing** (30 inherited + 24 new). Typecheck and build clean.
+- `test/integration/intake.test.ts` — 24 tests: intake upsert semantics, status
+  auto-advance, AI-confirmation gate, validation, vitals range/pair/empty-set
+  rejection, BMI derivation, abnormal flagging, RBAC denial for RECEPTION,
+  cross-clinic 404, and no-PHI-in-audit/event assertions.
+- `test/integration/workspace.test.ts` — 24 tests: claim/handover authority,
+  doctor-only completion, one-primary-diagnosis rule, diagnosis-revision audit
+  before/after, append-only note enforcement at the DB level, record closed
+  after completion, permission-shaped workspace read, cross-clinic 404.
+
+Suite: **78 passing** (30 inherited + 48 new). Typecheck and build clean.
 
 ## Dependencies Added
 None.
@@ -72,6 +109,12 @@ None.
 - `AGENTS.md` §2 names Agent 2's branch `agent-2/clinical-core`; the harness
   assigned `claude/inspiring-cori-tk3ej8`. Per §2 the ownership rules still
   apply, so work proceeds on the harness branch. Flagged for Agent 1 at I001.
+- Two rules were added that `TASKS.md` does not specify, because a consultation
+  record without them is unsafe: (1) a clinical write requires the writer to be
+  the attending doctor, so a second clinician must perform an audited handover
+  first; (2) completing a consultation requires an assessment or a diagnosis, so
+  a closed visit cannot be an empty hole in the patient history. Both are
+  documented here for Agent 1 rather than assumed.
 - `TASKS.md` C001 lists "authz (nurse/reception)" for intake. Implemented as
   nurse/doctor write with reception denied, because the operational/clinical
   authority split requires reception to hold no clinical permissions. Reception
