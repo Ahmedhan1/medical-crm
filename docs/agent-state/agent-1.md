@@ -13,6 +13,32 @@ Does NOT build Agent 2–4 domain features.
 all done. Full suite green (698 tests / 53 files); 25 migrations apply from empty
 → 91 tables; typecheck + build clean; integrated backup→restore verified.
 
+## Platform Hardening Batch (I-5, 2026-09-16)
+Six platform tasks, executed inline (all touch platform-owned files; three edit
+`server.ts`, and all tests share one Postgres — parallel worktrees would race,
+so sequential was safer):
+1. **Auth/session hardening** — in-memory per-account lockout + per-IP login
+   rate limit (`modules/auth/throttle.ts`), fail-closed, generic messages
+   (no enumeration), 429 + Retry-After. Wired into `login`. Config-driven.
+2. **DB/API error redaction (F-06 closed)** — central pino `err` serializer in
+   `server.ts` logs type/code/message/stack only; drops pg `detail`/`where`/
+   `parameters` (PHI). Clients still get the generic 500 envelope.
+3. **CI** — `.github/workflows/ci.yml`: typecheck, build, migrate-from-empty,
+   full suite (governance/security/backup/PDF) on a Postgres service + the
+   Playwright image (real PDF regression). `npm audit` informational.
+4. **Observability** — `/metrics` (bounded-cardinality, PHI-safe counters via an
+   onResponse hook) + `/health/detailed` enriched with pool stats + last-backup.
+5. **PDF/BOX** — bundled DejaVu (Latin) alongside Amiri for deterministic,
+   offline cross-box rendering; determinism test; `MEDCORE-BOX.md` Chromium/font
+   packaging audit.
+6. **Backup CCR-008 gap** — audited: no document bytes exist yet (metadata-only),
+   so nothing to back up; recorded the clean file-store→backup integration path;
+   implementation deferred (safe).
+Verified: full suite green, typecheck + build clean, migrations from empty,
+security/PHI/observability tests. No new runtime dependency except
+`playwright-core` (already in the governance allowlist from Phase 3); no new
+migration. No CCRs opened; CCR-008 design extended.
+
 ## Integration Gate I-4 (2026-09-16) — consolidation
 Re-audited all agent branches (they had advanced; Agent 3 had force-pushed a
 rebase). Integrated the latest valid work, preserving every ownership boundary:

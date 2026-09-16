@@ -6,9 +6,15 @@ export default defineConfig({
     environment: 'node',
     env: {
       NODE_ENV: 'test',
-      AUTH_PEPPER: 'test-pepper-value-0123456789',
-      DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/medcore_test',
-      TEST_DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/medcore_test',
+      // Local defaults; CI (or a developer) can override the DB + pepper via the
+      // real environment, e.g. to point at a service-container host.
+      AUTH_PEPPER: process.env.AUTH_PEPPER ?? 'test-pepper-value-0123456789',
+      DATABASE_URL:
+        process.env.TEST_DATABASE_URL ??
+        process.env.DATABASE_URL ??
+        'postgres://postgres:postgres@localhost:5432/medcore_test',
+      TEST_DATABASE_URL:
+        process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/medcore_test',
       SESSION_TTL_SECONDS: '3600',
       QR_TTL_SECONDS: '3600',
       BACKUP_DIR: './.tmp-test-backups',

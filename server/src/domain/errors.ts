@@ -49,6 +49,19 @@ export class ConflictError extends AppError {
   }
 }
 
+/**
+ * Too many requests / throttled (429). Used for login rate limiting and account
+ * lockout. `retryAfterSeconds` is surfaced to the client without leaking whether
+ * the account exists (generic wording).
+ */
+export class TooManyRequestsError extends AppError {
+  readonly retryAfterSeconds: number;
+  constructor(message = 'Too many requests, please try again later', retryAfterSeconds = 60) {
+    super(429, 'too_many_requests', message, { retryAfterSeconds });
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 export function isAppError(err: unknown): err is AppError {
   return err instanceof AppError;
 }

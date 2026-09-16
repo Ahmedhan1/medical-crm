@@ -4,6 +4,9 @@ import { ZodError } from 'zod';
 import { isAppError } from '../domain/errors.js';
 import { getPool } from '../db/pool.js';
 import { audit } from '../modules/governance/audit.js';
+import { TooManyRequestsError } from '../domain/errors.js';
+import { recordRequest, metricsSnapshot } from './metrics.js';
+import { listBackups } from '../modules/backup/backup.service.js';
 import { foundationFeature } from './features/foundation.feature.js';
 import { clinicalFeature } from './features/clinical.feature.js';
 import { automationFeature } from './features/automation.feature.js';
@@ -31,10 +34,30 @@ export function requestLogSerializer(req: FastifyRequest): {
   return { method: req.method, url: path, hostname: req.hostname };
 }
 
-// Shared pino config: strip query strings via the serializer and remove
-// credential-bearing headers outright (defense in depth).
+/**
+ * Error-log serializer (Task 2, finding F-06). Postgres attaches value-bearing
+ * fields to its errors — `detail` ("Key (national_id)=(123)…"), `where`,
+ * `internalQuery`, `parameters` — which can contain PHI. Pino's default error
+ * serializer would log all enumerable props. We log ONLY a controlled, PHI-safe
+ * shape: type, SQLSTATE code, a truncated message, HTTP status, and the stack
+ * (code paths, not data). Value-bearing pg fields are never included.
+ */
+export function errorLogSerializer(
+  err: Error & { code?: unknown; statusCode?: unknown },
+): { type: string; message: string; stack: string; code?: string; statusCode?: number } {
+  return {
+    type: err?.name ?? 'Error',
+    message: typeof err?.message === 'string' ? err.message.slice(0, 300) : '',
+    stack: typeof err?.stack === 'string' ? err.stack : '',
+    code: typeof err?.code === 'string' ? err.code : undefined,
+    statusCode: typeof err?.statusCode === 'number' ? err.statusCode : undefined,
+  };
+}
+
+// Shared pino config: strip query strings, sanitise errors (no pg detail/PHI),
+// and remove credential-bearing headers outright (defense in depth).
 const LOGGER_CONFIG = {
-  serializers: { req: requestLogSerializer },
+  serializers: { req: requestLogSerializer, err: errorLogSerializer },
   redact: {
     paths: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-api-key"]'],
     remove: true,
@@ -82,6 +105,9 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
           req.log.error({ auditErr }, 'failed to write denied-access audit');
         }
       }
+      if (err instanceof TooManyRequestsError) {
+        reply.header('Retry-After', String(err.retryAfterSeconds));
+      }
       return reply.code(err.status).send({
         error: { code: err.code, message: err.message, details: err.details ?? undefined },
       });
@@ -105,6 +131,11 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
 
   app.setNotFoundHandler((_req, reply) => {
     reply.code(404).send({ error: { code: 'not_found', message: 'Route not found' } });
+  });
+
+  // PHI-safe request metrics: count by method + route TEMPLATE + status class.
+  app.addHook('onResponse', async (req, reply) => {
+    recordRequest(req.method, req.routeOptions?.url, reply.statusCode);
   });
 
   // Liveness: is the process up? (No dependencies — never 503s on DB.)
@@ -138,14 +169,36 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     } catch {
       db = { status: 'down' };
     }
+    // Connection-pool saturation is a leading indicator of trouble.
+    const pool = getPool();
+    const poolStats = {
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting: pool.waitingCount,
+    };
+
+    // Last backup (operational readiness for recovery). Metadata only, no PHI.
+    let backup: { lastStatus?: string; lastAt?: string | null } = {};
+    try {
+      const [last] = await listBackups(1);
+      if (last) backup = { lastStatus: last.status, lastAt: last.finishedAt ?? last.startedAt };
+    } catch {
+      /* backup ledger unavailable — omit rather than fail readiness */
+    }
+
     const ready = db.status === 'up';
     return reply.code(ready ? 200 : 503).send({
       status: ready ? 'ok' : 'degraded',
       time: new Date().toISOString(),
       uptimeSeconds: Math.round(process.uptime()),
       node: process.version,
-      checks: { database: db },
+      checks: { database: db, pool: poolStats, backup },
     });
+  });
+
+  // PHI-safe operational metrics (bounded-cardinality counters only).
+  app.get('/metrics', async (_req, reply) => {
+    return reply.send(metricsSnapshot());
   });
 
   // Workstream feature aggregators. This list is STABLE (Agent 1 owned):

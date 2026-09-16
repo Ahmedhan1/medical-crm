@@ -395,6 +395,23 @@ regulatory submission, any clinical write, or any AI that classifies autonomousl
   live outside Postgres, so the DB backup does not yet cover them — the file
   store must ship with its own backup coverage before documents are used for
   primary storage in production.
+- **Backup-gap audit (Agent 1 / Integration I-5):** verified — **no document
+  bytes exist anywhere today.** `document_reference` (0108) stores metadata only;
+  `storage_key` is an opaque, externally-produced pointer and no platform
+  file-store has been implemented. There is therefore nothing for the backup
+  engine to miss right now, and implementing blob backup would be speculative
+  (no store to snapshot) — so it is **DEFERRED** (per the batch rule "implement
+  only if it can be done safely"). **Clean integration path when the file-store
+  lands:** (1) the store writes tenant-partitioned, encrypted-at-rest blobs under
+  a single configured root; (2) each blob is content-addressed by its
+  `checksum_sha256` (already a column) so backup and verify are integrity-checked;
+  (3) `createBackup` gains a step that snapshots that root **atomically with**
+  (immediately after) the pg_dump, recording the blob-set checksum in
+  `backup_run`; (4) `verifyBackup`/`restoreBackup` extend to the blob set; (5) the
+  DB dump is the source of truth for which `storage_key`s must exist, so restore
+  can detect missing/orphaned blobs. This keeps the storage service out of the
+  auth path and adds no cross-workstream coupling. Tracked for the file-storage
+  phase; no code this batch.
 
 ### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
 - Status: PROPOSED
