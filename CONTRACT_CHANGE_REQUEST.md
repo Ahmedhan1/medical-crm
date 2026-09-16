@@ -262,6 +262,11 @@ inside your own feature module; adding a new table in your migration range.
   direct table query, mirroring the CCR-004 firewall discipline). No clinical
   code changes when codes arrive (fully additive). Safety is not weakened in the
   meantime.
+- **Reaffirmed at Integration I-4 (this session):** stays PROPOSED/deferred, do
+  NOT implement the PHI-quarantine behaviour yet (per directive §3). Agent 2's
+  CP-10/CP-11 re-review confirmed the conservative name-based check is still in
+  force (`allergies-safety.test.ts`), no drug-master table is duplicated, and no
+  Agent 4 module is imported by Clinical Core.
 
 ### CCR-006 — Patient record extension (lifecycle, identifiers, contacts, merge)
 - Status: PROPOSED

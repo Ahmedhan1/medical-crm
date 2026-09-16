@@ -109,6 +109,13 @@ const TIMELINE_SOURCES: readonly string[] = [
      FROM document_reference dr
     WHERE dr.clinic_id = $1 AND dr.patient_id = ANY($2::uuid[])
       AND dr.status <> 'entered_in_error'`,
+
+  `SELECT rf.id::text, 'referral', rf.created_at, rf.origin_encounter_id, rf.reason,
+          jsonb_strip_nulls(jsonb_build_object(
+            'direction', rf.direction, 'status', rf.status, 'urgency', rf.urgency,
+            'specialty', rf.receiving_specialty))
+     FROM referral rf
+    WHERE rf.clinic_id = $1 AND rf.patient_id = ANY($2::uuid[])`,
 ];
 
 export interface TimelineEntry {

@@ -14,6 +14,10 @@ import {
   listRecallWorklist,
   scheduleFollowUp,
 } from '../../modules/clinical/followups.service.js';
+import {
+  getFollowUpDetection,
+  runFollowUpDetection,
+} from '../../modules/clinical/followup-detection.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
@@ -79,6 +83,17 @@ export async function prescriptionRoutes(app: FastifyInstance): Promise<void> {
   app.get('/follow-ups', async (req, reply) => {
     const followUps = await listRecallWorklist(principalOf(req), req.query);
     return reply.send({ followUps });
+  });
+
+  // Detection read-model: scheduled follow-ups classified due/overdue/approaching.
+  app.get('/follow-ups/detection', async (req, reply) => {
+    return reply.send(await getFollowUpDetection(principalOf(req), req.query));
+  });
+
+  // Idempotent detection sweep: publishes FOLLOW_UP_DUE / FOLLOW_UP_OVERDUE for
+  // Agent 3 to consume. Clinical Core detects and publishes; it never notifies.
+  app.post('/follow-ups/detection/run', async (req, reply) => {
+    return reply.send(await runFollowUpDetection(principalOf(req), req.query));
   });
 
   app.post('/follow-ups/:id/close', async (req, reply) => {

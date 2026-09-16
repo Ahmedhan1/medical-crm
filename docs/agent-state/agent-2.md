@@ -1,14 +1,14 @@
 # Agent 2 — Clinical Platform — State
 
 ## Current Status
-Clinical Platform program **CP-1, CP-2, CP-3, CP-8, CP-9, CP-16 delivered** on branch
+Clinical Platform program **CP-1, CP-2, CP-3, CP-8, CP-9, CP-16, CP-10, CP-11 delivered** on branch
 `claude/inspiring-cori-tk3ej8`, which is fast-forwarded onto
-`integration/medcore-v1` (Agent 1's integrated tree, including I001 hardening
-and platform Phase 1). The earlier C001–C007 Clinical Core series is merged and
+`integration/medcore-v1` (Agent 1's integrated tree, now including platform
+P2 backup engine, merged in this session). The earlier C001–C007 Clinical Core series is merged and
 live in the integrated branch.
 
-Suite: **489 tests / 36 files green.** Typecheck, build and a from-empty
-migration run (17 migrations) all clean.
+Suite: **534 tests / 40 files green.** Typecheck, build and a from-empty
+migration run (18 migrations) all clean.
 
 ## Completed
 
@@ -86,6 +86,24 @@ episodes, report engine, prescriptions + follow-ups. See git history.
   gated by the caller's read permission (workspace pattern). Merged record
   flagged with `mergedIntoId`. Audited (section names only, no PHI).
 
+### CP-10 — Referrals & care coordination *(migration 0109)*
+- `referral` (ServiceRequest-like) + append-only `referral_status_history`.
+  Deterministic lifecycle draft→ordered→sent→accepted/declined→scheduled→
+  completed (+cancelled/expired); invalid transitions fail.
+- Referral status IS the coordination state — no task table (Agent 3 owns tasks).
+- Authority: create/complete → DOCTOR; manage (admin middle + linkage) →
+  RECEPTION+DOCTOR; NURSE read-only. Master data via FKs; external provider is
+  free text. Timeline + Patient 360 integrated; reason kept out of events.
+
+### CP-11 — Overdue follow-up detection *(migration 0110, marker columns only)*
+- Read-model + idempotent event sweep over existing `follow_up` — no new table.
+  0110 adds `due_event_at`/`overdue_event_at` for event idempotency only.
+- `classifyDueState` pure/total/inspectable. `GET /follow-ups/detection` (read),
+  `POST /follow-ups/detection/run` (sweep, `followup:detect` DOCTOR) publishes
+  FOLLOW_UP_DUE/OVERDUE once per follow-up using the server date. Detection
+  modifies no clinical fact. Agent 3 consumes the events; Clinical Core sends
+  nothing.
+
 ### CP-9 — Document references *(migration 0108)*
 - `document_reference` (FHIR DocumentReference-shaped), METADATA ONLY — bytes
   are never in the DB; `storage_key` is an opaque pointer (byte storage = CCR-008,
@@ -97,7 +115,7 @@ episodes, report engine, prescriptions + follow-ups. See git history.
   aware.
 
 ## Database Changes
-Migration range **0100–0199**. Used: 0100–0103, **0104, 0105, 0106, 0107, 0108**.
+Migration range **0100–0199**. Used: 0100–0108, **0109, 0110**.
 0105 requires the `btree_gist` contrib extension (created by the migration; a
 role that cannot `CREATE EXTENSION` needs a DBA to enable it first).
 
@@ -123,6 +141,11 @@ New in CP-9: `POST /documents`, `GET /documents/:id`, `POST /documents/:id/void`
 
 New in CP-16: `GET /patients/:id/360`.
 
+New in CP-10: `POST|GET /referrals`, `GET /referrals/:id`,
+`POST /referrals/:id/status`.
+
+New in CP-11: `GET /follow-ups/detection`, `POST /follow-ups/detection/run`.
+
 Changed: `GET /patients/:id` — `birthDate` is now `YYYY-MM-DD` (see CCR-006).
 `POST /encounters/:id/prescriptions` gains optional `acknowledgeAlerts` +
 `overrideReason` (additive; absent = old behaviour unless an alert fires). No
@@ -134,7 +157,8 @@ Added (own file, not a contract change): `patient:update`, `patient:merge`,
 `appointment:read|schedule|update|cancel|arrival|overbook`,
 `schedule:config:read|manage`, `observation:record|read`,
 `observation:config:read|manage`, `allergy:read|write`, `safety:override`,
-`document:read|read:restricted|write|manage`.
+`document:read|read:restricted|write|manage`,
+`referral:read|create|manage|complete`, `followup:detect`.
 
 Grants keep the operational/clinical split: reception runs the patient index and
 the front desk; nurse reads contacts/identifiers and moves patients through the
@@ -150,7 +174,9 @@ Added: `PATIENT_UPDATED`, `PATIENT_STATUS_CHANGED`, `PATIENT_MERGED`,
 `APPOINTMENT_LEFT_WITHOUT_BEING_SEEN`, `APPOINTMENT_COMPLETED`,
 `PATIENT_ARRIVED`, `OBSERVATION_RECORDED`, `ALLERGY_RECORDED`, `ALLERGY_UPDATED`,
 `SAFETY_ALERT_OVERRIDDEN`, `DOCUMENT_REGISTERED`, `DOCUMENT_SUPERSEDED`,
-`DOCUMENT_VOIDED`.
+`DOCUMENT_VOIDED`, `REFERRAL_CREATED`, `REFERRAL_SENT`, `REFERRAL_ACCEPTED`,
+`REFERRAL_DECLINED`, `REFERRAL_SCHEDULED`, `REFERRAL_COMPLETED`,
+`REFERRAL_CANCELLED`, `REFERRAL_EXPIRED`, `FOLLOW_UP_DUE`, `FOLLOW_UP_OVERDUE`.
 
 Naming stays SCREAMING_SNAKE. The program brief suggests `appointment.created`
 style, but Agent 3's automation matches `automation_rule.event_type` as a plain
@@ -163,6 +189,8 @@ string, so renaming would silently break every existing rule. Raised, not change
 - `test/integration/allergies-safety.test.ts` — 20
 - `test/integration/documents.test.ts` — 14
 - `test/integration/patient360.test.ts` — 6
+- `test/integration/referrals.test.ts` — 21 (incl. full red-team set)
+- `test/integration/followup-detection.test.ts` — 16
 Covering lifecycle transitions, merge semantics and lineage, identifier
 uniqueness, contact primary-demotion, room double-booking (and slot release),
 deliberate overbooking, encounter-driven appointment status, arrival atomicity,
@@ -177,6 +205,9 @@ allowlist test passes). One PostgreSQL contrib extension: `btree_gist`.
 - **CCR-008 (PROPOSED)** — document byte-storage service (local-first blob
   strategy). CP-9 stores metadata only against an opaque key; the platform owns
   the backend. Authorization stays in Clinical Core.
+- **CCR-007 (PROPOSED, re-reviewed CP-10/11)** — coded drug↔allergen
+  cross-reference. Still pending Agent 1; conservative name-based matching
+  verified in force, no drug-master duplicated, no Agent 4 import. No change.
 - **CCR-007 (PROPOSED)** — coded drug↔allergen cross-reference to make the
   prescribing safety check precise once the drug master exposes codes. Additive;
   the engine already prefers a ref match. Governed read only.
@@ -201,10 +232,11 @@ allowlist test passes). One PostgreSQL contrib extension: `btree_gist`.
 None.
 
 ## Next Tasks
-- **CP-10** — referral & care-coordination: internal/external referrals with a
-  status lifecycle, and clinical tasks with assignee/due-date.
-- **CP-11** — overdue follow-up detection (event-driven, for recall automation).
+- **CP-6** — procedures / treatment sessions / protocols (procedure record,
+  session tracking, planned-vs-completed), building on treatment episodes.
+- **CP-12** — packages (session counts, consumption), clinical side only.
+- **CP-14** — clinical analytics (operational counts, PHI-safe).
 See `docs/workstreams/clinical-core.md` for the full CP-1..CP-21 status table.
 
 ## Last Commit
-- `platform(clinical P16): Patient 360 read model`
+- `platform(clinical P10+P11): referrals & care coordination + follow-up detection`
