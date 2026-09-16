@@ -114,6 +114,62 @@ inside your own feature module; adding a new table in your migration range.
   endpoint. No shared file changes. Verified by AI tests (draft never auto-writes)
   + clinical intake provenance CHECK.
 
+### CCR-004 — Governed aggregate-only read path over clinical data
+- Status: **APPROVED** (contract); implementation DEFERRED (fail-closed today)
+- Requested by: Agent 4 (originally filed as CCR-001 on its branch)
+- Date: 2026-09-16
+- Affects: Agent 1 (foundation/governance), Agent 2 (clinical), Agent 4 (intelligence)
+- Contract file(s): new `modules/governance/governed-read.ts` (Agent 1 owned) — not yet created.
+- Change: an `IntelligenceSource` port (already declared in
+  `modules/intelligence/sources.ts`) whose `clinical_governed` implementation
+  returns aggregate `CohortContribution[]` — never a clinical row. Contributions
+  MUST be classified `aggregate`; the firewall aborts on any
+  `patient_identifiable`/`patient_pseudonymous` input; `subjectKey` must already
+  be non-reversible on the clinical side; the clinical side applies its own
+  authorization/consent before returning anything.
+- Reason: P005 needs a clinical INPUT, but implementing it inside the pharma
+  workstream would mean pharma code reading clinical tables — forbidden by
+  `AGENTS.md` §1.10 and blueprint §45. Today the pipeline runs over pharma's own
+  field data and refuses the clinical source.
+- Backward compatibility: fully additive; `clinical_governed` is registered with
+  `available:false` and returns HTTP 501 (denied run recorded).
+- Tests: `pharma-firewall.test.ts` (clinical source not wired; no pharma module
+  references a clinical table) + `firewall.test.ts` (patient-class aborts;
+  below-threshold returns nothing). Implementation will need clinical-side tests.
+- **Decision (Agent 1 / Integration):** APPROVED as the contract shape. The
+  current fail-closed behaviour (501, audited) is the correct production posture,
+  so building the governed provider is **DEFERRED** — it is a security-critical
+  feature that must be implemented and independently audited on the clinical side,
+  not rushed during integration. NOT a production blocker: no clinical data can
+  reach pharma today, by construction. Owner for the deferred build: Agent 1 +
+  Agent 2.
+
+### CCR-005 — Additional pharma role keys (fix ADMIN over-grant)
+- Status: **APPROVED** — implemented at integration
+- Requested by: Agent 4 (originally filed as CCR-002 on its branch)
+- Date: 2026-09-16
+- Affects: Agent 1 (owns `roles.ts`), Agent 4 (`permissions.pharma.ts`)
+- Contract file(s): `modules/governance/roles.ts`, `permissions.pharma.ts`
+- Change: add `RoleKey`s `PHARMA_DATA_STEWARD`, `MEDICAL_AFFAIRS`,
+  `PHARMA_MANAGER` and grant the elevated pharma permissions
+  (`hcp:verify`, `hcp:merge`, `hco:write`, `medication:write`, `territory:manage`,
+  `scientificrequest:fulfill`, `content:write`, `content:approve`,
+  `segment:manage`, `campaign:manage`, `intelligence:publish`) to the appropriate
+  new role instead of leaving them ADMIN-only.
+- Reason: those permissions are (correctly) withheld from `PHARMA_REP`, so today
+  only `ADMIN` holds them — a clinic administrator should not be the person
+  approving promotional material or publishing intelligence. Separation of duties
+  is already coded and tested; only the role vocabulary was missing.
+- Backward compatibility: purely additive; no existing grant changes and ADMIN
+  keeps everything.
+- Tests: `test/integration/rbac-roles.test.ts` (added at integration) asserts each
+  new role holds only its intended subset, holds NO clinical permission, and that
+  content author≠approver still holds.
+- **Decision (Agent 1 / Integration):** APPROVED and IMPLEMENTED. This is the
+  ADMIN over-grant fix the integration brief calls for, solved by least privilege
+  (dedicated roles) rather than broadening existing ones. See
+  `docs/agent-state/integration.md`.
+
 ---
 
 ## Known contracts to respect (baseline, do not break)

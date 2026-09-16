@@ -1,4 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import { hcpRoutes } from '../routes/hcp.routes.js';
+import { intelligenceRoutes } from '../routes/intelligence.routes.js';
+import { medicationRoutes } from '../routes/medication.routes.js';
+import { pharmaContentRoutes } from '../routes/pharma-content.routes.js';
+import { repRoutes } from '../routes/rep.routes.js';
 
 /**
  * PHARMA / HCP / DRUG / INTELLIGENCE feature routes — owned by Agent 4.
@@ -7,7 +12,10 @@ import type { FastifyInstance } from 'fastify';
  * GOVERNANCE BOUNDARY (§45): pharma routes must never expose patient-level
  * identifiable clinical data — only HCP engagement and aggregated signals.
  */
-export async function pharmaFeature(_app: FastifyInstance): Promise<void> {
-  // No pharma routes yet. Example:
-  //   await _app.register(hcpRoutes);
+export async function pharmaFeature(app: FastifyInstance): Promise<void> {
+  await app.register(hcpRoutes);
+  await app.register(medicationRoutes);
+  await app.register(repRoutes);
+  await app.register(pharmaContentRoutes);
+  await app.register(intelligenceRoutes);
 }
