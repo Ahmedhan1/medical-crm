@@ -24,6 +24,9 @@ export const AutomationPermission = {
   AI_DRAFT_CREATE: 'ai:draft-create',
   AI_DRAFT_REVIEW: 'ai:draft-review',
   AI_SUMMARY_GENERATE: 'ai:summary-generate',
+
+  // AI safety & governance — tenant AI policy (cloud/PHI routing controls).
+  AI_POLICY_MANAGE: 'ai:policy-manage',
 } as const;
 
 export const automationPermissions: WorkstreamPermissions = {
@@ -38,6 +41,7 @@ export const automationPermissions: WorkstreamPermissions = {
     [AutomationPermission.AI_DRAFT_CREATE]: 'Generate a review-first AI draft (intake, summary)',
     [AutomationPermission.AI_DRAFT_REVIEW]: 'Review, confirm or reject an AI draft',
     [AutomationPermission.AI_SUMMARY_GENERATE]: 'Generate a longitudinal AI summary draft',
+    [AutomationPermission.AI_POLICY_MANAGE]: 'View and set the clinic AI policy (cloud/PHI routing)',
   },
   roleGrants: {
     // Front desk: sends reminders, captures consent, starts AI intake drafts.

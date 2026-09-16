@@ -5,6 +5,12 @@ import { principalOf, requireAuth } from '../plugins/auth.js';
 import { extractIntakeToDraft } from '../../modules/ai/intake.js';
 import { generatePatientSummary } from '../../modules/ai/summaries.js';
 import { getDraftForReview, listDrafts, confirmDraft, rejectDraft } from '../../modules/ai/drafts.js';
+import { readTenantAiPolicy, setTenantAiPolicy } from '../../modules/ai/policy.js';
+
+const PolicyBody = z.object({
+  allowCloud: z.boolean().optional(),
+  cloudMaxClass: z.enum(['public', 'internal', 'operational', 'sensitive', 'phi', 'highly_restricted']).optional(),
+});
 
 const IntakeBody = z.object({
   subjectType: z.enum(['patient', 'encounter']),
@@ -32,6 +38,19 @@ const IdParam = z.object({ id: z.string().uuid() });
  */
 export async function aiRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', requireAuth);
+
+  // AI governance: the clinic's cloud/PHI routing policy (admin only).
+  app.get('/ai/policy', async (req, reply) => {
+    const policy = await readTenantAiPolicy(principalOf(req));
+    return reply.send(policy);
+  });
+
+  app.post('/ai/policy', async (req, reply) => {
+    const parsed = PolicyBody.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Invalid AI policy', parsed.error.flatten());
+    const policy = await setTenantAiPolicy(principalOf(req), parsed.data);
+    return reply.code(201).send(policy);
+  });
 
   app.post('/ai/intake', async (req, reply) => {
     const parsed = IntakeBody.safeParse(req.body);

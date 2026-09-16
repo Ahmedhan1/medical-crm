@@ -21,7 +21,7 @@ export const ConditionSchema = z.object({
 export type Condition = z.infer<typeof ConditionSchema>;
 
 /** Action types the engine knows how to execute. Extend the registry to add more. */
-export const ActionType = z.enum(['send_message', 'noop']);
+export const ActionType = z.enum(['send_message', 'schedule_action', 'noop']);
 export type ActionType = z.infer<typeof ActionType>;
 
 export const ActionSchema = z.object({
@@ -43,6 +43,8 @@ export const CreateRuleSchema = z
     conditions: z.array(ConditionSchema).max(50).default([]),
     actions: z.array(ActionSchema).min(1).max(20),
     isEnabled: z.boolean().default(true),
+    /** Lower runs first when several rules match one event. */
+    priority: z.number().int().min(0).max(10000).default(100),
   })
   .superRefine((val, ctx) => {
     if (val.triggerType === 'event' && !val.eventType) {
@@ -60,6 +62,7 @@ export const UpdateRuleSchema = z.object({
   conditions: z.array(ConditionSchema).max(50).optional(),
   actions: z.array(ActionSchema).min(1).max(20).optional(),
   isEnabled: z.boolean().optional(),
+  priority: z.number().int().min(0).max(10000).optional(),
 });
 export type UpdateRuleInput = z.infer<typeof UpdateRuleSchema>;
 
@@ -74,6 +77,28 @@ export interface AutomationRule {
   conditions: Condition[];
   actions: Action[];
   isEnabled: boolean;
+  priority: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduledAction {
+  id: string;
+  clinicId: string;
+  ruleId: string | null;
+  sourceEventId: number | null;
+  actionType: string;
+  params: Record<string, unknown>;
+  dedupeKey: string | null;
+  status: 'pending' | 'executing' | 'done' | 'failed' | 'cancelled' | 'expired';
+  scheduledFor: string;
+  notBefore: string | null;
+  expiresAt: string | null;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  result: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }

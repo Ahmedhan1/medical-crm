@@ -9,6 +9,7 @@ import { getActiveTemplate, renderTemplate } from './templates.js';
 import { resolvePatientRecipient } from './recipients.js';
 import { maskRecipient } from './redact.js';
 import { getConsentStatus, isSendAllowed } from './consent.js';
+import { getEffectivePolicy, inQuietHours, frequencyBlock } from './policy.js';
 
 /**
  * Core outbound messaging pipeline (blueprint §16, §39).
@@ -45,6 +46,12 @@ export interface SendRequest {
   /** At-most-once guard. Highly recommended for automated sends. */
   idempotencyKey?: string | null;
   actorId?: string | null;
+  /**
+   * Skip the communication-quality guards (quiet hours + frequency caps).
+   * Consent is ALWAYS enforced and cannot be bypassed. Reserved for genuinely
+   * urgent/system-critical messages; defaults to false.
+   */
+  bypassPolicy?: boolean;
 }
 
 export interface SendOutcome {
@@ -102,6 +109,17 @@ export async function dispatchMessage(req: SendRequest): Promise<SendOutcome> {
     const status = await getConsentStatus(req.clinicId, req.patientId, req.channel);
     if (!isSendAllowed(status)) {
       return recordSuppressed(req, provider.id, 'no_consent');
+    }
+
+    // 1b. Communication-quality guards (quiet hours + frequency caps). Skipped
+    //     for ad-hoc direct sends (no patientId). Permissive when no policy set.
+    if (!req.bypassPolicy) {
+      const policy = await getEffectivePolicy(req.clinicId, req.channel);
+      if (inQuietHours(policy, new Date())) {
+        return recordSuppressed(req, provider.id, 'quiet_hours');
+      }
+      const block = await frequencyBlock(policy, req.patientId, req.channel);
+      if (block) return recordSuppressed(req, provider.id, block);
     }
   }
 

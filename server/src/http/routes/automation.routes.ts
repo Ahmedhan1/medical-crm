@@ -52,7 +52,30 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
     const summary = await automation.processNow(principalOf(req));
     return reply.send(summary);
   });
+
+  // --- Scheduled actions (time engine) ---
+  app.post('/automations/run-scheduled', async (req, reply) => {
+    const summary = await automation.runScheduledNow(principalOf(req));
+    return reply.send(summary);
+  });
+
+  app.get('/scheduled-actions', async (req, reply) => {
+    const q = ScheduledQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationError('Invalid filter', q.error.flatten());
+    const actions = await automation.listScheduledActions(principalOf(req), q.data.status);
+    return reply.send({ actions });
+  });
+
+  app.post('/scheduled-actions/:id/cancel', async (req, reply) => {
+    const { id } = parseId(req.params);
+    const action = await automation.cancelScheduledAction(principalOf(req), id);
+    return reply.send(action);
+  });
 }
+
+const ScheduledQuery = z.object({
+  status: z.enum(['pending', 'executing', 'done', 'failed', 'cancelled', 'expired']).optional(),
+});
 
 function parseId(params: unknown): { id: string } {
   const parsed = IdParam.safeParse(params);

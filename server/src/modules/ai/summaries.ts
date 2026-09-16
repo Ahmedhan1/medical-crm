@@ -2,7 +2,7 @@ import { getPool, withTransaction } from '../../db/pool.js';
 import { NotFoundError } from '../../domain/errors.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { Permission } from '../governance/permissions.js';
-import { getAIProvider } from './providers/registry.js';
+import { authorizeAiRequest } from './gateway.js';
 import type { SourceRecord } from './ai.types.js';
 import { insertDraft, type AIDraft } from './drafts.js';
 import { recordGeneration } from './observability.js';
@@ -61,8 +61,15 @@ export async function generatePatientSummary(
   );
   if (patient.rows.length === 0) throw new NotFoundError('Patient');
 
+  // Governance gateway: classify → tenant policy → provider routing. A patient
+  // summary is PHI, so the default (no cloud opt-in) routes to the local provider.
+  const auth = await authorizeAiRequest({
+    clinicId: principal.clinicId,
+    capability: 'summary',
+    actorId: principal.userId,
+  });
+  const provider = auth.provider;
   const sources = await gatherPatientSources(principal.clinicId, patientId);
-  const provider = getAIProvider();
 
   const started = Date.now();
   const result = await provider.summarize({ sources, kind: 'summary' });
@@ -92,6 +99,10 @@ export async function generatePatientSummary(
       sourceCount: sources.length,
       latencyMs,
       createdBy: principal.userId,
+      dataClass: auth.classification,
+      policyDecision: auth.decision,
+      providerTier: auth.providerTier,
+      requestId: auth.requestId,
     });
     return draft;
   });

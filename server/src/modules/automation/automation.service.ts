@@ -14,6 +14,11 @@ import {
 import { validateActions } from './actions.js';
 import * as repo from './automation.repo.js';
 import { processNewEvents, type ProcessSummary } from './engine.js';
+import { runDueActions, type RunScheduledSummary } from './scheduler.runner.js';
+import { listScheduled, getScheduled, cancelScheduled } from './scheduled.repo.js';
+import type { ScheduledAction } from './automation.types.js';
+import { ConflictError } from '../../domain/errors.js';
+import { audit } from '../governance/audit.js';
 
 /**
  * Automation rule administration. Rule config is an administrative capability
@@ -125,4 +130,39 @@ export async function listRuns(principal: Principal, ruleId: string): Promise<Au
 export async function processNow(principal: Principal): Promise<ProcessSummary> {
   requirePermission(principal, Permission.AUTOMATION_MANAGE);
   return processNewEvents();
+}
+
+/**
+ * Run all DUE scheduled actions now (the time-engine tick). A worker would call
+ * `runDueActions` directly on an interval; the HTTP entry point is admin-gated.
+ */
+export async function runScheduledNow(principal: Principal): Promise<RunScheduledSummary> {
+  requirePermission(principal, Permission.AUTOMATION_MANAGE);
+  return runDueActions();
+}
+
+export async function listScheduledActions(
+  principal: Principal,
+  status?: ScheduledAction['status'],
+): Promise<ScheduledAction[]> {
+  requirePermission(principal, Permission.AUTOMATION_READ);
+  return listScheduled(principal.clinicId, status);
+}
+
+export async function cancelScheduledAction(principal: Principal, id: string): Promise<ScheduledAction> {
+  requirePermission(principal, Permission.AUTOMATION_MANAGE);
+  const outcome = await cancelScheduled(principal.clinicId, id);
+  if (outcome === 'not_found') throw new NotFoundError('Scheduled action');
+  if (outcome === 'not_pending') throw new ConflictError('Only a pending scheduled action can be cancelled');
+  await audit({
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: 'automation.scheduled.cancel',
+    outcome: 'success',
+    targetType: 'scheduled_action',
+    targetId: id,
+  });
+  const action = await getScheduled(principal.clinicId, id);
+  if (!action) throw new NotFoundError('Scheduled action');
+  return action;
 }

@@ -57,9 +57,17 @@ export interface SummaryResult {
   citations: Citation[];
 }
 
+export type ProviderTier = 'local' | 'cloud';
+
 export interface AIProvider {
   readonly id: string;
   readonly model?: string;
+  /**
+   * Where this provider processes data. 'local' = on-box (safe for any class);
+   * 'cloud' = off-box, only reachable when tenant AI policy permits. Defaults to
+   * 'local' when omitted.
+   */
+  readonly tier?: ProviderTier;
 
   /** Optional: turn audio into text. Local provider echoes provided text. */
   transcribe?(input: TranscriptionInput): Promise<TranscriptionResult>;

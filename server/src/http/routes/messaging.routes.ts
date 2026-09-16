@@ -8,6 +8,7 @@ import { sendMessage, listMessages } from '../../modules/messaging/messaging.ser
 import { retryMessage, retryDueMessages, applyDeliveryStatus } from '../../modules/messaging/delivery.js';
 import { saveTemplate, getTemplatesForClinic } from '../../modules/messaging/templates.js';
 import { setConsent, listConsents } from '../../modules/messaging/consent.js';
+import { setPolicy, listPolicies } from '../../modules/messaging/policy.js';
 
 const Channel = z.enum(['whatsapp', 'sms', 'email']);
 const IdParam = z.object({ id: z.string().uuid() });
@@ -41,6 +42,15 @@ const DeliveryStatusBody = z.object({
   providerRef: z.string().min(1),
   delivered: z.boolean(),
   errorCode: z.string().max(200).optional(),
+});
+
+const PolicyBody = z.object({
+  channel: z.enum(['all', 'whatsapp', 'sms', 'email']).optional(),
+  quietHoursEnabled: z.boolean().optional(),
+  quietStartHour: z.number().int().min(0).max(23).optional(),
+  quietEndHour: z.number().int().min(0).max(23).optional(),
+  dailyCap: z.number().int().min(0).nullable().optional(),
+  minGapMinutes: z.number().int().min(0).max(10080).optional(),
 });
 
 /**
@@ -102,6 +112,18 @@ export async function messagingRoutes(app: FastifyInstance): Promise<void> {
       parsed.data.status,
     );
     return reply.code(201).send(record);
+  });
+
+  app.post('/messaging-policy', async (req, reply) => {
+    const parsed = PolicyBody.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Invalid messaging policy', parsed.error.flatten());
+    const policy = await setPolicy(principalOf(req), parsed.data);
+    return reply.code(201).send(policy);
+  });
+
+  app.get('/messaging-policy', async (req, reply) => {
+    const policies = await listPolicies(principalOf(req));
+    return reply.send({ policies });
   });
 
   app.get('/consent/:patientId', async (req, reply) => {

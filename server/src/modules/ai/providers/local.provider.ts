@@ -24,6 +24,7 @@ import type {
 export class LocalAIProvider implements AIProvider {
   readonly id = 'local-deterministic';
   readonly model = 'rule-based-v1';
+  readonly tier = 'local' as const;
 
   async transcribe(input: TranscriptionInput): Promise<TranscriptionResult> {
     // No real audio decoding offline; a provided transcript passes through. An
