@@ -3,6 +3,7 @@ import { hcpRoutes } from '../routes/hcp.routes.js';
 import { intelligenceRoutes } from '../routes/intelligence.routes.js';
 import { medicationRoutes } from '../routes/medication.routes.js';
 import { pharmaContentRoutes } from '../routes/pharma-content.routes.js';
+import { pharmaReportingRoutes } from '../routes/pharma-reporting.routes.js';
 import { repRoutes } from '../routes/rep.routes.js';
 
 /**
@@ -17,5 +18,6 @@ export async function pharmaFeature(app: FastifyInstance): Promise<void> {
   await app.register(medicationRoutes);
   await app.register(repRoutes);
   await app.register(pharmaContentRoutes);
+  await app.register(pharmaReportingRoutes);
   await app.register(intelligenceRoutes);
 }

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -154,14 +154,20 @@ describe('data firewall — structural (§45)', () => {
     'src/modules/intelligence',
   ].flatMap((dir) => filesUnder(dir, '.ts'));
 
-  const pharmaRoutes = [
-    'src/http/routes/hcp.routes.ts',
-    'src/http/routes/medication.routes.ts',
-    'src/http/routes/rep.routes.ts',
-    'src/http/routes/pharma-content.routes.ts',
-    'src/http/routes/intelligence.routes.ts',
-    'src/http/features/pharma.feature.ts',
-  ];
+  /**
+   * Route files to scan, DERIVED from what the pharma feature actually
+   * registers rather than hand-listed. A hardcoded list silently stops covering
+   * the boundary the moment someone adds a route file — which is exactly the
+   * kind of gap this whole suite exists to prevent.
+   */
+  const pharmaFeaturePath = 'src/http/features/pharma.feature.ts';
+  const pharmaRoutes = (() => {
+    const feature = readFileSync(pharmaFeaturePath, 'utf8');
+    const imported = [...feature.matchAll(/from '\.\.\/routes\/([\w.-]+)\.js'/g)].map(
+      (m) => `src/http/routes/${m[1]}.ts`,
+    );
+    return [...imported, pharmaFeaturePath];
+  })();
 
   /** Comment lines legitimately mention patient data to explain the boundary. */
   function codeOnly(source: string): string {
@@ -173,6 +179,18 @@ describe('data firewall — structural (§45)', () => {
 
   it('has pharma modules to check (guards against an empty glob passing vacuously)', () => {
     expect(pharmaSources.length).toBeGreaterThan(10);
+  });
+
+  it('derives the route list from the feature aggregator, so a new route cannot escape', () => {
+    // Every route module the pharma feature registers must be in the scan set,
+    // and each must actually exist on disk.
+    const feature = readFileSync(pharmaFeaturePath, 'utf8');
+    const registered = [...feature.matchAll(/await app\.register\((\w+)\)/g)].map((m) => m[1]);
+    expect(registered.length).toBeGreaterThan(4);
+    expect(pharmaRoutes.length).toBe(registered.length + 1); // + the feature file itself
+    for (const file of pharmaRoutes) {
+      expect(existsSync(file), `${file} is scanned but does not exist`).toBe(true);
+    }
   });
 
   it('the detector actually detects a clinical reference (guards against a vacuous check)', () => {
