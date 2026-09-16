@@ -36,6 +36,7 @@ export async function hcp360(principal: Principal, hcpId: string) {
   const [
     specialties,
     identifiers,
+    credentials,
     affiliations,
     locations,
     interests,
@@ -50,6 +51,7 @@ export async function hcp360(principal: Principal, hcpId: string) {
   ] = await Promise.all([
     repo.listHcpSpecialties(principal.clinicId, hcpId),
     repo.listHcpIdentifiers(principal.clinicId, hcpId),
+    repo.listCredentials(principal.clinicId, hcpId),
     repo.listAffiliations(principal.clinicId, hcpId),
     repo.listPracticeLocations(principal.clinicId, hcpId),
     repo.listInterests(principal.clinicId, hcpId),
@@ -95,6 +97,7 @@ export async function hcp360(principal: Principal, hcpId: string) {
     provenance: hcp.provenance,
     specialties,
     identifiers,
+    credentials,
     affiliations,
     practiceLocations: locations,
     interests,

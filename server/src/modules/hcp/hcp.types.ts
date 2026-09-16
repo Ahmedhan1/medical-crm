@@ -23,6 +23,16 @@ export interface Hco {
 export interface Hcp {
   id: string;
   clinicId: string;
+  /** Which kind of healthcare professional this record describes. */
+  professionalCategory:
+    | 'physician'
+    | 'pharmacist'
+    | 'dentist'
+    | 'nurse'
+    | 'veterinarian'
+    | 'researcher'
+    | 'allied_health'
+    | 'other';
   fullName: string;
   givenName: string | null;
   familyName: string | null;
@@ -36,6 +46,13 @@ export interface Hcp {
   recordVersion: number;
   status: 'active' | 'inactive' | 'retired' | 'merged';
   mergedIntoHcpId: string | null;
+  /** Validity window of the professional record itself. */
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  /** When the current verification lapses; null means no expiry was set. */
+  verificationExpiresAt: string | null;
+  /** Why the record was rejected or suspended. */
+  verificationNote: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -113,11 +130,41 @@ export interface ProfessionalInterest {
   confidence: number | null;
 }
 
+export interface HcpCredential {
+  id: string;
+  hcpId: string;
+  credentialType: 'degree' | 'board_certification' | 'fellowship' | 'licence' | 'training' | 'other';
+  credentialCode: string | null;
+  credentialName: string;
+  issuingBody: string | null;
+  issuingJurisdiction: string | null;
+  awardedOn: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  source: string;
+  sourceDate: string | null;
+  verificationStatus: VerificationStatus;
+  lastVerifiedAt: string | null;
+  confidence: number | null;
+}
+
+/** Where a single HCP attribute came from, resolved from the revision history. */
+export interface AttributeProvenance {
+  attribute: string;
+  source: string;
+  recordVersion: number;
+  changedAt: string;
+  changedBy: string | null;
+  changeType: string;
+}
+
 export interface HcpSpecialtyLink {
   specialtyId: string;
   code: string;
   displayName: string;
   taxonomy: string;
+  /** True when the specialty hangs off a parent in the taxonomy. */
+  isSubspecialty: boolean;
   isPrimary: boolean;
   source: string;
   confidence: number | null;
@@ -125,7 +172,15 @@ export interface HcpSpecialtyLink {
 
 export interface HcpRevision {
   recordVersion: number;
-  changeType: 'create' | 'update' | 'verify' | 'status_change' | 'merge';
+  changeType:
+    | 'create'
+    | 'update'
+    | 'verify'
+    | 'status_change'
+    | 'merge'
+    /** Written by the expiry sweep, so an automatic lapse is distinguishable
+     *  from a human decision in the history. */
+    | 'verification_expired';
   changedFields: string[];
   source: string;
   changedBy: string | null;

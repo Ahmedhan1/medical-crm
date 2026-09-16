@@ -2,8 +2,10 @@ import { getPool, type PoolClient } from '../../db/pool.js';
 import { toDateString } from '../pharma/dates.js';
 import type { Provenance, VerificationStatus } from '../pharma/provenance.js';
 import type {
+  AttributeProvenance,
   Hcp,
   HcpAffiliation,
+  HcpCredential,
   HcpIdentifier,
   HcpSpecialtyLink,
   HcpRevision,
@@ -14,6 +16,19 @@ import type {
 } from './hcp.types.js';
 
 type Runner = Pick<PoolClient, 'query'>;
+
+/**
+ * Every HCP read goes through this list rather than `SELECT *`, so the derived
+ * verification status is computed consistently and cannot be forgotten by a new
+ * query. `h` is the required alias for the `hcp` table.
+ */
+const SELECT_HCP_COLUMNS = `h.*,
+         pharma_effective_verification(h.verification_status, h.verification_expires_at)
+           AS effective_verification_status`;
+
+/** The same expression for use in a WHERE clause (filters must agree with reads). */
+const EFFECTIVE_VERIFICATION =
+  'pharma_effective_verification(h.verification_status, h.verification_expires_at)';
 
 /**
  * HCP master-data repository.
@@ -56,6 +71,14 @@ function mapProvenance(row: ProvenanceRow): Provenance {
 interface HcpRow extends ProvenanceRow {
   id: string;
   clinic_id: string;
+  professional_category: Hcp['professionalCategory'];
+  source_date: Date | string | null;
+  effective_from: Date | string | null;
+  effective_to: Date | string | null;
+  verification_expires_at: string | null;
+  verification_note: string | null;
+  /** Computed by `pharma_effective_verification` — see SELECT_HCP_COLUMNS. */
+  effective_verification_status: VerificationStatus;
   full_name: string;
   given_name: string | null;
   family_name: string | null;
@@ -76,6 +99,11 @@ export function mapHcp(row: HcpRow): Hcp {
   return {
     id: row.id,
     clinicId: row.clinic_id,
+    professionalCategory: row.professional_category,
+    effectiveFrom: toDateString(row.effective_from),
+    effectiveTo: toDateString(row.effective_to),
+    verificationExpiresAt: row.verification_expires_at,
+    verificationNote: row.verification_note,
     fullName: row.full_name,
     givenName: row.given_name,
     familyName: row.family_name,
@@ -85,7 +113,14 @@ export function mapHcp(row: HcpRow): Hcp {
     professionalPhone: row.professional_phone,
     preferredLanguage: row.preferred_language,
     notes: row.notes,
-    provenance: mapProvenance(row),
+    provenance: {
+      ...mapProvenance(row),
+      sourceDate: toDateString(row.source_date),
+      // Expiry is DERIVED, so a lapsed verification reads as `expired` even if
+      // no sweep has run. A missed background job can never leave a stale
+      // "verified" on display.
+      verificationStatus: row.effective_verification_status,
+    },
     recordVersion: row.record_version,
     status: row.status,
     mergedIntoHcpId: row.merged_into_hcp_id,
@@ -302,16 +337,24 @@ export interface InsertHcpInput {
   jurisdiction: string;
   confidence: number | null;
   createdBy: string;
+  professionalCategory: string;
+  sourceDate: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
 }
 
 export async function insertHcp(runner: Runner, input: InsertHcpInput): Promise<Hcp> {
   const { rows } = await runner.query<HcpRow>(
-    `INSERT INTO hcp
-       (clinic_id, full_name, given_name, family_name, title, primary_specialty_id,
-        professional_email, professional_phone, preferred_language, notes,
-        source, source_version, source_ref, jurisdiction, confidence, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-     RETURNING *`,
+    `WITH inserted AS (
+       INSERT INTO hcp
+         (clinic_id, full_name, given_name, family_name, title, primary_specialty_id,
+          professional_email, professional_phone, preferred_language, notes,
+          source, source_version, source_ref, jurisdiction, confidence, created_by,
+          professional_category, source_date, effective_from, effective_to)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       RETURNING *
+     )
+     SELECT ${SELECT_HCP_COLUMNS} FROM inserted h`,
     [
       input.clinicId,
       input.fullName,
@@ -329,6 +372,10 @@ export async function insertHcp(runner: Runner, input: InsertHcpInput): Promise<
       input.jurisdiction,
       input.confidence,
       input.createdBy,
+      input.professionalCategory,
+      input.sourceDate,
+      input.effectiveFrom,
+      input.effectiveTo,
     ],
   );
   return mapHcp(rows[0]!);
@@ -340,7 +387,7 @@ export async function getHcpById(
   runner: Runner = getPool(),
 ): Promise<Hcp | null> {
   const { rows } = await runner.query<HcpRow>(
-    `SELECT * FROM hcp WHERE id = $1 AND clinic_id = $2`,
+    `SELECT ${SELECT_HCP_COLUMNS} FROM hcp h WHERE h.id = $1 AND h.clinic_id = $2`,
     [id, clinicId],
   );
   return rows[0] ? mapHcp(rows[0]) : null;
@@ -353,7 +400,7 @@ export async function getHcpForUpdate(
   id: string,
 ): Promise<Hcp | null> {
   const { rows } = await client.query<HcpRow>(
-    `SELECT * FROM hcp WHERE id = $1 AND clinic_id = $2 FOR UPDATE`,
+    `SELECT ${SELECT_HCP_COLUMNS} FROM hcp h WHERE h.id = $1 AND h.clinic_id = $2 FOR UPDATE`,
     [id, clinicId],
   );
   return rows[0] ? mapHcp(rows[0]) : null;
@@ -368,23 +415,25 @@ export interface HcpSearchFilter {
    * is how a field representative is confined to their own territory.
    */
   territoryIds: string[] | null;
+  professionalCategory: string | null;
   limit: number;
   offset: number;
 }
 
 export async function searchHcps(clinicId: string, filter: HcpSearchFilter): Promise<Hcp[]> {
   const { rows } = await getPool().query<HcpRow>(
-    `SELECT h.* FROM hcp h
+    `SELECT ${SELECT_HCP_COLUMNS} FROM hcp h
       WHERE h.clinic_id = $1
         AND h.status <> 'merged'
         AND ($2::text IS NULL OR lower(h.full_name) LIKE '%' || lower($2) || '%')
         AND ($3::uuid IS NULL OR h.primary_specialty_id = $3
              OR EXISTS (SELECT 1 FROM hcp_specialty hs
                          WHERE hs.hcp_id = h.id AND hs.specialty_id = $3))
-        AND ($4::text IS NULL OR h.verification_status = $4)
+        AND ($4::text IS NULL OR ${EFFECTIVE_VERIFICATION} = $4)
         AND ($5::uuid[] IS NULL OR EXISTS (
               SELECT 1 FROM hcp_territory ht
                WHERE ht.hcp_id = h.id AND ht.territory_id = ANY($5)))
+        AND ($8::text IS NULL OR h.professional_category = $8)
       ORDER BY h.full_name
       LIMIT $6 OFFSET $7`,
     [
@@ -395,6 +444,7 @@ export async function searchHcps(clinicId: string, filter: HcpSearchFilter): Pro
       filter.territoryIds,
       filter.limit,
       filter.offset,
+      filter.professionalCategory,
     ],
   );
   return rows.map(mapHcp);
@@ -438,6 +488,12 @@ export interface HcpUpdateFields {
   verifiedBy?: string | null;
   lastVerifiedAt?: string | null;
   mergedIntoHcpId?: string | null;
+  professionalCategory?: string;
+  sourceDate?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  verificationExpiresAt?: string | null;
+  verificationNote?: string | null;
 }
 
 const HCP_COLUMN_BY_FIELD: Record<keyof HcpUpdateFields, string> = {
@@ -460,6 +516,12 @@ const HCP_COLUMN_BY_FIELD: Record<keyof HcpUpdateFields, string> = {
   verifiedBy: 'verified_by',
   lastVerifiedAt: 'last_verified_at',
   mergedIntoHcpId: 'merged_into_hcp_id',
+  professionalCategory: 'professional_category',
+  sourceDate: 'source_date',
+  effectiveFrom: 'effective_from',
+  effectiveTo: 'effective_to',
+  verificationExpiresAt: 'verification_expires_at',
+  verificationNote: 'verification_note',
 };
 
 /**
@@ -483,9 +545,12 @@ export async function updateHcp(
   assignments.push('record_version = record_version + 1', 'updated_at = now()');
   values.push(id, clinicId);
   const { rows } = await client.query<HcpRow>(
-    `UPDATE hcp SET ${assignments.join(', ')}
-      WHERE id = $${values.length - 1} AND clinic_id = $${values.length}
-      RETURNING *`,
+    `WITH updated AS (
+       UPDATE hcp SET ${assignments.join(', ')}
+        WHERE id = $${values.length - 1} AND clinic_id = $${values.length}
+        RETURNING *
+     )
+     SELECT ${SELECT_HCP_COLUMNS} FROM updated h`,
     values,
   );
   return mapHcp(rows[0]!);
@@ -512,6 +577,12 @@ export function changedFieldNames(before: Hcp, fields: HcpUpdateFields): string[
     verificationStatus: before.provenance.verificationStatus,
     lastVerifiedAt: before.provenance.lastVerifiedAt,
     mergedIntoHcpId: before.mergedIntoHcpId,
+    professionalCategory: before.professionalCategory,
+    sourceDate: before.provenance.sourceDate,
+    effectiveFrom: before.effectiveFrom,
+    effectiveTo: before.effectiveTo,
+    verificationExpiresAt: before.verificationExpiresAt,
+    verificationNote: before.verificationNote,
   };
   return Object.entries(fields)
     .filter(([field, value]) => value !== undefined && current[field] !== value)
@@ -713,9 +784,10 @@ export async function listHcpSpecialties(
     is_primary: boolean;
     source: string;
     confidence: string | null;
+    is_subspecialty: boolean;
   }>(
     `SELECT hs.specialty_id, s.code, s.display_name, s.taxonomy, hs.is_primary,
-            hs.source, hs.confidence
+            hs.source, hs.confidence, (s.parent_id IS NOT NULL) AS is_subspecialty
        FROM hcp_specialty hs
        JOIN specialty s ON s.id = hs.specialty_id
       WHERE hs.clinic_id = $1 AND hs.hcp_id = $2
@@ -727,10 +799,175 @@ export async function listHcpSpecialties(
     code: r.code,
     displayName: r.display_name,
     taxonomy: r.taxonomy,
+    // A specialty with a parent in the taxonomy IS a subspecialty; there is no
+    // separate flag to drift out of step with the hierarchy.
+    isSubspecialty: r.is_subspecialty,
     isPrimary: r.is_primary,
     source: r.source,
     confidence: toNumber(r.confidence),
   }));
+}
+
+// --- Credentials (migration 0306) -------------------------------------------
+
+interface CredentialRow {
+  id: string;
+  hcp_id: string;
+  credential_type: HcpCredential['credentialType'];
+  credential_code: string | null;
+  credential_name: string;
+  issuing_body: string | null;
+  issuing_jurisdiction: string | null;
+  awarded_on: Date | string | null;
+  valid_from: Date | string | null;
+  valid_to: Date | string | null;
+  source: string;
+  source_date: Date | string | null;
+  verification_status: VerificationStatus;
+  last_verified_at: string | null;
+  confidence: string | null;
+}
+
+function mapCredential(row: CredentialRow): HcpCredential {
+  return {
+    id: row.id,
+    hcpId: row.hcp_id,
+    credentialType: row.credential_type,
+    credentialCode: row.credential_code,
+    credentialName: row.credential_name,
+    issuingBody: row.issuing_body,
+    issuingJurisdiction: row.issuing_jurisdiction,
+    awardedOn: toDateString(row.awarded_on),
+    validFrom: toDateString(row.valid_from),
+    validTo: toDateString(row.valid_to),
+    source: row.source,
+    sourceDate: toDateString(row.source_date),
+    verificationStatus: row.verification_status,
+    lastVerifiedAt: row.last_verified_at,
+    confidence: toNumber(row.confidence),
+  };
+}
+
+export async function insertCredential(
+  runner: Runner,
+  input: {
+    clinicId: string;
+    hcpId: string;
+    credentialType: HcpCredential['credentialType'];
+    credentialCode: string | null;
+    credentialName: string;
+    issuingBody: string | null;
+    issuingJurisdiction: string | null;
+    awardedOn: string | null;
+    validFrom: string | null;
+    validTo: string | null;
+    source: string;
+    sourceVersion: string | null;
+    sourceDate: string | null;
+  },
+): Promise<HcpCredential> {
+  const { rows } = await runner.query<CredentialRow>(
+    `INSERT INTO hcp_credential
+       (clinic_id, hcp_id, credential_type, credential_code, credential_name, issuing_body,
+        issuing_jurisdiction, awarded_on, valid_from, valid_to, source, source_version, source_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     RETURNING *`,
+    [
+      input.clinicId,
+      input.hcpId,
+      input.credentialType,
+      input.credentialCode,
+      input.credentialName,
+      input.issuingBody,
+      input.issuingJurisdiction,
+      input.awardedOn,
+      input.validFrom,
+      input.validTo,
+      input.source,
+      input.sourceVersion,
+      input.sourceDate,
+    ],
+  );
+  return mapCredential(rows[0]!);
+}
+
+export async function listCredentials(
+  clinicId: string,
+  hcpId: string,
+): Promise<HcpCredential[]> {
+  const { rows } = await getPool().query<CredentialRow>(
+    `SELECT * FROM hcp_credential WHERE clinic_id = $1 AND hcp_id = $2
+      ORDER BY credential_type, credential_name`,
+    [clinicId, hcpId],
+  );
+  return rows.map(mapCredential);
+}
+
+// --- Attribute provenance + verification expiry sweep (migration 0306) ------
+
+/**
+ * Resolve, per attribute, the revision that last set it.
+ *
+ * This is derived from the append-only revision history rather than stored
+ * alongside each column: history is already the source of truth for "what
+ * changed, from which source, by whom", so a parallel per-attribute table would
+ * be a second truth to keep in step.
+ */
+export async function attributeProvenance(
+  clinicId: string,
+  hcpId: string,
+): Promise<AttributeProvenance[]> {
+  const { rows } = await getPool().query<{
+    attribute: string;
+    source: string;
+    record_version: number;
+    changed_at: string;
+    changed_by: string | null;
+    change_type: string;
+  }>(
+    `SELECT DISTINCT ON (attribute)
+            attribute, source, record_version, changed_at, changed_by, change_type
+       FROM (
+         SELECT unnest(
+                  CASE WHEN r.change_type = 'create'
+                       THEN ARRAY['(record created)']
+                       ELSE r.changed_fields END
+                ) AS attribute,
+                r.source, r.record_version, r.changed_at, r.changed_by, r.change_type
+           FROM hcp_revision r
+          WHERE r.clinic_id = $1 AND r.hcp_id = $2
+       ) AS flattened
+      ORDER BY attribute, record_version DESC`,
+    [clinicId, hcpId],
+  );
+  return rows.map((r) => ({
+    attribute: r.attribute,
+    source: r.source,
+    recordVersion: r.record_version,
+    changedAt: r.changed_at,
+    changedBy: r.changed_by,
+    changeType: r.change_type,
+  }));
+}
+
+/** Verified records whose verification has lapsed, locked for the sweep. */
+export async function lapsedVerifications(
+  client: PoolClient,
+  clinicId: string,
+  limit: number,
+): Promise<Hcp[]> {
+  const { rows } = await client.query<HcpRow>(
+    `SELECT ${SELECT_HCP_COLUMNS} FROM hcp h
+      WHERE h.clinic_id = $1
+        AND h.verification_status = 'verified'
+        AND h.verification_expires_at IS NOT NULL
+        AND h.verification_expires_at < now()
+      ORDER BY h.verification_expires_at
+      LIMIT $2
+      FOR UPDATE`,
+    [clinicId, limit],
+  );
+  return rows.map(mapHcp);
 }
 
 export interface InsertPracticeLocationInput {

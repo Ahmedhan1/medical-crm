@@ -10,10 +10,22 @@ import { z } from 'zod';
  * carried on `hcp`, `hco`, `specialty`, `medication`, `medication_product`,
  * affiliations, identifiers and practice locations alike.
  */
+/**
+ * Verification vocabulary shared by pharma master data.
+ *
+ * The full lifecycle (`rejected`, `suspended`, `expired`) is implemented for HCP
+ * records in `modules/hcp/verification.ts` and admitted by the `hcp` CHECK from
+ * migration 0306. Other master tables (`hco`, `medication`, …) still carry the
+ * narrower CHECK from 0300/0301, so the database — not this type — decides what
+ * each entity can actually store.
+ */
 export const VerificationStatus = {
   UNVERIFIED: 'unverified',
   PENDING_REVIEW: 'pending_review',
   VERIFIED: 'verified',
+  REJECTED: 'rejected',
+  SUSPENDED: 'suspended',
+  EXPIRED: 'expired',
   DISPUTED: 'disputed',
   RETIRED: 'retired',
 } as const;
@@ -37,6 +49,14 @@ export const ProvenanceSchema = z.object({
   sourceVersion: z.string().trim().max(120).optional(),
   /** Stable reference within the source, e.g. a record id or URL. */
   sourceRef: z.string().trim().max(500).optional(),
+  /**
+   * When the source asserted this, as distinct from when we recorded it. A
+   * licence export dated two years ago is two-year-old truth and must say so.
+   */
+  sourceDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'sourceDate must be YYYY-MM-DD')
+    .optional(),
   jurisdiction: JurisdictionSchema,
   /** 0–1 confidence for enriched/derived values. Absent means "not scored". */
   confidence: z.number().min(0).max(1).optional(),
@@ -53,6 +73,8 @@ export interface Provenance {
   confidence: number | null;
   verificationStatus: VerificationStatus;
   lastVerifiedAt: string | null;
+  /** When the SOURCE asserted these facts, distinct from when we recorded them. */
+  sourceDate?: string | null;
 }
 
 /**

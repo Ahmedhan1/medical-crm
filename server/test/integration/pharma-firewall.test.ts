@@ -37,7 +37,7 @@ async function seedObjectionCohort(count: number, objectionType = 'safety') {
         method: 'POST',
         url: '/hcps',
         headers: auth(manager),
-        payload: { fullName: `Dr Cohort ${objectionType} ${i}`, provenance: PROVENANCE },
+        payload: { fullName: `Dr Cohort ${objectionType} ${i}`, professionalCategory: 'physician', provenance: PROVENANCE },
       })
     ).json();
     await app.inject({
@@ -344,7 +344,7 @@ describe('data firewall — patient identifiers in pharma free text', () => {
         method: 'POST',
         url: '/hcps',
         headers: auth(manager),
-        payload: { fullName: 'Dr Free Text', provenance: PROVENANCE },
+        payload: { fullName: 'Dr Free Text', professionalCategory: 'physician', provenance: PROVENANCE },
       })
     ).json();
     await app.inject({

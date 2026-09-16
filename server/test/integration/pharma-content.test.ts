@@ -69,7 +69,7 @@ beforeEach(async () => {
       method: 'POST',
       url: '/hcps',
       headers: auth(author),
-      payload: { fullName: 'Dr Content Reader', provenance: { source: 'field_rep', jurisdiction: 'EG' } },
+      payload: { fullName: 'Dr Content Reader', professionalCategory: 'physician', provenance: { source: 'field_rep', jurisdiction: 'EG' } },
     })
   ).json();
   await app.inject({
@@ -294,7 +294,7 @@ describe('approved content — engagement', () => {
         method: 'POST',
         url: '/hcps',
         headers: auth(author),
-        payload: { fullName: 'Dr Outsider', provenance: { source: 'field_rep', jurisdiction: 'EG' } },
+        payload: { fullName: 'Dr Outsider', professionalCategory: 'physician', provenance: { source: 'field_rep', jurisdiction: 'EG' } },
       })
     ).json();
     const content = (await createContent({ title: 'Territory aid' })).json();
