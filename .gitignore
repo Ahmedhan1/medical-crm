@@ -25,3 +25,10 @@ logs/
 # Test / coverage
 coverage/
 .vitest/
+**/.tmp-test-backups/
+
+# Backup artifacts (never commit PHI-bearing dumps)
+backups/
+**/backups/
+*.dump
+*.dump.enc

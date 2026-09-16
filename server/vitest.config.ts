@@ -11,6 +11,7 @@ export default defineConfig({
       TEST_DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/medcore_test',
       SESSION_TTL_SECONDS: '3600',
       QR_TTL_SECONDS: '3600',
+      BACKUP_DIR: './.tmp-test-backups',
     },
     setupFiles: ['./test/helpers/setup.ts'],
     // Integration tests share a single Postgres database; run test files

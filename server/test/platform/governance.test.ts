@@ -31,6 +31,7 @@ describe('governance — tenant isolation', () => {
     'session', // scoped via user
     'schema_migrations', // infra
     'automation_offset', // global processing cursor (Agent 3, review F-09)
+    'backup_run', // instance-level backup ledger (Agent 1, platform) — whole-DB scope
   ]);
 
   it('every non-global base table carries clinic_id', async () => {
