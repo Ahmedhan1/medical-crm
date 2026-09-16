@@ -1,9 +1,41 @@
 # MEDCORE — Arabic / RTL PDF: engine & font governance decision
 
-Status: **DECISION RECORDED — implementation is the next increment.** Per
-directive §17 ("evaluate alternatives and document the decision before replacing
-the library") and §20 ("mark complete only when the actual PDF is visually
-verified"), this records the decision before code changes.
+Status: **IMPLEMENTED — pending human visual sign-off.** The Chromium engine was
+ratified by the Platform owner and is built (`modules/platform/pdf/`). Automated
+verification proves Arabic renders as real glyphs (ink) with Unicode preserved
+and valid multi-page PDFs; per §20 the "Ready" flip in `PRODUCTION-READINESS.md`
+waits on human sign-off of the rendered sample.
+
+## Implementation (delivered)
+- `modules/platform/pdf/chromium.ts` — `renderHtmlToPdf()` via a bundled Chromium
+  (playwright-core). Resolves the browser robustly (env override → managed path →
+  scan of `PLAYWRIGHT_BROWSERS_PATH`, resilient to build-number drift). Offline,
+  `--no-sandbox` (trusted server HTML only), shared browser + graceful close.
+- `modules/platform/pdf/fonts.ts` — Amiri (OFL) Arabic subset (~80 KB woff2)
+  vendored at `assets/fonts/`, embedded as a data URI (deterministic, offline).
+- `modules/platform/pdf/document.ts` — RTL/LTR clinical document builder
+  (header/fields/body/table/footer; `dir="auto"` per value for correct bidi;
+  HTML-escaped against injection).
+- Dependency: `playwright-core` (Apache-2.0) added to the governance allowlist.
+- Existing Latin PDF renderer (Agent 2, `modules/clinical/report`) is UNCHANGED
+  and remains the default — this is additive and opt-in.
+- Tests: `test/integration/pdf-arabic.test.ts` (7) — Arabic-only, English-only,
+  mixed Arabic+English with a table, multi-page, empty fields, HTML-escaping,
+  and the end-to-end entry point. Each asserts a valid PDF, and the Arabic cases
+  assert font-loaded + canvas ink > 0 + Unicode round-trip + **no `?`**.
+
+## Automated verification result (this environment)
+Real render of a clinical document: valid `%PDF`, ~50–260 KB, correct page
+count; `document.fonts.check` true for Amiri; Arabic canvas ink ≈ 4000 px (glyphs
+drew); `innerText` round-trips the exact Arabic; no `?` substitution. A sample
+PDF was delivered to the Platform owner for the glyph-shape/ligature sign-off.
+
+---
+
+## Original decision record
+Per directive §17 ("evaluate alternatives and document the decision before
+replacing the library") and §20 ("mark complete only when the actual PDF is
+visually verified"), the decision below was recorded before code changes.
 
 ## Problem (verified)
 The current report renderer (`modules/clinical/report/pdf.ts`, Agent 2, CP-6) is a

@@ -52,7 +52,10 @@ describe('governance — tenant isolation', () => {
 
 describe('governance — dependency allowlist', () => {
   // Runtime dependencies require a documented decision (PLATFORM-ROADMAP.md).
-  const ALLOWED_RUNTIME_DEPS = new Set(['fastify', 'pg', 'qrcode', 'zod']);
+  // playwright-core (Apache-2.0): drives the bundled Chromium for the optional
+  // Arabic/RTL PDF renderer (docs/platform/PDF-ARABIC.md). Browser binary is
+  // managed externally; the npm package is JS only.
+  const ALLOWED_RUNTIME_DEPS = new Set(['fastify', 'pg', 'qrcode', 'zod', 'playwright-core']);
 
   it('adds no runtime dependency outside the approved allowlist', () => {
     const pkg = JSON.parse(readFileSync(join(SERVER_ROOT, 'package.json'), 'utf8')) as {

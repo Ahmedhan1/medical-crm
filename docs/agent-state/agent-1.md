@@ -103,11 +103,22 @@ Objectively the highest-priority incomplete risk (local-first with no recovery).
   (governance test enforces). Cross-workstream changes go through
   `CONTRACT_CHANGE_REQUEST.md`. No PHI in logs/QR/audit/event payloads.
 
-## Next
-Priority 2 — **Arabic / RTL document generation** (F-03): fix Arabic PDFs
-(`????`) with an embedded OFL Unicode font + shaping, offline-capable. Then
-Priority 3 (auth/session hardening + central pg-error redaction), Priority 4
-(observability expansion), Priority 9 (CI wiring of the governance gates).
+## Platform Phase 3 — Arabic / RTL PDF (Priority 2) — DONE (pending visual sign-off)
+Engine ratified by Platform owner: Chromium (`playwright-core`, optional/additive).
+- `modules/platform/pdf/` — `renderHtmlToPdf` (bundled Chromium, offline,
+  robust executable resolution), Amiri (OFL) Arabic subset vendored + data-URI
+  embedded, RTL/LTR clinical document builder (fields/table/footer, bidi-aware,
+  HTML-escaped). Existing Latin renderer untouched (default).
+- `playwright-core` added to the dependency governance allowlist.
+- 7 Arabic PDF tests: glyph ink > 0, Unicode round-trip, no `?`, multi-page,
+  HTML-escaping, end-to-end. Real sample PDF delivered for human glyph sign-off;
+  `PRODUCTION-READINESS` flips Arabic → Ready on that sign-off.
+- Decision + verification recorded in `docs/platform/PDF-ARABIC.md`.
+
+## Next (STOP per directive §21 — separate phases)
+Priority 3 (auth/session hardening + central pg-error `detail` redaction),
+Priority 4 (observability expansion), Priority 9 (CI wiring of governance gates),
+then FHIR / frontend / MEDCORE BOX packaging (Chromium footprint) / DR.
 
 ## Last commit
 Set on push of the platform Phase-1 increment to `integration/medcore-v1`.

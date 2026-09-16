@@ -15,7 +15,8 @@ evidence. "Partial" = implemented + tested but incomplete for full production.
 | Authorization (RBAC) | Ready | per-permission catalog; ADMIN=all; pharma SoD roles; negative-authz tests | Low | A1 |
 | Tenant isolation | Ready | every domain table `clinic_id`; governance test; cross-clinic 404 tests | Low | A1 |
 | PHI logging | Partial | global query-string redaction + header redaction + serializer test | pg error `detail` leakage not yet centrally redacted (Priority 3/§10) | A1 |
-| PDF / Arabic | **Not Ready** | base-14/WinAnsi renders Arabic as `????` | HIGH for Egypt patient docs (Priority 2) | A1 |
+| PDF / Latin | Ready | Agent 2 base-14 renderer (unchanged, default) | Low | A2 |
+| PDF / Arabic (RTL) | Implemented — pending visual sign-off | Chromium+Amiri(OFL) renderer; 7 tests: glyph ink + Unicode round-trip + no `?` + multi-page; sample sent for human sign-off | flips to Ready on sign-off; adds Chromium to BOX (Phase 11) | A1 |
 | Observability | Partial | `/health` (liveness) + `/health/detailed` (DB latency, migration count, uptime) | metrics/provider health pending (§16) | A1 |
 | Error contract | Partial | consistent `{error:{code,message,details}}`; internals never leaked | no `request_id` yet (§11) | A1 |
 | Configuration | Ready | zod-validated fail-fast config incl. backup; prod refuses placeholder pepper | Low | A1 |
@@ -51,7 +52,7 @@ and validates the numbers on its own hardware.
 | clean migration / build / full tests | PASS (see phase report) |
 | tenant isolation / RBAC / PHI-leak tests | PASS |
 | backup test / restore test | PASS (this phase) |
-| Arabic PDF test | **FAIL** (Priority 2, next) |
+| Arabic PDF test | PASS — implemented (Chromium+Amiri); 7 tests green; visual sign-off pending |
 | auth security test (rate-limit/lockout) | not yet (Priority 3) |
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |

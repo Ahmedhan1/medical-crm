@@ -106,11 +106,16 @@ for RPO/RTO.
 
 ### Phase 5 — Globalization
 `platform/i18n` (locale, timezone, currency, date/number formatting) as a shared
-library; message-catalog structure (en, ar-EG) ready for the client; **Arabic PDF
-fix** (embed an OFL Unicode font — Noto Naskh Arabic — with CID/Identity-H + RTL
-shaping, or adopt a maintained PDF engine). Remove any implicit Egypt-only
-assumption from shared code paths; keep Egypt as the default profile, not the
-boundary.
+library; message-catalog structure (en, ar-EG) ready for the client. Remove any
+implicit Egypt-only assumption from shared code paths; keep Egypt as the default
+profile, not the boundary.
+
+**Arabic/RTL PDF — DONE** (delivered as Platform Phase 3): Chromium-based
+`modules/platform/pdf/` renderer with a vendored Amiri (OFL) Arabic font;
+correct shaping + bidi + tables + multi-page; existing Latin renderer unchanged.
+Engine/font decision in `PDF-ARABIC.md`; the "Ready" flip waits on human visual
+sign-off of the delivered sample. Chromium becomes a BOX packaging line item
+(Phase 11) for clinics needing Arabic documents.
 
 ### Phase 6 — Interoperability / FHIR readiness
 A read-only mapping layer (`platform/fhir`) translating internal Patient /
