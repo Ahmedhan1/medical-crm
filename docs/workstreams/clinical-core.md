@@ -174,7 +174,7 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-5 | Diagnosis / terminology abstraction | PARTIAL — coded diagnosis exists (0101); terminology service not built |
 | CP-6 | Procedures, sessions, protocols | TODO |
 | CP-7 | Prescription platform | PARTIAL — issue/cancel/immutability exist (0103); refills, substitution, supersede not built |
-| CP-8 | Allergy & safety engine | TODO — **highest clinical risk open item**, see below |
+| CP-8 | Allergy & safety engine | **DONE** (0107) |
 | CP-9 | Document management (DocumentReference) | TODO |
 | CP-10 | Referral & care coordination | TODO |
 | CP-11 | Follow-up & longitudinal care | PARTIAL — follow-ups + recall worklist exist (0103); overdue detection not built |
@@ -189,11 +189,26 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-20 | Local-first verification | TODO (no clinical path requires egress today) |
 | CP-21 | FHIR-ready mapping | TODO (Agent 1 roadmap Phase 6) |
 
-### Known open risk — allergies (CP-8)
-Allergies exist today only as **free text** inside `intake.allergies`. There is
-no structured allergy record and therefore **no prescribing safety check**.
-This is the highest-severity clinical gap in the platform and is the intended
-next major increment after CP-3.
+### Safety model (CP-8)
+Allergies are now a structured record (`allergy`, 0107), distinct from the
+free-text `intake.allergies` triage note. Prescribing runs a **deterministic**
+safety check:
+- **Allergy match** — a prescribed line against the patient's active,
+  non-refuted medication allergies. Name-based today (whole-word, conservative)
+  until a coded drug↔allergen cross-reference exists (CCR-007); a `ref` match is
+  already treated as definitive when both sides carry one.
+- **Duplicate medication** — the same drug on another active prescription.
+- The check reads the patient's whole **merge lineage**, so an allergy recorded
+  on a duplicate record still protects the survivor.
+
+The platform provides the RULE; it never makes the decision. The check refuses
+by default and returns the alerts, but a doctor holding `safety:override` can
+prescribe through them with a required reason. Every override is written to the
+append-only `safety_override` ledger and audited. AI cannot bypass it — AI holds
+no prescribing principal and the override is a human acknowledgement, not a
+field a draft can set. A dry-run endpoint
+(`POST /encounters/:id/prescription-safety-check`) lets a client preview alerts
+as the prescription is built.
 
 ### Observation engine notes (CP-3)
 - **`observation` does not replace `vital`.** The universal vital set keeps its

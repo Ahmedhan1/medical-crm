@@ -144,6 +144,37 @@ inside your own feature module; adding a new table in your migration range.
   reach pharma today, by construction. Owner for the deferred build: Agent 1 +
   Agent 2.
 
+### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
+- Status: PROPOSED
+- Requested by: Agent 2 (Clinical Platform)
+- Date: 2026-09-16
+- Affects: Agent 4 (drug/medication master, P002), Agent 2 (safety engine, CP-8)
+- Contract file(s): none edited. This is a forward-looking data contract; the
+  safety engine works today without it.
+- Change: the prescribing safety check (Phase 8) currently matches a prescribed
+  `medication_name` against an allergy `substance` by a conservative,
+  whole-word name heuristic (`safety.service.ts`), because there is no coded
+  drug↔ingredient↔allergen relationship available. Proposed: once the drug
+  master exposes stable ingredient/allergen codes, an allergy carries a
+  `substance_ref` and a prescription item a `medication_ref` drawn from it, and
+  the safety engine treats a `ref` match as definitive (it already does when
+  both refs are present), reserving the name heuristic for the un-coded case.
+- Reason: the name heuristic is deliberately conservative and will both
+  over-warn (a clinician clears it) and, for brand vs generic names, potentially
+  under-warn. A coded cross-reference makes the check precise. It must remain a
+  read across a governed boundary — the clinical safety engine must never query
+  the drug master's tables directly.
+- Backward compatibility: fully additive. `medication_ref`/`substance_ref` are
+  already nullable opaque strings; the engine already prefers a ref match when
+  present, so no clinical code changes when the codes arrive.
+- Security: allergen/medication codes are not PHI; the patient's allergy record
+  is, and stays in Clinical Core. The cross-reference lookup carries codes only.
+- Tests: `test/integration/allergies-safety.test.ts` covers the name-based
+  behaviour (whole-word match, no short-substring false positive, refuted/
+  inactive ignored, merged-lineage protection); ref-based matching gains tests
+  when the code source exists.
+- Decision (Agent 1): _pending_
+
 ### CCR-006 — Patient record extension (lifecycle, identifiers, contacts, merge)
 - Status: PROPOSED
 - Requested by: Agent 2 (Clinical Platform)

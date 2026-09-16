@@ -7,6 +7,8 @@ import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { getPatientById } from '../identity/patients.repo.js';
 import { getEncounterOrThrow, lockEncounter, TERMINAL_STATUSES } from './encounter.repo.js';
+import { resolvePatientLineage } from '../identity/patients.lifecycle.service.js';
+import { checkPrescriptionSafety, type SafetyAlert } from './safety.service.js';
 import { getEncounterClinical } from './encounter.clinical.repo.js';
 
 /**
@@ -51,6 +53,13 @@ export const PrescriptionItemSchema = z.object({
 export const IssuePrescriptionSchema = z.object({
   items: z.array(PrescriptionItemSchema).min(1).max(50),
   notes: z.string().trim().max(2_000).optional(),
+  /**
+   * Prescribe despite the deterministic safety alerts (allergy /
+   * duplicate-medication). Requires `safety:override` and a reason; the
+   * decision is recorded in the append-only safety_override ledger.
+   */
+  acknowledgeAlerts: z.boolean().default(false),
+  overrideReason: z.string().trim().min(4).max(500).optional(),
 });
 
 export const CancelPrescriptionSchema = z.object({
@@ -182,6 +191,23 @@ export async function issuePrescription(
       throw new ConflictError('This consultation is held by another clinician');
     }
 
+    // Deterministic safety check (Phase 8). Read allergies across the patient's
+    // whole merge lineage, so a duplicate record folded in still protects them.
+    const lineage = await resolvePatientLineage(principal.clinicId, encounter.patientId, client);
+    const alerts = await checkPrescriptionSafety(client, principal.clinicId, lineage, input.items);
+    if (alerts.length > 0 && !input.acknowledgeAlerts) {
+      // Refuse by default; the clinician can re-submit with an acknowledgement.
+      // The alert detail lets the UI show exactly what is being flagged.
+      throw new ConflictError('Prescription blocked by a safety alert', { alerts });
+    }
+    if (alerts.length > 0) {
+      // Overriding a safety alert is a distinct, high-consequence authority.
+      requirePermission(principal, Permission.SAFETY_OVERRIDE);
+      if (!input.overrideReason) {
+        throw new ValidationError('A reason is required to override a safety alert');
+      }
+    }
+
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO prescription (clinic_id, encounter_id, patient_id, prescriber_id, notes)
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
@@ -217,6 +243,48 @@ export async function issuePrescription(
       );
     }
 
+    if (alerts.length > 0) {
+      await client.query(
+        `INSERT INTO safety_override
+           (clinic_id, patient_id, prescription_id, alert_type, alerts, reason, overridden_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          principal.clinicId,
+          encounter.patientId,
+          prescriptionId,
+          alerts.map((a) => a.type).join(','),
+          JSON.stringify(alerts),
+          input.overrideReason,
+          principal.userId,
+        ],
+      );
+      await emitEvent(client, {
+        clinicId: principal.clinicId,
+        type: EventType.SAFETY_ALERT_OVERRIDDEN,
+        subjectType: 'prescription',
+        subjectId: prescriptionId,
+        actorId: principal.userId,
+        payload: {
+          patientId: encounter.patientId,
+          alertTypes: [...new Set(alerts.map((a) => a.type))],
+          alertCount: alerts.length,
+        },
+      });
+      await auditTx(client, {
+        clinicId: principal.clinicId,
+        actorId: principal.userId,
+        action: 'safety.override',
+        outcome: 'success',
+        targetType: 'prescription',
+        targetId: prescriptionId,
+        metadata: {
+          patientId: encounter.patientId,
+          alertTypes: [...new Set(alerts.map((a) => a.type))],
+          alertCount: alerts.length,
+        },
+      });
+    }
+
     await emitEvent(client, {
       clinicId: principal.clinicId,
       type: EventType.PRESCRIPTION_ISSUED,
@@ -246,6 +314,36 @@ export async function issuePrescription(
 
     return (await loadPrescription(client, principal.clinicId, prescriptionId))!;
   });
+}
+
+/**
+ * Dry-run the safety checks for a set of candidate lines without prescribing.
+ * Lets a client show allergy / duplicate alerts as the doctor builds a
+ * prescription, before they commit to issuing it.
+ */
+export async function previewPrescriptionSafety(
+  principal: Principal,
+  encounterId: string,
+  raw: unknown,
+): Promise<{ alerts: SafetyAlert[] }> {
+  requirePermission(principal, Permission.PRESCRIPTION_WRITE);
+
+  const parsed = z
+    .object({ items: z.array(PrescriptionItemSchema).min(1).max(50) })
+    .safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid prescription', parsed.error.flatten());
+  }
+
+  const encounter = await getEncounterOrThrow(principal.clinicId, encounterId);
+  const lineage = await resolvePatientLineage(principal.clinicId, encounter.patientId);
+  const alerts = await checkPrescriptionSafety(
+    getPool(),
+    principal.clinicId,
+    lineage,
+    parsed.data.items,
+  );
+  return { alerts };
 }
 
 export async function cancelPrescription(
