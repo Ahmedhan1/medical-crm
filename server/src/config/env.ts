@@ -18,7 +18,27 @@ const EnvSchema = z.object({
   AUTH_PEPPER: z.string().min(16, 'AUTH_PEPPER must be at least 16 chars'),
   SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(43_200),
   QR_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
+
+  // --- Backup / recovery (Phase 2) ---
+  // Directory the backup engine writes to. Local-first: a path on the MEDCORE
+  // box (or a mounted external/encrypted volume). Never exposed via any API.
+  BACKUP_DIR: z.string().default('./backups'),
+  // Optional at-rest encryption. When set (>=32 chars) dumps are AES-256-GCM
+  // encrypted; the key lives in the secret manager, never in the DB or a backup.
+  BACKUP_ENCRYPTION_KEY: z.string().min(32).optional(),
+  // Retention (rotation) targets. GFS-style; pruning keeps the newest N of each.
+  BACKUP_RETAIN_DAILY: z.coerce.number().int().nonnegative().default(7),
+  BACKUP_RETAIN_WEEKLY: z.coerce.number().int().nonnegative().default(4),
+  BACKUP_RETAIN_MONTHLY: z.coerce.number().int().nonnegative().default(3),
 });
+
+export interface BackupConfig {
+  dir: string;
+  encryptionKey?: string;
+  retainDaily: number;
+  retainWeekly: number;
+  retainMonthly: number;
+}
 
 export type AppConfig = {
   nodeEnv: 'development' | 'test' | 'production';
@@ -28,6 +48,7 @@ export type AppConfig = {
   authPepper: string;
   sessionTtlSeconds: number;
   qrTtlSeconds: number;
+  backup: BackupConfig;
 };
 
 let cached: AppConfig | null = null;
@@ -59,6 +80,13 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
     authPepper: env.AUTH_PEPPER,
     sessionTtlSeconds: env.SESSION_TTL_SECONDS,
     qrTtlSeconds: env.QR_TTL_SECONDS,
+    backup: {
+      dir: env.BACKUP_DIR,
+      encryptionKey: env.BACKUP_ENCRYPTION_KEY,
+      retainDaily: env.BACKUP_RETAIN_DAILY,
+      retainWeekly: env.BACKUP_RETAIN_WEEKLY,
+      retainMonthly: env.BACKUP_RETAIN_MONTHLY,
+    },
   };
 }
 

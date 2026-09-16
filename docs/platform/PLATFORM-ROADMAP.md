@@ -87,11 +87,22 @@ isolation of internet-dependent adapters (messaging/AI providers already behind
 interfaces with local/no-op defaults — verify nothing in the core clinical path
 requires egress).
 
-### Phase 4 — Backup / recovery
-`modules/backup` + `0901_backup.sql` (`backup_run` ledger): scheduled logical
-backups (`pg_dump`), encryption at rest, checksum verification, retention/rotation
-(7 daily / 4 weekly / 3 monthly), and a **tested restore** into a scratch DB
-(no reliability claim without a verified round-trip). Admin API + audit.
+### Phase 4 — Backup / recovery — **DONE** (delivered as Platform Phase 2)
+`modules/backup` + `0901_backup.sql` (`backup_run` ledger): logical backups
+(`pg_dump` custom format), optional AES-256-GCM at-rest encryption, checksum +
+archive-readability verification, GFS retention/rotation (7/4/3, configurable),
+and a **tested restore round-trip** into a fresh DB (migrations, tables, a
+clinical row, RBAC catalog, append-only triggers and platform indexes all
+verified to survive). Admin API (create/list/verify — no download, no HTTP
+restore) + operator CLI (`npm run backup`) + audit. See `PRODUCTION-READINESS.md`
+for RPO/RTO.
+
+**Recovery runbook (operator):**
+1. `npm run backup -- list` — find the backup id.
+2. `npm run backup -- verify <id>` — confirm integrity before trusting it.
+3. Restore into a scratch DB first: `npm run backup -- restore <id> --target <scratch-url>`.
+4. Disaster recovery over the live DB: `npm run backup -- restore <id> --yes`
+   (refused without `--yes`). Take a fresh backup before any upgrade.
 
 ### Phase 5 — Globalization
 `platform/i18n` (locale, timezone, currency, date/number formatting) as a shared
