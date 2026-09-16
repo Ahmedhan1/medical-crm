@@ -176,8 +176,8 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-7 | Prescription platform | PARTIAL — issue/cancel/immutability exist (0103); refills, substitution, supersede not built |
 | CP-8 | Allergy & safety engine | **DONE** (0107) |
 | CP-9 | Document management (DocumentReference) | **DONE** (0108, metadata layer; bytes = CCR-008) |
-| CP-10 | Referral & care coordination | TODO |
-| CP-11 | Follow-up & longitudinal care | PARTIAL — follow-ups + recall worklist exist (0103); overdue detection not built |
+| CP-10 | Referral & care coordination | **DONE** (0109) |
+| CP-11 | Follow-up & longitudinal care | **DONE** — detection + idempotent event sweep (0110) |
 | CP-12 | Packages & treatment plans | TODO |
 | CP-13 | Inventory consumption events | TODO (contract only; no second inventory) |
 | CP-14 | Clinical analytics | TODO |
@@ -214,6 +214,43 @@ the encounter workspace does. A reception 360 and a doctor 360 therefore differ
 by content, not by a post-hoc filter, so an omitted section never implies the
 caller was allowed to see it. A merged record is flagged with `mergedIntoId` so
 the client can redirect to the survivor.
+
+### Referral & care-coordination model (CP-10)
+`referral` (0109) is a ServiceRequest-like clinical order with a deterministic
+lifecycle: `draft → ordered → sent → accepted/declined → scheduled → completed`,
+with `cancelled`/`expired` available while live. Invalid transitions fail. Every
+move is written to the append-only `referral_status_history` and emits a typed
+event (`REFERRAL_SENT`, `REFERRAL_ACCEPTED`, …).
+- **The referral status IS the coordination state** — there is no separate task
+  table. When downstream work is needed, Clinical Core emits an event and Agent 3
+  owns the action; it does not build a task engine here.
+- **Clinical authority split**: `referral:create` and `referral:complete` are
+  DOCTOR (clinical decisions); the administrative middle (`referral:manage` —
+  sent/accepted/declined/scheduled/cancelled/expired and linkage) is RECEPTION +
+  DOCTOR; NURSE has `referral:read` only. Reception cannot create or complete a
+  clinical referral.
+- Master data is not duplicated: patient/practitioner are FKs; an external
+  provider is free text + specialty. Appointment and document linkage are
+  validated to the same patient. Referrals join the timeline and Patient 360.
+
+### Follow-up detection model (CP-11)
+Detection is a READ-MODEL + an idempotent event sweep over the existing
+`follow_up` records — **no new entity table**. Migration 0110 adds only two
+nullable marker columns (`due_event_at`, `overdue_event_at`) for event
+idempotency.
+- `classifyDueState(dueOn, asOf, approachingDays)` is a pure, total, inspectable
+  function → `overdue | due | approaching | upcoming`. No AI, no probabilistic
+  logic, no hidden thresholds; the clinician-defined `due_on` is the only date.
+- `GET /follow-ups/detection` is the classified worklist (read; `followup:read`).
+- `POST /follow-ups/detection/run` is the sweep (`followup:detect`, DOCTOR): it
+  publishes `FOLLOW_UP_DUE` / `FOLLOW_UP_OVERDUE` **at most once per follow-up**
+  (marker-guarded) using the server's date, then stops. It reads and stamps
+  markers only — it never diagnoses, prescribes, closes an encounter, or edits a
+  clinical fact.
+- **Automation boundary**: Clinical Core detects and publishes the fact; Agent 3
+  consumes `FOLLOW_UP_OVERDUE` to run reminders/recall/escalation. Clinical Core
+  sends nothing. (Completion is signalled by the existing
+  `FOLLOW_UP_CLOSED{status:completed}`.)
 
 ### Safety model (CP-8)
 Allergies are now a structured record (`allergy`, 0107), distinct from the
@@ -277,4 +314,5 @@ plain string. Renaming would silently break every existing rule, so the existing
 convention is kept. Raised here rather than changed unilaterally.
 
 ## Next tasks
-CP-10 (referral & care coordination). See `docs/agent-state/agent-2.md`.
+CP-6 (procedures/sessions/protocols) or CP-12 (packages), then CP-14 (clinical
+analytics). See `docs/agent-state/agent-2.md`.

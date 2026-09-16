@@ -60,8 +60,13 @@ export const ClinicalPermission = {
   ALLERGY_WRITE: 'allergy:write',
   SAFETY_OVERRIDE: 'safety:override',
   FOLLOWUP_READ: 'followup:read',
+  REFERRAL_READ: 'referral:read',
+  REFERRAL_CREATE: 'referral:create',
+  REFERRAL_MANAGE: 'referral:manage',
+  REFERRAL_COMPLETE: 'referral:complete',
   FOLLOWUP_WRITE: 'followup:write',
   FOLLOWUP_CLOSE: 'followup:close',
+  FOLLOWUP_DETECT: 'followup:detect',
 } as const;
 
 export const clinicalPermissions: WorkstreamPermissions = {
@@ -122,8 +127,13 @@ export const clinicalPermissions: WorkstreamPermissions = {
     [ClinicalPermission.ALLERGY_WRITE]: 'Record or amend a patient allergy',
     [ClinicalPermission.SAFETY_OVERRIDE]: 'Override a clinical safety alert when prescribing',
     [ClinicalPermission.FOLLOWUP_READ]: 'View the follow-up / recall worklist',
+    [ClinicalPermission.REFERRAL_READ]: 'View referrals',
+    [ClinicalPermission.REFERRAL_CREATE]: 'Create and order a clinical referral',
+    [ClinicalPermission.REFERRAL_MANAGE]: 'Advance the administrative referral lifecycle',
+    [ClinicalPermission.REFERRAL_COMPLETE]: 'Record a referral as clinically completed',
     [ClinicalPermission.FOLLOWUP_WRITE]: 'Schedule a follow-up',
     [ClinicalPermission.FOLLOWUP_CLOSE]: 'Complete or cancel a scheduled follow-up',
+    [ClinicalPermission.FOLLOWUP_DETECT]: 'Run the follow-up due/overdue detection sweep',
   },
   roleGrants: {
     [RoleKey.RECEPTION]: [
@@ -153,6 +163,8 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.ALLERGY_READ,
       ClinicalPermission.DOCUMENT_READ,
       ClinicalPermission.DOCUMENT_WRITE,
+      ClinicalPermission.REFERRAL_READ,
+      ClinicalPermission.REFERRAL_MANAGE,
     ],
     [RoleKey.NURSE]: [
       ClinicalPermission.PATIENT_READ,
@@ -184,6 +196,7 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.DOCUMENT_READ,
       ClinicalPermission.DOCUMENT_READ_RESTRICTED,
       ClinicalPermission.DOCUMENT_WRITE,
+      ClinicalPermission.REFERRAL_READ,
     ],
     [RoleKey.DOCTOR]: [
       ClinicalPermission.PATIENT_READ,
@@ -228,6 +241,11 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.DOCUMENT_READ_RESTRICTED,
       ClinicalPermission.DOCUMENT_WRITE,
       ClinicalPermission.DOCUMENT_MANAGE,
+      ClinicalPermission.REFERRAL_READ,
+      ClinicalPermission.REFERRAL_CREATE,
+      ClinicalPermission.REFERRAL_MANAGE,
+      ClinicalPermission.REFERRAL_COMPLETE,
+      ClinicalPermission.FOLLOWUP_DETECT,
     ],
   },
 };

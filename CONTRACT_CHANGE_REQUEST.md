@@ -204,6 +204,10 @@ inside your own feature module; adding a new table in your migration range.
   inactive ignored, merged-lineage protection); ref-based matching gains tests
   when the code source exists.
 - Decision (Agent 1): _pending_
+- Re-review (Agent 2, CP-10/CP-11 session): status remains PROPOSED and pending.
+  Verified the conservative name-based behaviour is still in force and covered by
+  `allergies-safety.test.ts`; no drug-master table was duplicated and no Agent 4
+  module is imported by Clinical Core. No change required until Agent 1 rules.
 
 ### CCR-006 — Patient record extension (lifecycle, identifiers, contacts, merge)
 - Status: PROPOSED
