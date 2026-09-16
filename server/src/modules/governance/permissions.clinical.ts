@@ -31,6 +31,7 @@ export const ClinicalPermission = {
   TIMELINE_READ: 'timeline:read',
   TREATMENT_EPISODE_READ: 'treatment_episode:read',
   TREATMENT_EPISODE_WRITE: 'treatment_episode:write',
+  REPORT_GENERATE: 'report:generate',
 } as const;
 
 export const clinicalPermissions: WorkstreamPermissions = {
@@ -60,6 +61,7 @@ export const clinicalPermissions: WorkstreamPermissions = {
     [ClinicalPermission.TREATMENT_EPISODE_READ]: 'View treatment episodes and their responses',
     [ClinicalPermission.TREATMENT_EPISODE_WRITE]:
       'Start, stop or record the response to a treatment episode',
+    [ClinicalPermission.REPORT_GENERATE]: 'Generate a clinical report (patient or encounter)',
   },
   roleGrants: {
     [RoleKey.RECEPTION]: [
@@ -107,6 +109,7 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.TIMELINE_READ,
       ClinicalPermission.TREATMENT_EPISODE_READ,
       ClinicalPermission.TREATMENT_EPISODE_WRITE,
+      ClinicalPermission.REPORT_GENERATE,
     ],
   },
 };

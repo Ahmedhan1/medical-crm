@@ -22,8 +22,12 @@ IN PROGRESS. Working the C0xx series on branch `claude/inspiring-cori-tk3ej8`
 - **C005 — Treatment response episodes.** Longitudinal treatment episodes with
   an append-only response series, completion and discontinuation.
 
+- **C006 — Report engine.** Neutral document model plus a dependency-free
+  PDF 1.4 renderer; encounter and patient summary reports.
+
 ## In Progress
-- C006 — Report engine (patient/encounter PDF).
+- C007 — Prescriptions and follow-ups (see Discrepancies: in the workstream
+  mission, absent from `TASKS.md`).
 
 ## Database Changes
 Reserved migration range **0100–0199**.
@@ -76,6 +80,8 @@ Reserved migration range **0100–0199**.
 | GET | `/treatment-episodes/:id` | `treatment_episode:read` | Episode + full response series |
 | POST | `/treatment-episodes/:id/responses` | `treatment_episode:write` | |
 | POST | `/treatment-episodes/:id/end` | `treatment_episode:write` | `completed` or `discontinued` |
+| GET | `/reports/encounter/:id.pdf` | `report:generate` | `application/pdf`, filename `encounter-<uuid>.pdf` |
+| GET | `/reports/patient/:id.pdf` | `report:generate` | `application/pdf`, filename `patient-<uuid>.pdf` |
 
 No existing endpoint changed shape.
 
@@ -84,14 +90,15 @@ Added to `permissions.clinical.ts` (own file — not a contract change):
 `encounter:status`, `intake:record`, `intake:read`, `vitals:record`,
 `vitals:read`, `encounter:clinical:read`, `encounter:clinical:write`,
 `encounter:complete`, `diagnosis:write`, `treatment:write`, `note:write`,
-`timeline:read`, `treatment_episode:read`, `treatment_episode:write`.
+`timeline:read`, `treatment_episode:read`, `treatment_episode:write`,
+`report:generate`.
 
 Grants — the operational/clinical authority split:
 - RECEPTION: `encounter:status` only. **No** clinical read or write.
 - NURSE: intake + vitals record/read, `encounter:clinical:read` (read-only).
 - DOCTOR: everything above plus every clinical write and `encounter:complete`.
 - `timeline:read`, `treatment_episode:read` → NURSE, DOCTOR.
-- `treatment_episode:write` → DOCTOR.
+- `treatment_episode:write`, `report:generate` → DOCTOR.
 - ADMIN inherits all automatically.
 
 ## Event Changes
@@ -99,7 +106,8 @@ Added to `events.clinical.ts`: `INTAKE_RECORDED`, `VITALS_RECORDED`,
 `ENCOUNTER_STARTED`, `ENCOUNTER_CLINICAL_UPDATED`, `DIAGNOSIS_RECORDED`,
 `DIAGNOSIS_REVISED`, `TREATMENT_PLAN_RECORDED`, `CLINICAL_NOTE_ADDED`,
 `ENCOUNTER_COMPLETED`, `TREATMENT_EPISODE_STARTED`,
-`TREATMENT_RESPONSE_RECORDED`, `TREATMENT_EPISODE_ENDED`.
+`TREATMENT_RESPONSE_RECORDED`, `TREATMENT_EPISODE_ENDED`,
+`CLINICAL_REPORT_GENERATED`.
 
 Every payload carries identifiers and shape only: intake carries no complaint or
 history text; vitals carry abnormal **field names** but never measured values;
@@ -108,10 +116,12 @@ clinical updates carry the names of the sections touched, never their content.
 ## Files Owned / Modified
 - Added: `modules/clinical/{encounter.repo,status.service,intake.repo,intake.service,vitals.repo,vitals.service,encounter.clinical.repo,workspace.service}.ts`,
   `modules/clinical/{timeline,episodes}.service.ts`,
+  `modules/clinical/report/{pdf,report.service}.ts`,
   `modules/workflow/queue.service.ts`,
-  `http/routes/{intake,encounters,treatment}.routes.ts`,
+  `http/routes/{intake,encounters,treatment,reports}.routes.ts`,
   `db/migrations/{0100_clinical_intake_vitals,0101_clinical_encounter,0102_treatment_episode}.sql`,
-  `test/integration/{intake,workspace,queue,timeline,episodes}.test.ts`.
+  `test/integration/{intake,workspace,queue,timeline,episodes,reports}.test.ts`,
+  `test/unit/pdf.test.ts`.
 - Modified (all Agent-2 owned): `permissions.clinical.ts`, `events.clinical.ts`,
   `http/features/clinical.feature.ts`, `http/routes/{patients,workflow}.routes.ts`,
   `modules/workflow/checkin.service.ts` (now reuses the shared `encounter.repo`
@@ -140,8 +150,18 @@ clinical updates carry the names of the sections touched, never their content.
   rules, chronology guards, cross-patient encounter reference rejection, status
   filtering, nurse read-only, reception fully denied, cross-clinic 404, no-PHI
   audit, and timeline integration.
+- `test/unit/pdf.test.ts` — 9 tests: PDF structure, byte-accurate xref offsets
+  (every offset must land on its own object header), byte determinism,
+  pagination and page numbering, PDF string-escaping of injected operators,
+  non-Latin-1 substitution, and wrapping bounds.
+- `test/integration/reports.test.ts` — 10 tests: report content, no patient name
+  in the filename, identical bytes for the same data and stamp, patient summary,
+  empty-visit rendering, RBAC denial for nurse and reception, 401 unauthenticated,
+  cross-clinic 404, and a no-PHI audit assertion.
 
-Suite: **109 passing** (30 inherited + 79 new). Typecheck and build clean.
+Suite: **128 passing** (30 inherited + 98 new). Typecheck and build clean.
+Output was additionally verified against a real PDF parser (`pypdf`): the
+generated report opens, paginates to 3 pages and extracts the expected text.
 
 ## Dependencies Added
 None.
@@ -151,6 +171,14 @@ None.
   `docs/workstreams/clinical-core.md`; it needs no shared-file change.
 
 ## Known Issues / Discrepancies
+- **PDF text is Latin-1 only.** The renderer uses the base-14 Helvetica faces
+  with WinAnsi encoding and embeds no font, so characters outside Latin-1 —
+  Arabic patient names in particular, which matters for the Egypt deployment —
+  render as `?`. Fixing this needs an embedded Unicode font (a font asset plus
+  TrueType subsetting, or a PDF dependency). Raised for Agent 1 to decide at
+  I001 rather than pulling in a dependency unilaterally; the report engine
+  builds a neutral document model, so swapping the renderer changes nothing
+  about how reports are composed or authorized.
 - `AGENTS.md` §2 names Agent 2's branch `agent-2/clinical-core`; the harness
   assigned `claude/inspiring-cori-tk3ej8`. Per §2 the ownership rules still
   apply, so work proceeds on the harness branch. Flagged for Agent 1 at I001.
@@ -169,7 +197,7 @@ None.
 None.
 
 ## Next Tasks
-C006 (see `TASKS.md`).
+C007 — prescriptions and follow-ups (completes the workflow this workstream owns).
 
 ## Last Commit
 - (see branch head)
