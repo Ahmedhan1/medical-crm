@@ -37,7 +37,7 @@ async function createHcp(fullName: string) {
     method: 'POST',
     url: '/hcps',
     headers: auth(manager),
-    payload: { fullName, provenance: PROVENANCE },
+    payload: { fullName, professionalCategory: 'physician', provenance: PROVENANCE },
   });
   expect(res.statusCode).toBe(201);
   return res.json();

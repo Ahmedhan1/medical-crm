@@ -12,6 +12,13 @@ import {
   VerificationStatus,
 } from '../pharma/provenance.js';
 import { assertHcpInScope, territoryScopeFor } from '../pharma/visibility.js';
+import {
+  assertTransition,
+  isMaterialChange,
+  stateAfterMaterialChange,
+  verificationExpiryFrom,
+  VerificationState,
+} from './verification.js';
 import * as repo from './hcp.repo.js';
 import type { Hcp, Hco, Specialty } from './hcp.types.js';
 
@@ -61,8 +68,25 @@ export const CreateHcoSchema = z.object({
   provenance: ProvenanceSchema,
 });
 
+export const ProfessionalCategorySchema = z.enum([
+  'physician',
+  'pharmacist',
+  'dentist',
+  'nurse',
+  'veterinarian',
+  'researcher',
+  'allied_health',
+  'other',
+]);
+
+const DATE_ONLY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+
 export const CreateHcpSchema = z.object({
   fullName: NAME,
+  /** Required: the master must know what kind of professional this is. */
+  professionalCategory: ProfessionalCategorySchema,
+  effectiveFrom: DATE_ONLY.optional(),
+  effectiveTo: DATE_ONLY.optional(),
   givenName: z.string().trim().max(100).optional(),
   familyName: z.string().trim().max(100).optional(),
   title: z.string().trim().max(40).optional(),
@@ -146,10 +170,38 @@ export const AddSpecialtyLinkSchema = z.object({
 });
 
 export const VerifyHcpSchema = z.object({
-  verificationStatus: z.enum(['pending_review', 'verified', 'disputed', 'retired']),
+  verificationStatus: z.enum([
+    'pending_review',
+    'verified',
+    'rejected',
+    'suspended',
+    'expired',
+    'disputed',
+    'retired',
+  ]),
   /** What was checked — recorded in the revision trail, not free-form trust. */
   evidenceSource: z.string().trim().min(2).max(200),
+  /** Required for `rejected` and `suspended`; an unexplained refusal is not reviewable. */
+  note: z.string().trim().min(2).max(1000).optional(),
+  /** Shelf life of this verification. Omit for the default of one year. */
+  validForDays: z.number().int().min(1).max(3650).optional(),
   confidence: z.number().min(0).max(1).optional(),
+});
+
+export const AddCredentialSchema = z.object({
+  credentialType: z
+    .enum(['degree', 'board_certification', 'fellowship', 'licence', 'training', 'other'])
+    .default('degree'),
+  credentialCode: z.string().trim().max(20).optional(),
+  credentialName: z.string().trim().min(2).max(200),
+  issuingBody: z.string().trim().max(200).optional(),
+  issuingJurisdiction: JurisdictionSchema.optional(),
+  awardedOn: DATE_ONLY.optional(),
+  validFrom: DATE_ONLY.optional(),
+  validTo: DATE_ONLY.optional(),
+  source: z.string().trim().min(2).max(120),
+  sourceVersion: z.string().trim().max(120).optional(),
+  sourceDate: DATE_ONLY.optional(),
 });
 
 function parse<T extends z.ZodTypeAny>(schema: T, raw: unknown, what: string): z.infer<T> {
@@ -277,6 +329,10 @@ export async function createHcp(principal: Principal, raw: unknown): Promise<Hcp
       jurisdiction: input.provenance.jurisdiction,
       confidence: input.provenance.confidence ?? null,
       createdBy: principal.userId,
+      professionalCategory: input.professionalCategory,
+      sourceDate: input.provenance.sourceDate ?? null,
+      effectiveFrom: input.effectiveFrom ?? null,
+      effectiveTo: input.effectiveTo ?? null,
     });
 
     if (input.primarySpecialtyId) {
@@ -374,23 +430,37 @@ export async function updateHcp(principal: Principal, id: string, raw: unknown):
     // A change to the facts is a change to their provenance: the new values
     // came from somewhere, and that somewhere is recorded with them. An edit
     // also invalidates any prior verification.
+    if (input.professionalCategory !== undefined) {
+      fields.professionalCategory = input.professionalCategory;
+    }
+    if (input.effectiveFrom !== undefined) fields.effectiveFrom = input.effectiveFrom;
+    if (input.effectiveTo !== undefined) fields.effectiveTo = input.effectiveTo;
+
     if (input.provenance) {
       fields.source = input.provenance.source;
       fields.sourceVersion = input.provenance.sourceVersion ?? null;
       fields.sourceRef = input.provenance.sourceRef ?? null;
+      fields.sourceDate = input.provenance.sourceDate ?? null;
       fields.jurisdiction = input.provenance.jurisdiction;
       fields.confidence = input.provenance.confidence ?? null;
     }
     if (Object.keys(fields).length === 0) return before;
 
-    const contentChanged = Object.keys(fields).some(
-      (f) => f !== 'source' && f !== 'sourceVersion' && f !== 'sourceRef' && f !== 'confidence',
-    );
-    if (contentChanged && before.provenance.verificationStatus === VerificationStatus.VERIFIED) {
-      fields.verificationStatus = VerificationStatus.PENDING_REVIEW;
-    }
-
     const changed = repo.changedFieldNames(before, fields);
+
+    // Phase 6: verification never survives a MATERIAL change. Re-citing a source
+    // for unchanged facts is not material, so improving provenance no longer
+    // costs a record its review — an earlier, blunter rule did exactly that.
+    if (isMaterialChange(changed)) {
+      const downgraded = stateAfterMaterialChange(
+        before.provenance.verificationStatus as VerificationState,
+      );
+      if (downgraded) {
+        fields.verificationStatus = downgraded;
+        // The lapse clock belongs to the verification that is being invalidated.
+        fields.verificationExpiresAt = null;
+      }
+    }
     const after = await repo.updateHcp(client, principal.clinicId, id, fields);
 
     await repo.insertHcpRevision(client, {
@@ -436,12 +506,24 @@ export async function setHcpVerification(
     const before = await repo.getHcpForUpdate(client, principal.clinicId, id);
     if (!before) throw new NotFoundError('HCP');
 
-    const verifying = input.verificationStatus === VerificationStatus.VERIFIED;
+    // Phase 6: the transition must be legal from where the record actually is,
+    // and adequately evidenced. `before.provenance.verificationStatus` is the
+    // EFFECTIVE state, so a lapsed record is treated as `expired` here even if
+    // the stored column still reads `verified` and no sweep has run.
+    const from = before.provenance.verificationStatus as VerificationState;
+    const to = input.verificationStatus as VerificationState;
+    assertTransition(from, to, input.note ?? null);
+
+    const verifying = to === VerificationState.VERIFIED;
     const after = await repo.updateHcp(client, principal.clinicId, id, {
       verificationStatus: input.verificationStatus,
       verifiedBy: verifying ? principal.userId : null,
       // The schema requires evidence of *when* for a verified record.
       lastVerifiedAt: verifying ? new Date().toISOString() : before.provenance.lastVerifiedAt,
+      // A verification is granted for a bounded period; anything else is a
+      // permanent claim dressed up as a check.
+      verificationExpiresAt: verifying ? verificationExpiryFrom(input.validForDays) : null,
+      verificationNote: input.note ?? null,
       ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
     });
 
@@ -462,8 +544,10 @@ export async function setHcpVerification(
       subjectId: after.id,
       actorId: principal.userId,
       payload: {
-        verificationStatus: after.provenance.verificationStatus,
+        from,
+        to: after.provenance.verificationStatus,
         evidenceSource: input.evidenceSource,
+        expiresAt: after.verificationExpiresAt,
       },
     });
     await auditTx(client, {
@@ -545,6 +629,7 @@ export interface SearchHcpParams {
   q?: string;
   specialtyId?: string;
   verificationStatus?: string;
+  professionalCategory?: string;
   limit?: number;
   offset?: number;
 }
@@ -558,6 +643,7 @@ export async function searchHcps(principal: Principal, params: SearchHcpParams):
     q: params.q?.trim() || null,
     specialtyId: params.specialtyId ?? null,
     verificationStatus: (params.verificationStatus as never) ?? null,
+    professionalCategory: params.professionalCategory ?? null,
     territoryIds: scope,
     limit: Math.min(Math.max(params.limit ?? 25, 1), 100),
     offset: Math.max(params.offset ?? 0, 0),
@@ -765,4 +851,143 @@ export async function getHcpRevisions(principal: Principal, hcpId: string) {
     targetId: hcpId,
   });
   return repo.listHcpRevisions(principal.clinicId, hcpId);
+}
+
+
+// --- Credentials, attribute provenance, verification expiry (Phase 5-7) ------
+
+export async function addCredential(principal: Principal, hcpId: string, raw: unknown) {
+  requirePermission(principal, Permission.HCP_WRITE);
+  const input = parse(AddCredentialSchema, raw, 'credential');
+  assertFreeTextClean({
+    credentialName: input.credentialName,
+    issuingBody: input.issuingBody ?? null,
+  });
+  await assertHcpInScope(principal, hcpId);
+
+  return withTransaction(async (client) => {
+    const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
+    if (!hcp) throw new NotFoundError('HCP');
+    try {
+      const credential = await repo.insertCredential(client, {
+        clinicId: principal.clinicId,
+        hcpId,
+        credentialType: input.credentialType,
+        credentialCode: input.credentialCode ?? null,
+        credentialName: input.credentialName,
+        issuingBody: input.issuingBody ?? null,
+        issuingJurisdiction: input.issuingJurisdiction ?? null,
+        awardedOn: input.awardedOn ?? null,
+        validFrom: input.validFrom ?? null,
+        validTo: input.validTo ?? null,
+        source: input.source,
+        sourceVersion: input.sourceVersion ?? null,
+        sourceDate: input.sourceDate ?? null,
+      });
+      await auditTx(client, {
+        clinicId: principal.clinicId,
+        actorId: principal.userId,
+        action: 'hcp.credential.add',
+        targetType: 'hcp',
+        targetId: hcpId,
+        metadata: { credentialType: input.credentialType, source: input.source },
+      });
+      return credential;
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        throw new ConflictError('This credential is already recorded for this HCP');
+      }
+      throw err;
+    }
+  });
+}
+
+export async function listCredentials(principal: Principal, hcpId: string) {
+  requirePermission(principal, Permission.HCP_READ);
+  await assertHcpInScope(principal, hcpId);
+  return repo.listCredentials(principal.clinicId, hcpId);
+}
+
+/**
+ * Where each attribute of this record came from.
+ *
+ * Derived from the append-only revision history rather than a parallel
+ * per-attribute table, so there is exactly one account of what changed, from
+ * which source, by whom — and it cannot drift from the history itself.
+ */
+export async function getAttributeProvenance(principal: Principal, hcpId: string) {
+  requirePermission(principal, Permission.HCP_READ);
+  await assertHcpInScope(principal, hcpId);
+  const hcp = await repo.getHcpById(principal.clinicId, hcpId);
+  if (!hcp) throw new NotFoundError('HCP');
+  const attributes = await repo.attributeProvenance(principal.clinicId, hcpId);
+  await audit({
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: 'hcp.provenance.read',
+    targetType: 'hcp',
+    targetId: hcpId,
+  });
+  return {
+    hcpId,
+    recordProvenance: hcp.provenance,
+    effectiveFrom: hcp.effectiveFrom,
+    effectiveTo: hcp.effectiveTo,
+    attributes,
+  };
+}
+
+/**
+ * Persist lapsed verifications.
+ *
+ * Expiry is already DERIVED on every read, so this sweep changes no answer — it
+ * makes the stored state agree with the derived one and emits the events that
+ * downstream workflows need. That ordering is deliberate: correctness must not
+ * depend on the sweep having run.
+ */
+export async function sweepExpiredVerifications(principal: Principal, limit = 200) {
+  requirePermission(principal, Permission.HCP_VERIFY);
+  const capped = Math.min(Math.max(limit, 1), 1000);
+
+  return withTransaction(async (client) => {
+    const lapsed = await repo.lapsedVerifications(client, principal.clinicId, capped);
+    const expired: string[] = [];
+
+    for (const hcp of lapsed) {
+      const after = await repo.updateHcp(client, principal.clinicId, hcp.id, {
+        verificationStatus: VerificationState.EXPIRED,
+        verifiedBy: null,
+      });
+      await repo.insertHcpRevision(client, {
+        clinicId: principal.clinicId,
+        hcpId: hcp.id,
+        recordVersion: after.recordVersion,
+        changeType: 'verification_expired',
+        changedFields: ['verificationStatus'],
+        snapshot: after,
+        source: 'verification_expiry_sweep',
+        changedBy: principal.userId,
+      });
+      await emitEvent(client, {
+        clinicId: principal.clinicId,
+        type: EventType.HCP_VERIFICATION_EXPIRED,
+        subjectType: 'hcp',
+        subjectId: hcp.id,
+        actorId: principal.userId,
+        payload: { expiredAt: hcp.verificationExpiresAt },
+      });
+      expired.push(hcp.id);
+    }
+
+    if (expired.length > 0) {
+      await auditTx(client, {
+        clinicId: principal.clinicId,
+        actorId: principal.userId,
+        action: 'hcp.verification.sweep',
+        targetType: 'hcp',
+        metadata: { expired: expired.length },
+      });
+    }
+    return { expired: expired.length, hcpIds: expired };
+  });
 }

@@ -15,7 +15,7 @@ branch, which carries the working agreement and the shared contracts.
 - `modules/governance/permissions.pharma.ts`
 - `domain/events.pharma.ts`
 - `http/features/pharma.feature.ts` + `http/routes/{hcp,medication,rep,pharma-content,intelligence}.routes.ts`
-- Migrations **0300–0399** (0300–0305 used)
+- Migrations **0300–0399** (0300–0306 used)
 - Pharma tests, this file, `docs/agent-state/agent-4.md`
 
 ---
@@ -115,6 +115,45 @@ position so they need not discover the limit by probing it.
 The honest cost: with only two cohorts where one is below threshold,
 complementary suppression means **nothing** is published. That is the intended
 trade-off and is covered by a named test rather than hidden.
+
+### HCP verification is a lifecycle, not a label (Phase 6)
+```
+unverified ──► pending_review ──► verified ──► expired ──► pending_review
+     │               │    │           │
+     └──► rejected ◄─┘    │           ├──► suppressed/suspended ──► pending_review
+                          └──► suspended
+```
+`modules/hcp/verification.ts` holds the whole rule set as pure functions. Two
+properties matter more than the graph:
+
+- **Nothing reaches `verified` except through `pending_review`.** There is no
+  edge from `unverified`, `rejected`, `suspended` or `expired` straight to
+  verified — a unit test asserts this for *every* state, so a future edge cannot
+  be added without failing.
+- **Verification never survives a material change.** `MATERIAL_ATTRIBUTES` names
+  exactly what a reviewer attested to (identity, category, specialty,
+  professional contact, jurisdiction, validity window). Annotations (`notes`,
+  `preferredLanguage`) and re-citing a source for unchanged facts are explicitly
+  *not* material — an earlier, blunter rule downgraded a record for any edit,
+  which punished stewards for improving provenance.
+
+**Expiry is derived, not swept.** A verification is granted for a bounded period
+(default one year). `pharma_effective_verification(status, expires_at)` computes
+the effective state in SQL, and every read and every filter goes through it — so
+a lapsed record reads as `expired` the moment it lapses, even if no sweep has
+run. `POST /hcps/verification/sweep` then persists the same answer and emits
+`HCP_VERIFICATION_EXPIRED`; correctness never depends on the sweep having run.
+Rejection and suspension require a recorded reason, enforced by a CHECK as well
+as by the service.
+
+### Attribute-level provenance (Phase 7)
+`GET /hcps/:id/provenance` answers "where did *this* field come from" by
+resolving the append-only revision history — the latest revision that touched
+each attribute, with its source, version and actor. It is derived rather than
+stored in a parallel per-attribute table, so there is exactly one account of what
+changed and it cannot drift from the history itself. `source_date` (when the
+source asserted a fact) is now distinct from `created_at` (when we recorded it)
+and `last_verified_at` (when we last checked it).
 
 ### Provenance on every reference field (§8, §23)
 `source`, `source_version`, `source_ref`, `jurisdiction`, `last_verified_at` and
@@ -306,19 +345,37 @@ Two local conventions worth keeping:
 | `test/integration/drug-master.test.ts` | 17 | licensing discipline, jurisdiction, regulatory identity, imports |
 | `test/integration/pharma-field.test.ts` | 20 | territory scope, visits, briefing, call reports, scientific requests |
 | `test/integration/pharma-content.test.ts` | 21 | approval lifecycle, expiry gating, engagement, segments, campaigns |
-| `test/integration/pharma-firewall.test.ts` | 67 | the four firewall layers, the blocked clinical source, end-to-end signals, threshold immutability |
+| `test/integration/pharma-firewall.test.ts` | 69 | the four firewall layers, the blocked clinical source, end-to-end signals, threshold immutability |
 | `test/unit/query-governance.test.ts` | 22 | narrowing detection, budget decisions, banding, rounding, complementary suppression |
+| `test/unit/hcp-verification.test.ts` | 11 | the transition graph, material-change rule, expiry arithmetic |
+| `test/integration/hcp-hardening.test.ts` | 23 | professional category, credentials, the full lifecycle, derived expiry, the sweep, attribute provenance |
 | `test/integration/intelligence-redteam.test.ts` | 17 | differencing, narrowing chains, budget exhaustion, controls that cannot be configured away |
 
-## 7. Next tasks
-- **Phase 19 — adverse-event safety handoff.** Nothing exists today: a rep who
-  hears about a suspected adverse event has no governed route for it. This is the
-  largest remaining regulatory gap in the workstream.
-- **Phase 6 — HCO 360**, plus first-class HCO locations and departments (today a
-  department is a text field on an affiliation).
-- **Phases 1–2 hardening** — HCP professional category (physician / pharmacist /
-  dentist / nurse) and credentials; verification states `rejected`, `suspended`
-  and `expired` with an expiry engine.
+## 7. Territory scope and clinic-wide principals
+Territory scope exists to stop a **field representative** browsing the whole HCP
+master. It is therefore applied to field principals only:
+`CLINIC_WIDE_PHARMA_PERMISSIONS` in `visibility.ts` names the three permissions
+whose holders work across the clinic — `territory:manage` (owns the territory
+model), `hcp:verify` (a data steward's job *is* the whole master) and
+`scientificrequest:fulfill` (medical affairs serves every HCP and holds no
+territory). `PHARMA_REP` holds none of them and stays scoped, which the
+field-force and red-team suites assert directly.
+
+This was a real defect found while testing Phase 5: scoping keyed only on
+`territory:manage`, so a `PHARMA_DATA_STEWARD` — who has no territory — was
+locked out of the master they exist to curate.
+
+## 8. Next tasks
+- **Phase 19 — adverse-event safety handoff.** Specified in **CCR-007** and
+  awaiting cross-workstream approval. Agent 4 must not build the destination; the
+  proposal defines only what the pharma side hands over. Negative tests in
+  `intelligence-redteam.test.ts` pin the current, deliberate absence so a covert
+  clinical workflow cannot appear without failing a test.
+- **Phase 3/6 — HCO locations, departments and HCO 360.** A department is still a
+  text field on an affiliation; there is no HCO 360.
+- **Phase 8/11 — medical-representative profile and manager hierarchy**, then
+  field-visit modality and field-note quarantine (the latter is coupled to
+  CCR-007: quarantine replaces today's reject-and-discard).
 - **Phase 63 — intelligence lifecycle** (draft → review → published → expired →
   archived); signals are currently published on creation and never expire.
 - `clinical_governed` stays fail-closed: CCR-004 is APPROVED as a contract but

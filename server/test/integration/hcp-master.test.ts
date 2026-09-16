@@ -31,12 +31,32 @@ afterAll(async () => {
   if (app) await app.close();
 });
 
+/**
+ * Take a record through the governed path to `verified`. There is deliberately
+ * no shortcut: Phase 6 forbids reaching `verified` without passing review.
+ */
+async function verifyThroughReview(hcpId: string, user: TestUser, evidence = 'register lookup') {
+  const review = await app.inject({
+    method: 'POST',
+    url: `/hcps/${hcpId}/verification`,
+    headers: auth(user),
+    payload: { verificationStatus: 'pending_review', evidenceSource: evidence },
+  });
+  expect(review.statusCode).toBe(200);
+  return app.inject({
+    method: 'POST',
+    url: `/hcps/${hcpId}/verification`,
+    headers: auth(user),
+    payload: { verificationStatus: 'verified', evidenceSource: evidence },
+  });
+}
+
 async function createHcp(user: TestUser, overrides: Record<string, unknown> = {}) {
   return app.inject({
     method: 'POST',
     url: '/hcps',
     headers: auth(user),
-    payload: { fullName: 'Dr Mona Farouk', provenance: PROVENANCE, ...overrides },
+    payload: { fullName: 'Dr Mona Farouk', professionalCategory: 'physician', provenance: PROVENANCE, ...overrides },
   });
 }
 
@@ -60,7 +80,7 @@ describe('HCP master — provenance is mandatory (§8, §23)', () => {
       method: 'POST',
       url: '/hcps',
       headers: auth(steward),
-      payload: { fullName: 'Dr No Source', provenance: { jurisdiction: 'EG' } },
+      payload: { fullName: 'Dr No Source', professionalCategory: 'physician', provenance: { jurisdiction: 'EG' } },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('validation_error');
@@ -71,7 +91,7 @@ describe('HCP master — provenance is mandatory (§8, §23)', () => {
       method: 'POST',
       url: '/hcps',
       headers: auth(steward),
-      payload: { fullName: 'Dr No Jurisdiction', provenance: { source: 'field_rep' } },
+      payload: { fullName: 'Dr No Jurisdiction', professionalCategory: 'physician', provenance: { source: 'field_rep' } },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -90,17 +110,56 @@ describe('HCP master — verification is stewardship, not field work', () => {
 
   it('a steward can verify, and the record then carries evidence of when', async () => {
     const hcp = (await createHcp(steward)).json();
-    const res = await app.inject({
-      method: 'POST',
-      url: `/hcps/${hcp.id}/verification`,
-      headers: auth(steward),
-      payload: { verificationStatus: 'verified', evidenceSource: 'EG MOH register lookup' },
-    });
+    const res = await verifyThroughReview(hcp.id, steward, 'EG MOH register lookup');
     expect(res.statusCode).toBe(200);
     const verified = res.json();
     expect(verified.provenance.verificationStatus).toBe('verified');
     expect(verified.provenance.lastVerifiedAt).not.toBeNull();
-    expect(verified.recordVersion).toBe(2);
+    // A verification is granted for a bounded period, never indefinitely.
+    expect(verified.verificationExpiresAt).not.toBeNull();
+    expect(verified.recordVersion).toBe(3);
+  });
+
+  it('REFUSES a jump straight from unverified to verified (review is mandatory)', async () => {
+    const hcp = (await createHcp(steward)).json();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/hcps/${hcp.id}/verification`,
+      headers: auth(steward),
+      payload: { verificationStatus: 'verified', evidenceSource: 'skipping review' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.details.allowed).not.toContain('verified');
+  });
+
+  it('requires a reason to reject or suspend', async () => {
+    const hcp = (await createHcp(steward)).json();
+    await app.inject({
+      method: 'POST',
+      url: `/hcps/${hcp.id}/verification`,
+      headers: auth(steward),
+      payload: { verificationStatus: 'pending_review', evidenceSource: 'queued' },
+    });
+    const noReason = await app.inject({
+      method: 'POST',
+      url: `/hcps/${hcp.id}/verification`,
+      headers: auth(steward),
+      payload: { verificationStatus: 'rejected', evidenceSource: 'register lookup' },
+    });
+    expect(noReason.statusCode).toBe(400);
+
+    const withReason = await app.inject({
+      method: 'POST',
+      url: `/hcps/${hcp.id}/verification`,
+      headers: auth(steward),
+      payload: {
+        verificationStatus: 'rejected',
+        evidenceSource: 'register lookup',
+        note: 'No licence found under this name',
+      },
+    });
+    expect(withReason.statusCode).toBe(200);
+    expect(withReason.json().verificationNote).toMatch(/No licence found/);
   });
 
   it('a field representative CANNOT verify an HCP (least privilege)', async () => {
@@ -114,14 +173,9 @@ describe('HCP master — verification is stewardship, not field work', () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it('editing a verified record drops it back to pending review', async () => {
+  it('a MATERIAL edit to a verified record drops it back to pending review', async () => {
     const hcp = (await createHcp(steward)).json();
-    await app.inject({
-      method: 'POST',
-      url: `/hcps/${hcp.id}/verification`,
-      headers: auth(steward),
-      payload: { verificationStatus: 'verified', evidenceSource: 'register' },
-    });
+    await verifyThroughReview(hcp.id, steward);
     const res = await app.inject({
       method: 'PATCH',
       url: `/hcps/${hcp.id}`,
@@ -130,6 +184,22 @@ describe('HCP master — verification is stewardship, not field work', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().provenance.verificationStatus).toBe('pending_review');
+    // The lapse clock belongs to the verification that was just invalidated.
+    expect(res.json().verificationExpiresAt).toBeNull();
+  });
+
+  it('a NON-material edit leaves the verification intact', async () => {
+    const hcp = (await createHcp(steward)).json();
+    await verifyThroughReview(hcp.id, steward);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/hcps/${hcp.id}`,
+      headers: auth(steward),
+      // Annotations are not claims a reviewer attested to.
+      payload: { notes: 'Prefers morning appointments' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().provenance.verificationStatus).toBe('verified');
   });
 });
 
@@ -142,12 +212,7 @@ describe('HCP master — versioning and revision history', () => {
       headers: auth(steward),
       payload: { title: 'Prof.' },
     });
-    await app.inject({
-      method: 'POST',
-      url: `/hcps/${hcp.id}/verification`,
-      headers: auth(steward),
-      payload: { verificationStatus: 'verified', evidenceSource: 'syndicate register' },
-    });
+    await verifyThroughReview(hcp.id, steward, 'syndicate register');
 
     const res = await app.inject({
       method: 'GET',
@@ -160,9 +225,10 @@ describe('HCP master — versioning and revision history', () => {
       'create',
       'update',
       'verify',
+      'verify',
     ]);
     expect(revisions[1].changedFields).toContain('title');
-    expect(revisions.map((r: { recordVersion: number }) => r.recordVersion)).toEqual([1, 2, 3]);
+    expect(revisions.map((r: { recordVersion: number }) => r.recordVersion)).toEqual([1, 2, 3, 4]);
   });
 
   it('revision history cannot be rewritten', async () => {

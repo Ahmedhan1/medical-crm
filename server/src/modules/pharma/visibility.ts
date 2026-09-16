@@ -8,16 +8,36 @@ type Runner = Pick<PoolClient, 'query'>;
 /**
  * Territory scope for a principal.
  *
- * `null` means unrestricted: the principal stewards the territory model itself
- * (`territory:manage`, held by ADMIN) and therefore sees the whole master. Any
- * other pharma principal — a field representative — sees only HCPs targeted in
- * a territory they are currently assigned to.
+ * `null` means unrestricted. Any other pharma principal — a field
+ * representative — sees only HCPs targeted in a territory they are currently
+ * assigned to.
  *
  * This is a second, independent scope on top of `clinic_id`: clinic scope stops
  * cross-tenant reads, territory scope stops a representative from browsing the
  * whole HCP master of their own clinic.
  */
 export type TerritoryScope = string[] | null;
+
+/**
+ * Permissions whose holder works across the whole clinic, so territory scope
+ * does not apply to them. Each entry is a deliberate judgement, not a
+ * convenience:
+ *
+ * - `territory:manage` — owns the territory model itself (pharma manager, admin).
+ * - `hcp:verify` — the data steward's job IS the whole master; scoping a steward
+ *   to a territory they were never assigned would lock them out of the records
+ *   they exist to curate.
+ * - `scientificrequest:fulfill` — medical affairs answers questions from any HCP
+ *   in the clinic and holds no territory.
+ *
+ * `PHARMA_REP` holds none of these and therefore stays territory-scoped, which
+ * is the property the field-force and red-team tests assert.
+ */
+const CLINIC_WIDE_PHARMA_PERMISSIONS = [
+  Permission.TERRITORY_MANAGE,
+  Permission.HCP_VERIFY,
+  Permission.SCIENTIFIC_REQUEST_FULFILL,
+] as const;
 
 /** Territory ids the user currently holds an open (or not yet expired) assignment for. */
 export async function activeTerritoryIds(
@@ -37,11 +57,17 @@ export async function activeTerritoryIds(
   return rows.map((r) => r.territory_id);
 }
 
+export function isClinicWidePrincipal(principal: Principal): boolean {
+  return CLINIC_WIDE_PHARMA_PERMISSIONS.some((permission) =>
+    hasPermission(principal, permission),
+  );
+}
+
 export async function territoryScopeFor(
   principal: Principal,
   runner: Runner = getPool(),
 ): Promise<TerritoryScope> {
-  if (hasPermission(principal, Permission.TERRITORY_MANAGE)) return null;
+  if (isClinicWidePrincipal(principal)) return null;
   return activeTerritoryIds(runner, principal.clinicId, principal.userId);
 }
 

@@ -11,6 +11,8 @@ export const PharmaEventType = {
   HCP_CREATED: 'HCP_CREATED',
   HCP_UPDATED: 'HCP_UPDATED',
   HCP_VERIFIED: 'HCP_VERIFIED',
+  /** A verification lapsed and was persisted by the expiry sweep (Phase 6). */
+  HCP_VERIFICATION_EXPIRED: 'HCP_VERIFICATION_EXPIRED',
   HCP_MERGED: 'HCP_MERGED',
   HCO_CREATED: 'HCO_CREATED',
   HCP_AFFILIATION_CHANGED: 'HCP_AFFILIATION_CHANGED',

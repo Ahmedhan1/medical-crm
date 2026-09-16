@@ -17,8 +17,29 @@ const IdParam = z.object({ id: z.string().uuid() });
 const SearchQuery = z.object({
   q: z.string().trim().min(2).optional(),
   specialtyId: z.string().uuid().optional(),
+  professionalCategory: z
+    .enum([
+      'physician',
+      'pharmacist',
+      'dentist',
+      'nurse',
+      'veterinarian',
+      'researcher',
+      'allied_health',
+      'other',
+    ])
+    .optional(),
   verificationStatus: z
-    .enum(['unverified', 'pending_review', 'verified', 'disputed', 'retired'])
+    .enum([
+      'unverified',
+      'pending_review',
+      'verified',
+      'rejected',
+      'suspended',
+      'expired',
+      'disputed',
+      'retired',
+    ])
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
@@ -94,6 +115,20 @@ export async function hcpRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ revisions: await hcp.getHcpRevisions(principalOf(req), id) });
   });
 
+  /**
+   * Persist lapsed verifications. Expiry is already derived on every read, so
+   * this only reconciles stored state and emits events — it is registered
+   * BEFORE `/hcps/:id/...` so the literal path is not captured as an id.
+   */
+  app.post('/hcps/verification/sweep', async (req, reply) => {
+    const body = params(
+      z.object({ limit: z.coerce.number().int().min(1).max(1000).optional() }),
+      req.body ?? {},
+      'Invalid sweep request',
+    );
+    return reply.send(await hcp.sweepExpiredVerifications(principalOf(req), body.limit));
+  });
+
   app.post('/hcps/:id/verification', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     return reply.send(await hcp.setHcpVerification(principalOf(req), id, req.body));
@@ -103,6 +138,22 @@ export async function hcpRoutes(app: FastifyInstance): Promise<void> {
     const { id } = params(IdParam, req.params, 'Invalid id');
     const body = params(MergeBody, req.body, 'Invalid merge target');
     return reply.send(await hcp.mergeHcp(principalOf(req), id, body.targetHcpId));
+  });
+
+  app.get('/hcps/:id/provenance', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await hcp.getAttributeProvenance(principalOf(req), id));
+  });
+
+  app.post('/hcps/:id/credentials', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    const created = await hcp.addCredential(principalOf(req), id, req.body);
+    return reply.code(201).send(created);
+  });
+
+  app.get('/hcps/:id/credentials', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send({ credentials: await hcp.listCredentials(principalOf(req), id) });
   });
 
   app.post('/hcps/:id/identifiers', async (req, reply) => {

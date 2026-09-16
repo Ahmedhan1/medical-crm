@@ -56,7 +56,7 @@ async function seedCohort(count: number, type: string, territoryId: string, tag 
         method: 'POST',
         url: '/hcps',
         headers: auth(steward),
-        payload: { fullName: `Dr ${type}${tag} ${i}`, provenance: PROV },
+        payload: { fullName: `Dr ${type}${tag} ${i}`, professionalCategory: 'physician', provenance: PROV },
       })
     ).json();
     await app.inject({
@@ -391,5 +391,125 @@ describe('red team — the query log holds no patient or subject data', () => {
     expect(Object.keys(entry)).not.toContain('patient_id');
     expect(Object.keys(entry)).not.toContain('hcp_id');
     expect(JSON.stringify(entry)).not.toContain('Dr safety');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// PHASE 27 (safety) — there is no adverse-event pipeline yet, and no covert one.
+//
+// CCR-007 proposes the governed handoff; until it is approved these tests pin
+// the CURRENT, deliberate absence, so a future change cannot quietly introduce a
+// clinical workflow inside the pharma layer without failing here.
+// ---------------------------------------------------------------------------
+describe('red team — no covert safety or clinical workflow exists', () => {
+  it('a safety objection is commercial data, with no clinical linkage', async () => {
+    const hcp = (
+      await app.inject({
+        method: 'POST',
+        url: '/hcps',
+        headers: auth(steward),
+        payload: {
+          fullName: 'Dr Safety Theme',
+          professionalCategory: 'physician',
+          provenance: PROV,
+        },
+      })
+    ).json();
+    await app.inject({
+      method: 'POST',
+      url: `/territories/${north.id}/targets`,
+      headers: auth(manager),
+      payload: { hcpId: hcp.id },
+    });
+    const visit = (
+      await app.inject({
+        method: 'POST',
+        url: '/visits',
+        headers: auth(rep),
+        payload: { hcpId: hcp.id, plannedAt: new Date().toISOString() },
+      })
+    ).json();
+    await app.inject({
+      method: 'POST',
+      url: `/visits/${visit.id}/call-report`,
+      headers: auth(rep),
+      payload: {
+        summary: 'Discussed tolerability',
+        objections: [{ objectionType: 'safety', objectionText: 'Wants more tolerability data' }],
+      },
+    });
+
+    // `objection_type = 'safety'` is a reason an HCP resists a product. It must
+    // not have become a clinical record or acquired a patient linkage.
+    const { rows } = await getPool().query<Record<string, unknown>>(
+      'SELECT * FROM visit_objection LIMIT 1',
+    );
+    const keys = Object.keys(rows[0]!);
+    expect(keys).not.toContain('patient_id');
+    expect(keys).not.toContain('encounter_id');
+    expect(keys.some((k) => k.startsWith('adverse'))).toBe(false);
+  });
+
+  it('exposes no adverse-event or safety-handoff endpoint', async () => {
+    // If one appears without the CCR-007 contract being approved, this fails.
+    for (const url of [
+      '/safety/adverse-events',
+      '/safety/handoffs',
+      '/pharma/adverse-events',
+      '/adverse-events',
+    ]) {
+      const res = await app.inject({ method: 'GET', url, headers: auth(manager) });
+      expect(res.statusCode, url).toBe(404);
+    }
+  });
+
+  it('no pharma table has acquired an adverse-event or patient column', async () => {
+    const { rows } = await getPool().query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND (table_name LIKE 'hcp%' OR table_name LIKE 'call_report%'
+               OR table_name LIKE 'visit%' OR table_name LIKE 'scientific%')
+          AND (column_name LIKE '%patient%' OR column_name LIKE '%adverse%'
+               OR column_name LIKE '%diagnos%')`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it('still refuses patient-identifier-shaped text rather than storing it', async () => {
+    // Today's behaviour, pinned. CCR-007 proposes replacing reject-and-discard
+    // with quarantine — that change must be deliberate, not accidental.
+    const hcp = (
+      await app.inject({
+        method: 'POST',
+        url: '/hcps',
+        headers: auth(steward),
+        payload: { fullName: 'Dr Guarded', professionalCategory: 'physician', provenance: PROV },
+      })
+    ).json();
+    await app.inject({
+      method: 'POST',
+      url: `/territories/${north.id}/targets`,
+      headers: auth(manager),
+      payload: { hcpId: hcp.id },
+    });
+    const visit = (
+      await app.inject({
+        method: 'POST',
+        url: '/visits',
+        headers: auth(rep),
+        payload: { hcpId: hcp.id, plannedAt: new Date().toISOString() },
+      })
+    ).json();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/visits/${visit.id}/call-report`,
+      headers: auth(rep),
+      payload: { summary: 'Reaction reported for MRN-000042 after second dose' },
+    });
+    expect(res.statusCode).toBe(400);
+    const { rows } = await getPool().query('SELECT count(*)::int AS n FROM call_report');
+    expect(rows[0]!.n).toBe(0);
   });
 });

@@ -45,6 +45,178 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-010 — Adverse Event Handoff Contract (pharma field → governed safety workflow)
+- Status: PROPOSED — **design only; no cross-domain workflow implemented**
+- Requested by: Agent 4
+- Date: 2026-09-16
+- Affects: Agent 4 (field intake), Agent 2 (clinical domain), Agent 1 (platform,
+  contracts, governance), future pharmacovigilance/regulatory integration
+- Contract file(s): none yet. Proposed: `modules/governance/safety-handoff.ts`
+  (Agent 1 owned) as the port; `modules/pharma/safety/**` (Agent 4 owned) as the
+  field-side intake only.
+
+#### Why a contract rather than a feature
+A medical representative is a commercial actor who will, occasionally, be told
+something that *sounds like* an adverse event. Today there is no route for it:
+`visit_objection.objection_type = 'safety'` is a **commercial objection theme**
+(a reason an HCP resists a product), not a safety report, and the PHI guard
+rejects any free text carrying an identifier — so the statement is simply lost.
+
+Both failure modes are bad. Losing it fails the regulatory obligation; routing it
+into the clinical record would make the pharma layer a hidden clinical system,
+which `AGENTS.md` §1.10 and blueprint §45 forbid. The boundary therefore has to
+be a contract between workstreams, not a feature inside one of them.
+
+**Agent 4 must not build the destination.** This CCR defines only what the pharma
+side hands over and under what guarantees.
+
+#### 1. Source
+Exactly three field-side origins, all already existing Agent 4 surfaces:
+- `call_report.summary` / `next_step` (free text typed by a representative)
+- `visit_objection.objection_text`
+- `scientific_request.question`
+
+No other origin. In particular, nothing is ever sourced from a clinical table,
+and the pharma side never reads one (enforced by the existing static scan in
+`pharma-firewall.test.ts`).
+
+#### 2. Classification
+A neutral, non-clinical classification assigned at intake:
+
+```
+ORDINARY_FIELD_NOTE | POTENTIAL_PHI | POTENTIAL_SAFETY_SIGNAL | BOTH
+```
+
+Binding rules:
+- The pharma layer may only ever record **`POTENTIAL_SAFETY_SIGNAL`**. It must
+  never record "adverse event", "confirmed", a causality assessment, a seriousness
+  grade, or a MedDRA-style coded term. Those are outputs of an authorized safety
+  system, not of a commercial one.
+- Classification is **not** clinical confirmation and must be labelled as such in
+  every payload and UI contract.
+- **AI must never be the sole authority.** A model may propose a classification;
+  the stored classification must carry `classifier` ∈ `{rule, human, ai_suggested}`
+  and an `ai_suggested` value must be confirmed by a human holding the safety
+  permission before it is handed off. Agent 3 owns any model; Agent 4 owns the
+  confirmation state.
+
+#### 3. Minimal data (the payload)
+Data minimisation is the core of this contract. The handoff carries **only**:
+
+| Field | Notes |
+| --- | --- |
+| `handoffId` | idempotency key, generated pharma-side |
+| `clinicId` | tenant |
+| `classification` | `POTENTIAL_SAFETY_SIGNAL` (or `BOTH`) |
+| `classifier` | `rule` / `human` / `ai_suggested` + confirming user |
+| `reportedAt` | when the representative recorded it |
+| `sourceKind` | `call_report` / `visit_objection` / `scientific_request` |
+| `sourceId` | the pharma record id (a pointer, not its content) |
+| `hcpId` | the reporting **professional**, never a patient |
+| `medicationId` | optional, from the drug master |
+| `jurisdiction` | drives which regulator applies |
+| `narrativeRef` | a **reference** to quarantined text, not the text |
+
+Explicitly **NOT** carried: the raw narrative, patient name, age, sex, date of
+birth, initials, identifiers, dates of treatment, or any free text at all. The
+destination system fetches the narrative, if it is authorized to, through its own
+governed read against the quarantine store — the pharma layer never pushes it.
+
+#### 4. Destination
+An authorized safety/medical-affairs workflow **outside** Agent 4. Implemented by
+Agent 1 as a port with one method:
+
+```ts
+interface SafetyHandoffPort {
+  readonly available: boolean;
+  submit(payload: SafetyHandoffPayload): Promise<{ accepted: true; reference: string }>;
+}
+```
+
+Until Agent 1 provides an implementation, the registered port is
+`available: false` and refuses every call — the same fail-closed posture Agent 1
+endorsed for `clinical_governed` (CCR-004). A future external pharmacovigilance
+system sits behind this port; the domain never couples to a vendor.
+
+#### 5. Authorization
+- Raising a potential signal: any principal who may write the source record
+  (`callreport:write` / `scientificrequest:write`) — a representative must be able
+  to report, or reporting will not happen.
+- Confirming a classification and releasing a handoff: a **new** permission
+  `safety:handoff` granted to `MEDICAL_AFFAIRS` only. Not `PHARMA_REP`, not
+  `PHARMA_MANAGER`, not `PHARMA_DATA_STEWARD`, and not by granting `ADMIN`.
+- Reading quarantined narrative: `safety:read-quarantine`, `MEDICAL_AFFAIRS` only.
+- No pharma role gains any clinical permission as a result of this contract.
+
+#### 6. Audit
+Every step writes an append-only record: classification assigned, classification
+changed, human confirmation, handoff attempted, handoff accepted/refused,
+quarantine read. Audit metadata carries ids and vocabulary only — **never the
+narrative**, consistent with the existing `audit_log` rule.
+
+#### 7. Status
+```
+DETECTED → PENDING_REVIEW → CONFIRMED_FOR_HANDOFF → HANDED_OFF → ACKNOWLEDGED
+                          ↘ DISMISSED (with reason + reviewer)
+```
+`DISMISSED` never deletes anything; it records a reviewed decision.
+
+#### 8. Escalation
+An item in `PENDING_REVIEW` past its jurisdiction SLA escalates to a named
+medical-affairs queue and raises an event. The SLA is policy data per
+jurisdiction (regulators differ), never a hard-coded constant. Escalation must
+not be silent: an un-actioned potential safety signal is itself a finding.
+
+#### 9. Retention
+- Quarantined narrative: retained per jurisdiction policy, minimum until the
+  handoff is acknowledged, then subject to the platform retention engine.
+- Handoff metadata and audit: retained for the regulatory period; append-only.
+- Deletion is a governed platform operation, never an application path, and never
+  removes the audit trail of the decision.
+
+#### 10. PHI restrictions
+- The narrative is **quarantined, never published**: it must not enter call-report
+  search, HCP 360, briefings, exports, campaign data, or any intelligence source.
+- No quarantined content may become a `CohortContribution`. If a future source
+  wants safety-derived signals, it goes through the CCR-004 clinical path, not
+  this one.
+- Quarantine is storage under restricted read, not a clinical record: it carries
+  no patient entity, no diagnosis field, and no foreign key to any clinical table.
+
+#### 11. Failure behavior — fail closed, but never lose the report
+| Failure | Behaviour |
+| --- | --- |
+| Port unavailable (today's state) | Intake still records and quarantines; handoff stays `CONFIRMED_FOR_HANDOFF`; a refusal is audited. Nothing is silently dropped. |
+| Destination rejects | Status returns to `PENDING_REVIEW`, escalation timer continues, alert raised. |
+| Classification uncertain | Treat as `POTENTIAL_SAFETY_SIGNAL` and quarantine. The safe default is to over-report into a governed queue, never to under-report. |
+| PHI detected | Quarantine, never reject-and-discard. **This is a change from today**, where the guard returns 400 and the representative's text is lost — losing a possible safety report is worse than storing it under restricted read. |
+| Duplicate submission | Idempotent on `handoffId`. |
+
+#### 12. What Agent 4 will build once approved, and what it will not
+Will: field-side intake, classification record, quarantine store, status machine,
+the `safety:handoff` permission, events, audit, and negative tests.
+Will **not**: the destination workflow, causality or seriousness assessment,
+regulatory submission, any clinical write, or any AI that classifies autonomously.
+
+- Backward compatibility: fully additive. Nothing changes until approved; the
+  existing PHI guard keeps its current reject behaviour until the quarantine store
+  exists, so there is no window in which text is accepted but unprotected.
+- Tests (once approved): a representative cannot release a handoff; quarantined
+  narrative never appears in 360/briefing/export/intelligence; the port refuses
+  while unavailable and the report is still retained; AI-suggested classification
+  cannot hand off without human confirmation; no clinical table is referenced.
+- Decision (Agent 1 / Agent 2): _pending_
+
+- **Decision (Agent 1 / Integration I-4):** APPROVED as a CONTRACT/DESIGN only;
+  renumbered from Agent 4's CCR-007 to **CCR-010** (collided with the existing
+  drug↔allergen CCR-007). Per directive §3 the PHI-quarantine / adverse-event
+  handoff behaviour is **NOT implemented** this session — it stays PROPOSED and
+  fail-closed (the port is `available:false` and refuses every call, mirroring
+  CCR-004). The design is sound (data-minimised, no clinical coupling, MEDICAL_
+  AFFAIRS-gated, append-only audit). Implementation is deferred to a dedicated,
+  independently-audited phase owned by Agent 1 + Agent 4.
+
+
 ### CCR-009 — Intelligence signal response: exact cohort size replaced by a band
 - Status: **ACKNOWLEDGED / APPROVED** (renumbered from Agent 4's CCR-006 at integration — collided with Agent 2's patient-extension CCR-006)
 - Requested by: Agent 4
