@@ -61,6 +61,19 @@ const TIMELINE_SOURCES: readonly string[] = [
             'noteType', n.note_type, 'supersedesId', n.supersedes_id))
      FROM clinical_note n
     WHERE n.clinic_id = $1 AND n.patient_id = $2`,
+
+  `SELECT te.id::text, 'treatment_episode', te.created_at, te.origin_encounter_id, te.label,
+          jsonb_strip_nulls(jsonb_build_object(
+            'status', te.status, 'startedOn', te.started_on, 'endedOn', te.ended_on,
+            'discontinuationReason', te.discontinuation_reason))
+     FROM treatment_episode te
+    WHERE te.clinic_id = $1 AND te.patient_id = $2`,
+
+  `SELECT tr.id::text, 'treatment_response', tr.created_at, tr.encounter_id, tr.notes,
+          jsonb_strip_nulls(jsonb_build_object(
+            'response', tr.response, 'observedOn', tr.observed_on, 'episodeId', tr.episode_id))
+     FROM treatment_response tr
+    WHERE tr.clinic_id = $1 AND tr.patient_id = $2`,
 ];
 
 export interface TimelineEntry {

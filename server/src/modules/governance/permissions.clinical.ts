@@ -29,6 +29,8 @@ export const ClinicalPermission = {
   TREATMENT_WRITE: 'treatment:write',
   NOTE_WRITE: 'note:write',
   TIMELINE_READ: 'timeline:read',
+  TREATMENT_EPISODE_READ: 'treatment_episode:read',
+  TREATMENT_EPISODE_WRITE: 'treatment_episode:write',
 } as const;
 
 export const clinicalPermissions: WorkstreamPermissions = {
@@ -55,6 +57,9 @@ export const clinicalPermissions: WorkstreamPermissions = {
     [ClinicalPermission.TREATMENT_WRITE]: 'Record or revise a treatment plan',
     [ClinicalPermission.NOTE_WRITE]: 'Append a clinical note',
     [ClinicalPermission.TIMELINE_READ]: "View a patient's longitudinal clinical timeline",
+    [ClinicalPermission.TREATMENT_EPISODE_READ]: 'View treatment episodes and their responses',
+    [ClinicalPermission.TREATMENT_EPISODE_WRITE]:
+      'Start, stop or record the response to a treatment episode',
   },
   roleGrants: {
     [RoleKey.RECEPTION]: [
@@ -81,6 +86,7 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.VITALS_READ,
       ClinicalPermission.ENCOUNTER_CLINICAL_READ,
       ClinicalPermission.TIMELINE_READ,
+      ClinicalPermission.TREATMENT_EPISODE_READ,
     ],
     [RoleKey.DOCTOR]: [
       ClinicalPermission.PATIENT_READ,
@@ -99,6 +105,8 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.TREATMENT_WRITE,
       ClinicalPermission.NOTE_WRITE,
       ClinicalPermission.TIMELINE_READ,
+      ClinicalPermission.TREATMENT_EPISODE_READ,
+      ClinicalPermission.TREATMENT_EPISODE_WRITE,
     ],
   },
 };

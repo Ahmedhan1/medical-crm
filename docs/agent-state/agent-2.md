@@ -19,8 +19,11 @@ IN PROGRESS. Working the C0xx series on branch `claude/inspiring-cori-tk3ej8`
 - **C004 — Patient timeline.** One chronological stream of every clinical
   record for a patient, keyset-paginated.
 
+- **C005 — Treatment response episodes.** Longitudinal treatment episodes with
+  an append-only response series, completion and discontinuation.
+
 ## In Progress
-- C005 — Treatment response episodes.
+- C006 — Report engine (patient/encounter PDF).
 
 ## Database Changes
 Reserved migration range **0100–0199**.
@@ -42,6 +45,13 @@ Reserved migration range **0100–0199**.
   - `treatment_plan` — 1:1, summary, instructions, `follow_up_in_days`.
   - `clinical_note` — append-only (statement-level trigger, same as `event` and
     `audit_log`); a correction is a new note linked via `supersedes_id`.
+- `0102_treatment_episode.sql`
+  - `treatment_episode` — spans encounters; CHECKs tie `ended_on` to a
+    non-active status, keep `ended_on >= started_on`, and allow a
+    `discontinuation_reason` only on a discontinuation.
+  - `treatment_response` — append-only observation series; "latest response" is
+    derived in the query, never denormalized onto the episode where it could
+    drift from the observations it summarizes.
 
 ## API Changes
 | Method | Path | Permission | Notes |
@@ -61,6 +71,11 @@ Reserved migration range **0100–0199**.
 | POST | `/encounters/:id/complete-and-next` | `encounter:complete` + `encounter:clinical:write` | Atomic; returns `{ completed, next }` |
 | POST | `/queue/next` | `encounter:clinical:write` | Claim the next waiting patient |
 | GET | `/patients/:id/timeline` | `timeline:read` | `?limit` (1–100, default 50), `?cursor`; returns `{ entries, nextCursor }` |
+| POST | `/patients/:id/treatment-episodes` | `treatment_episode:write` | |
+| GET | `/patients/:id/treatment-episodes` | `treatment_episode:read` | `?status`, `?limit` |
+| GET | `/treatment-episodes/:id` | `treatment_episode:read` | Episode + full response series |
+| POST | `/treatment-episodes/:id/responses` | `treatment_episode:write` | |
+| POST | `/treatment-episodes/:id/end` | `treatment_episode:write` | `completed` or `discontinued` |
 
 No existing endpoint changed shape.
 
@@ -69,20 +84,22 @@ Added to `permissions.clinical.ts` (own file — not a contract change):
 `encounter:status`, `intake:record`, `intake:read`, `vitals:record`,
 `vitals:read`, `encounter:clinical:read`, `encounter:clinical:write`,
 `encounter:complete`, `diagnosis:write`, `treatment:write`, `note:write`,
-`timeline:read`.
+`timeline:read`, `treatment_episode:read`, `treatment_episode:write`.
 
 Grants — the operational/clinical authority split:
 - RECEPTION: `encounter:status` only. **No** clinical read or write.
 - NURSE: intake + vitals record/read, `encounter:clinical:read` (read-only).
 - DOCTOR: everything above plus every clinical write and `encounter:complete`.
-- `timeline:read` → NURSE, DOCTOR.
+- `timeline:read`, `treatment_episode:read` → NURSE, DOCTOR.
+- `treatment_episode:write` → DOCTOR.
 - ADMIN inherits all automatically.
 
 ## Event Changes
 Added to `events.clinical.ts`: `INTAKE_RECORDED`, `VITALS_RECORDED`,
 `ENCOUNTER_STARTED`, `ENCOUNTER_CLINICAL_UPDATED`, `DIAGNOSIS_RECORDED`,
 `DIAGNOSIS_REVISED`, `TREATMENT_PLAN_RECORDED`, `CLINICAL_NOTE_ADDED`,
-`ENCOUNTER_COMPLETED`.
+`ENCOUNTER_COMPLETED`, `TREATMENT_EPISODE_STARTED`,
+`TREATMENT_RESPONSE_RECORDED`, `TREATMENT_EPISODE_ENDED`.
 
 Every payload carries identifiers and shape only: intake carries no complaint or
 history text; vitals carry abnormal **field names** but never measured values;
@@ -90,10 +107,11 @@ clinical updates carry the names of the sections touched, never their content.
 
 ## Files Owned / Modified
 - Added: `modules/clinical/{encounter.repo,status.service,intake.repo,intake.service,vitals.repo,vitals.service,encounter.clinical.repo,workspace.service}.ts`,
-  `modules/clinical/timeline.service.ts`, `modules/workflow/queue.service.ts`,
-  `http/routes/{intake,encounters}.routes.ts`,
-  `db/migrations/{0100_clinical_intake_vitals,0101_clinical_encounter}.sql`,
-  `test/integration/{intake,workspace,queue,timeline}.test.ts`.
+  `modules/clinical/{timeline,episodes}.service.ts`,
+  `modules/workflow/queue.service.ts`,
+  `http/routes/{intake,encounters,treatment}.routes.ts`,
+  `db/migrations/{0100_clinical_intake_vitals,0101_clinical_encounter,0102_treatment_episode}.sql`,
+  `test/integration/{intake,workspace,queue,timeline,episodes}.test.ts`.
 - Modified (all Agent-2 owned): `permissions.clinical.ts`, `events.clinical.ts`,
   `http/features/clinical.feature.ts`, `http/routes/{patients,workflow}.routes.ts`,
   `modules/workflow/checkin.service.ts` (now reuses the shared `encounter.repo`
@@ -117,8 +135,13 @@ clinical updates carry the names of the sections touched, never their content.
   newest-first ordering, full keyset walk asserting no entry is skipped or
   repeated, page-size bounds, malformed cursor rejection, patient and clinic
   isolation, RBAC, and a no-PHI audit assertion.
+- `test/integration/episodes.test.ts` — 15 tests: longitudinal response series
+  and derived latest response, append-only enforcement, discontinuation-reason
+  rules, chronology guards, cross-patient encounter reference rejection, status
+  filtering, nurse read-only, reception fully denied, cross-clinic 404, no-PHI
+  audit, and timeline integration.
 
-Suite: **94 passing** (30 inherited + 64 new). Typecheck and build clean.
+Suite: **109 passing** (30 inherited + 79 new). Typecheck and build clean.
 
 ## Dependencies Added
 None.
@@ -146,7 +169,7 @@ None.
 None.
 
 ## Next Tasks
-C005 → C006 (see `TASKS.md`).
+C006 (see `TASKS.md`).
 
 ## Last Commit
 - (see branch head)
