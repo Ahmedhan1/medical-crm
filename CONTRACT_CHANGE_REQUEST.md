@@ -35,80 +35,84 @@ inside your own feature module; adding a new table in your migration range.
 - Decision (Agent 1): <notes>
 ```
 
+> **Integration note (I001):** Agents 2 and 3 both filed a request numbered
+> `CCR-001` on their own branches. During integration these were reconciled to
+> distinct ids: **CCR-001** = prescription→medication-master (Agent 2),
+> **CCR-002** = request-log PHI redaction (Agent 2), **CCR-003** = AI intake
+> draft→clinical write (Agent 3, renumbered from its original CCR-001).
+
 ---
 
 ## Requests
 
+### CCR-001 — Prescription → medication-master reference
+- Status: **APPROVED** (design); live resolver DEFERRED
+- Requested by: Agent 2
+- Date: 2026-09-16
+- Affects: Agent 4 (P002 drug/medication master), Agent 2 (C007 prescriptions)
+- Change: `prescription_item` (migration 0103) stores `medication_name` (free
+  text) plus an OPTIONAL opaque `medication_ref text` — deliberately **no foreign
+  key** to any medication table. Future: `medication_ref` carries a stable
+  `<system>:<code>` from the drug master, resolved through a service Agent 4 owns;
+  Clinical never queries Agent 4's tables directly and `medication_ref` stays
+  nullable.
+- Reason: prescribing must work for items not yet in the catalog (compounded,
+  imported, un-ingested); a hard FK would make those unprescribable and couple
+  the clinical schema to another workstream's migration order.
+- Backward compatibility: fully additive; `medication_ref` already nullable.
+- Tests: `prescriptions.test.ts` asserts a `medicationRef` is stored/returned
+  with no catalog present.
+- **Decision (Agent 1 / Integration):** APPROVED as designed — the opaque,
+  nullable, FK-free reference is the correct decoupling and preserves the
+  no-cross-workstream-query rule. Agent 4's drug master (P002) exposes
+  `medication.service` resolvers, so a future enhancement can validate/enrich a
+  `medication_ref` via that service (never a direct table read). Wiring that live
+  lookup is **DEFERRED** (not a production blocker); the contract shape is frozen
+  as above so no data migration is needed when it lands.
+
 ### CCR-002 — Redact query strings from the request log (PHI in logs)
-- Status: PROPOSED
+- Status: **APPROVED** — implemented at integration
 - Requested by: Agent 2
 - Date: 2026-09-16
 - Affects: all workstreams (any endpoint taking a query string)
 - Contract file(s): `server/src/http/server.ts` (Fastify logger configuration)
 - **Finding:** Fastify's default info-level request log records the full URL
-  including the query string. `GET /patients/search?q=Ahmed` therefore writes a
-  patient name into application logs, which violates `AGENTS.md` rule 9 ("never
-  put PHI in ... logs"). Verified by capturing real log output, not by
-  inspection.
-- Change: give the server's logger a custom request serializer that logs the
-  route path and strips (or allow-lists) the query string, e.g.
+  including the query string, so `GET /patients/search?q=Ahmed` writes a patient
+  name into application logs (violates `AGENTS.md` rule 9). Verified against real
+  log output.
+- Change: a logger `req` serializer that logs method + route PATH + hostname and
+  strips the query string globally.
+- Interim mitigation (shipped by Agent 2, own files only): `/patients/search`
+  registered `logLevel: 'warn'`; search audited with query LENGTH only.
+- Tests: `security.test.ts` captures real pino output, asserts the name is absent
+  and a control route is still logged.
+- **Decision (Agent 1 / Integration):** APPROVED and IMPLEMENTED as the global
+  fix in `http/server.ts` (the shared logger strips query strings for every
+  route). A cross-workstream regression test asserts no query value reaches the
+  log. Agent 2's per-route interim mitigation is retained (defense in depth,
+  harmless). Status → DONE once merged.
 
-  ```ts
-  const app = Fastify({
-    logger: {
-      serializers: {
-        req(req) {
-          const [path] = req.url.split('?');
-          return { method: req.method, url: path, hostname: req.hostname };
-        },
-      },
-    },
-    // …
-  });
-  ```
-- Reason: this is a cross-cutting governance control. Every workstream will add
-  query-string endpoints, and each one that carries an identifier, a phone
-  number or a name re-creates the leak. It belongs in the shared logger, not in
-  each route.
-- Interim mitigation (already shipped, Agent-2 owned files only):
-  `/patients/search` is registered with `logLevel: 'warn'`, which suppresses the
-  URL-bearing info log for that route alone, and the search is now audited in
-  the service layer (actor, result count and query LENGTH — never the term). No
-  shared file was touched.
-- Backward compatibility: log-format change only; no API or schema impact.
-  The interim mitigation can be reverted once this lands.
-- Tests: `test/integration/security.test.ts` — "never writes a searched patient
-  name into the request log" captures real pino output, asserts the name is
-  absent, and asserts a control route in the same module IS still logged so the
-  test cannot pass merely because logging is off. Verified to fail when the
-  mitigation is removed.
-- Decision (Agent 1): _pending_
-
-### CCR-001 — Prescription → medication-master reference
-- Status: PROPOSED
-- Requested by: Agent 2
+### CCR-003 — AI intake draft → Clinical Core intake write target
+- Status: **APPROVED** — satisfied by Agent 2's published intake contract; server-side auto-promotion DEFERRED
+- Requested by: Agent 3 (originally filed as CCR-001 on its branch)
 - Date: 2026-09-16
-- Affects: Agent 4 (P002 drug/medication master), Agent 2 (C007 prescriptions)
-- Contract file(s): none yet — this request exists so the eventual link is
-  agreed rather than improvised. No shared file changes today.
-- Change: `prescription_item` (migration 0103) stores `medication_name` as free
-  text plus an OPTIONAL opaque `medication_ref text`. There is deliberately **no
-  foreign key** to any medication table. Proposed future contract: once P002
-  lands, `medication_ref` carries a stable, documented identifier from the
-  medication master (e.g. `<system>:<code>`), resolved through a service Agent 4
-  owns. Clinical Core would still never query Agent 4's tables directly, and
-  `medication_ref` would remain nullable.
-- Reason: prescribing must work for anything not yet in the catalog — a
-  compounded preparation, an import, a drug the master has not ingested. A hard
-  foreign key would make those unprescribable and would couple the clinical
-  schema to another workstream's migration order. Recording the reference now
-  means no data migration is needed later.
-- Backward compatibility: fully additive. `medication_ref` is already nullable
-  and unconstrained, so existing prescriptions stay valid whatever P002 chooses.
-  If Agent 4 picks a different identifier shape, only new rows are affected.
-- Tests: `test/integration/prescriptions.test.ts` asserts a `medicationRef` is
-  stored and returned without any catalog being present.
-- Decision (Agent 1): _pending_
+- Affects: Agent 2 (Clinical Core), Agent 3 (AI/Automation)
+- Change: define how a CONFIRMED AI intake draft (`ai_draft.kind='intake'`,
+  `status='confirmed'`) is promoted into the clinical `intake` record without the
+  AI writing clinical tables directly.
+- Reason: A004 is review-first; Agent 3 must not write clinical tables (AI-safety
+  rule 11 + agent boundary).
+- **Decision (Agent 1 / Integration):** APPROVED. The contract already exists and
+  is satisfied without any shared-file change: Agent 2 published
+  `POST /encounters/:id/intake` accepting `source='ai_assisted'`, `sourceRef`
+  (opaque draft id, NOT a FK) and `confirmed=true`, invoked by a **human**
+  principal holding `intake:record`. A database CHECK rejects any `ai_assisted`
+  intake row lacking a confirming human, so an unreviewed draft can never become
+  authoritative clinical data. The review-first boundary is therefore enforced by
+  BOTH code and schema. Any server-side automatic promotion is **DEFERRED**;
+  today the human reviewer's client carries the confirmed fields into the intake
+  endpoint. No shared file changes. Verified by AI tests (draft never auto-writes)
+  + clinical intake provenance CHECK.
 
 ---
 

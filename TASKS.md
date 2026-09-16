@@ -121,7 +121,7 @@ touched · **API** expected endpoints · **DB** expected schema changes ·
 
 ## AI / Automation / WhatsApp — Agent 3 (A0xx)
 
-### A001 — Automation engine core (event→condition→action) *(TODO)*
+### A001 — Automation engine core (event→condition→action) *(DONE)*
 - **Obj:** Generic rule engine subscribing to the event store; scheduled + event
   triggers; idempotent action execution (blueprint §2 Automation, §16).
 - **Deps:** event store (exists). **Files:** `modules/automation/**`,
@@ -129,33 +129,38 @@ touched · **API** expected endpoints · **DB** expected schema changes ·
 - **API:** `POST/GET /automations`, `GET /automations/:id/runs`.
 - **DB:** `automation_rule`, `automation_run`. **Tests:** rule fires once per event
   (idempotency), condition filtering, disabled rule no-ops.
-- **Status:** TODO · **Owner:** Agent 3
+- **Status:** DONE · **Owner:** Agent 3
 
-### A002 — Provider abstraction (WhatsApp/SMS/Email/AI) *(TODO)*
+### A002 — Provider abstraction (WhatsApp/SMS/Email/AI) *(DONE)*
 - **Obj:** `Provider` interfaces with a local/no-op default so nothing is
   hard-coded to a vendor (blueprint §39). **Deps:** none.
 - **Files:** `modules/messaging/providers/**`, `modules/ai/providers/**`.
 - **DB:** `message_log` (consent/preference aware). **Tests:** provider swap,
   consent gate blocks send, no PHI in provider payload logs.
-- **Status:** TODO · **Owner:** Agent 3
+- **Status:** DONE · **Owner:** Agent 3
 
-### A003 — WhatsApp workflows (reminders, no-show, recall) *(TODO)*
+### A003 — WhatsApp workflows (reminders, no-show, recall) *(DONE)*
 - **Obj:** Templated, consent-aware messages driven by automation rules (§16).
 - **Deps:** A001, A002. **Tests:** template render, opt-out honored.
-- **Status:** TODO · **Owner:** Agent 3
+- **Status:** DONE · **Owner:** Agent 3
+- **Note:** `send_message` automation action + templates + consent. Standard
+  template keys authored per clinic; scheduled/time-based reminders await an
+  appointment/schedule source in Clinical Core.
 
-### A004 — AI intake extraction (review-first) *(TODO)*
+### A004 — AI intake extraction (review-first) *(IN_PROGRESS — draft done, write blocked)*
 - **Obj:** Free-text/voice → structured intake DRAFT; must be confirmed by a
   human before write (§12). Coordinate the write target with Agent 2 (C001) via
   a contract request. **Deps:** A002, C001.
 - **Files:** `modules/ai/intake.*`. **DB:** `ai_draft` (status: pending/confirmed/rejected).
 - **Tests:** draft never auto-writes clinical data; confirmation flow; audit.
-- **Status:** BLOCKED (needs C001 intake contract) · **Owner:** Agent 3
+- **Status:** IN_PROGRESS — review-first draft lifecycle DONE (create/confirm/reject,
+  `ai_draft`, audit, never auto-writes); clinical-write handoff BLOCKED on C001,
+  filed as CCR-001. · **Owner:** Agent 3
 
-### A005 — AI summaries (patient history / call debrief) *(TODO)*
+### A005 — AI summaries (patient history / call debrief) *(DONE)*
 - **Obj:** Longitudinal summary with cited source fields; review-first (§13, §27).
 - **Deps:** A002. **Tests:** citations present, no fabrication path, authz.
-- **Status:** TODO · **Owner:** Agent 3
+- **Status:** DONE · **Owner:** Agent 3
 
 ---
 
