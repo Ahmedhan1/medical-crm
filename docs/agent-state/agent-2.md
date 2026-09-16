@@ -197,6 +197,10 @@ clinical updates carry the names of the sections touched, never their content.
   in the filename, identical bytes for the same data and stamp, patient summary,
   empty-visit rendering, RBAC denial for nurse and reception, 401 unauthenticated,
   cross-clinic 404, and a no-PHI audit assertion.
+- `test/integration/security.test.ts` — 2 tests added to the inherited file:
+  patient search is audited without the term, and a searched name never reaches
+  the request log (asserted against captured pino output, with a control route
+  proving logging is on; verified to fail when the mitigation is removed).
 - `test/integration/prescriptions.test.ts` — 24 tests: ordered multi-line issue,
   all-or-nothing atomicity (an invalid second line persists nothing), DB-level
   immutability and append-only enforcement, cancel-with-reason and double-cancel
@@ -206,7 +210,7 @@ clinical updates carry the names of the sections touched, never their content.
   no medication names in audit or events, and integration into the workspace,
   the timeline and the encounter report.
 
-Suite: **152 passing** (30 inherited + 122 new). Typecheck and build clean.
+Suite: **154 passing** (30 inherited + 124 new). Typecheck and build clean.
 Output was additionally verified against a real PDF parser (`pypdf`): the
 generated report opens, paginates to 3 pages and extracts the expected text.
 
@@ -214,6 +218,13 @@ generated report opens, paginates to 3 pages and extracts the expected text.
 None.
 
 ## Contract Changes
+- **CCR-002 (PROPOSED)** — query strings are logged, so `/patients/search?q=`
+  wrote a patient name into application logs (AGENTS.md rule 9). Found by
+  capturing real log output. The general fix is a redacting request serializer
+  in `http/server.ts`, which is Agent 1's shared file, so it is filed rather
+  than edited. Interim mitigation shipped inside Agent-2 files: the search route
+  is registered at `logLevel: 'warn'` and the search is now audited (actor,
+  result count, query LENGTH — never the term).
 - **CCR-001 (PROPOSED)** — prescription → medication-master reference.
   `prescription_item.medication_ref` is an opaque nullable string with no foreign
   key, so Clinical Core creates no coupling to Agent 4's P002 catalog. The
@@ -226,6 +237,11 @@ None.
   `config/env.ts`, `http/server.ts` and `http/plugins/auth.ts` are untouched.
 
 ## Known Issues / Discrepancies
+- **PHI-in-logs (mitigated, general fix pending CCR-002).** See Contract
+  Changes. The interim mitigation covers `/patients/search`, the only endpoint
+  in this workstream whose query string can carry patient-identifying text.
+  Every other Agent-2 query parameter is a status, a date, a limit or an opaque
+  cursor.
 - **One unreproduced test failure.** A single `npm test` run (immediately after
   C006 landed) reported `1 failed | 127 passed`; the summary was truncated
   before I captured which test. Eight consecutive full runs since have been
@@ -271,7 +287,7 @@ None assigned. C001–C007 are DONE. Handoff notes for Agent 1 at I001:
 1. Confirm the C007 task id.
 2. Regenerate the `docs/GOVERNANCE.md` permission matrix (28 permissions).
 3. Decide the embedded-Unicode-font question for PDF reports (Arabic names).
-4. Review CCR-001.
+4. Review CCR-001 and **CCR-002 (a PHI-in-logs finding)**.
 5. Reconcile the branch-name discrepancy in `AGENTS.md` §2.
 
 ## Last Commit
