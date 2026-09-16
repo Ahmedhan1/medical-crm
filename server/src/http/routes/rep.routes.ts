@@ -1,0 +1,140 @@
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { ValidationError } from '../../domain/errors.js';
+import * as field from '../../modules/pharma/field.service.js';
+import * as territory from '../../modules/pharma/territory.service.js';
+import { principalOf, requireAuth } from '../plugins/auth.js';
+
+/**
+ * Medical-representative platform routes (Agent 4): territory, the day's calls,
+ * pre-visit briefing, call reports, scientific requests and follow-ups.
+ */
+const IdParam = z.object({ id: z.string().uuid() });
+
+function params<T extends z.ZodTypeAny>(schema: T, raw: unknown, message: string): z.infer<T> {
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw new ValidationError(message, parsed.error.flatten());
+  return parsed.data;
+}
+
+export async function repRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook('preHandler', requireAuth);
+
+  // --- Territory ------------------------------------------------------------
+  app.post('/territories', async (req, reply) => {
+    const created = await territory.createTerritory(principalOf(req), req.body);
+    return reply.code(201).send(created);
+  });
+
+  app.get('/territories', async (req, reply) => {
+    return reply.send({ results: await territory.listTerritories(principalOf(req)) });
+  });
+
+  app.post('/territories/:id/assignments', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    const created = await territory.assignTerritory(principalOf(req), id, req.body);
+    return reply.code(201).send(created);
+  });
+
+  app.post('/territories/:id/targets', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    const created = await territory.targetHcp(principalOf(req), id, req.body);
+    return reply.code(201).send(created);
+  });
+
+  /** The representative's own book of business. */
+  app.get('/rep/territory', async (req, reply) => {
+    return reply.send(await territory.myTerritory(principalOf(req)));
+  });
+
+  /** Today's calls, in planned order. */
+  app.get('/rep/today', async (req, reply) => {
+    return reply.send({ visits: await field.todaysVisits(principalOf(req)) });
+  });
+
+  app.get('/rep/follow-ups', async (req, reply) => {
+    const query = params(
+      z.object({
+        hcpId: z.string().uuid().optional(),
+        status: z.enum(['open', 'done', 'cancelled']).optional(),
+        limit: z.coerce.number().int().optional(),
+      }),
+      req.query,
+      'Invalid query',
+    );
+    return reply.send({ results: await field.listFollowUps(principalOf(req), query) });
+  });
+
+  app.post('/follow-ups/:id/complete', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await field.completeFollowUp(principalOf(req), id));
+  });
+
+  // --- Visits ---------------------------------------------------------------
+  app.post('/visits', async (req, reply) => {
+    const created = await field.planVisit(principalOf(req), req.body);
+    return reply.code(201).send(created);
+  });
+
+  app.get('/visits', async (req, reply) => {
+    const query = params(
+      z.object({
+        hcpId: z.string().uuid().optional(),
+        status: z.enum(['planned', 'confirmed', 'completed', 'cancelled', 'no_access']).optional(),
+        from: z.string().datetime({ offset: true }).optional(),
+        to: z.string().datetime({ offset: true }).optional(),
+        mineOnly: z.coerce.boolean().optional(),
+        limit: z.coerce.number().int().optional(),
+      }),
+      req.query,
+      'Invalid query',
+    );
+    return reply.send({ results: await field.listVisits(principalOf(req), query) });
+  });
+
+  /** Pre-visit briefing: who they are, what happened last time, what is open. */
+  app.get('/visits/:id/briefing', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await field.preVisitBriefing(principalOf(req), id));
+  });
+
+  app.post('/visits/:id/status', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await field.updateVisitStatus(principalOf(req), id, req.body));
+  });
+
+  app.post('/visits/:id/call-report', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    const created = await field.submitCallReport(principalOf(req), id, req.body);
+    return reply.code(201).send(created);
+  });
+
+  app.get('/visits/:id/call-report', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await field.getCallReport(principalOf(req), id));
+  });
+
+  // --- Scientific requests --------------------------------------------------
+  app.post('/scientific-requests', async (req, reply) => {
+    const created = await field.createScientificRequest(principalOf(req), req.body);
+    return reply.code(201).send(created);
+  });
+
+  app.get('/scientific-requests', async (req, reply) => {
+    const query = params(
+      z.object({
+        hcpId: z.string().uuid().optional(),
+        status: z.enum(['open', 'in_review', 'answered', 'closed', 'rejected']).optional(),
+        limit: z.coerce.number().int().optional(),
+      }),
+      req.query,
+      'Invalid query',
+    );
+    return reply.send({ results: await field.listScientificRequests(principalOf(req), query) });
+  });
+
+  app.post('/scientific-requests/:id/answer', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await field.answerScientificRequest(principalOf(req), id, req.body));
+  });
+}
