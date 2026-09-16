@@ -13,8 +13,11 @@ import {
   type Encounter,
 } from './encounter.repo.js';
 import { applyStatusTx } from './status.service.js';
+import { syncAppointmentFromEncounterTx } from './scheduling.service.js';
 import { getIntakeByEncounter, type Intake } from './intake.repo.js';
 import { listVitalsByEncounter, type Vital } from './vitals.repo.js';
+import { listEncounterObservations, type Observation } from './observations.service.js';
+import { listAllergies, type Allergy } from './allergies.service.js';
 import { listEncounterPrescriptions, type Prescription } from './prescriptions.service.js';
 import { listFollowUpsByEncounter, type FollowUp } from './followups.service.js';
 import {
@@ -211,6 +214,9 @@ export async function attachDoctorTx(
     principal.userId,
   );
 
+  // A linked appointment follows the encounter into consultation.
+  await syncAppointmentFromEncounterTx(client, principal, encounter.id, 'in_consultation');
+
   await emitEvent(client, {
     clinicId: principal.clinicId,
     type: EventType.ENCOUNTER_STARTED,
@@ -278,6 +284,7 @@ export async function completeEncounterTx(
 
   const updated = await applyStatusTx(client, principal, encounter, 'completed');
   await markCompleted(client, principal.clinicId, encounter.id, principal.userId);
+  await syncAppointmentFromEncounterTx(client, principal, encounter.id, 'completed');
 
   await emitEvent(client, {
     clinicId: principal.clinicId,
@@ -626,6 +633,8 @@ export interface EncounterWorkspace {
   patient: { id: string; mrn: string; fullName: string; sex: string; birthDate: string | null };
   intake?: Intake | null;
   vitals?: Vital[];
+  observations?: Observation[];
+  allergies?: Allergy[];
   clinical?: EncounterClinical | null;
   assessment?: Assessment | null;
   diagnoses?: Diagnosis[];
@@ -668,6 +677,12 @@ export async function getWorkspace(
   }
   if (hasPermission(principal, Permission.VITALS_READ)) {
     workspace.vitals = await listVitalsByEncounter(principal.clinicId, encounter.id);
+  }
+  if (hasPermission(principal, Permission.OBSERVATION_READ)) {
+    workspace.observations = await listEncounterObservations(principal, encounter.id);
+  }
+  if (hasPermission(principal, Permission.ALLERGY_READ)) {
+    workspace.allergies = await listAllergies(principal, encounter.patientId);
   }
   if (hasPermission(principal, Permission.PRESCRIPTION_READ)) {
     workspace.prescriptions = await listEncounterPrescriptions(principal.clinicId, encounter.id);

@@ -159,5 +159,122 @@ doctor (authority).
   and counts — never complaint text, measured values, medication names or
   clinical narrative. Each of those is asserted by a test.
 
+## Clinical Platform program (post-integration)
+
+The C0xx series delivered the clinic-grade Clinical Core. The Clinical Platform
+program evolves it into a Clinical Operating System. Phases below are the
+program's own numbering; status is measured against the **code**, not this file.
+
+| # | Phase | Status |
+| --- | --- | --- |
+| CP-1 | Patient lifecycle (status, identifiers, contacts, merge) | **DONE** (0104) |
+| CP-2 | Appointment & queue engine | **DONE** (0105) |
+| CP-3 | Triage & extensible observations | **DONE** (0106) |
+| CP-4 | Clinical documentation & template engine | TODO |
+| CP-5 | Diagnosis / terminology abstraction | PARTIAL — coded diagnosis exists (0101); terminology service not built |
+| CP-6 | Procedures, sessions, protocols | TODO |
+| CP-7 | Prescription platform | PARTIAL — issue/cancel/immutability exist (0103); refills, substitution, supersede not built |
+| CP-8 | Allergy & safety engine | **DONE** (0107) |
+| CP-9 | Document management (DocumentReference) | **DONE** (0108, metadata layer; bytes = CCR-008) |
+| CP-10 | Referral & care coordination | TODO |
+| CP-11 | Follow-up & longitudinal care | PARTIAL — follow-ups + recall worklist exist (0103); overdue detection not built |
+| CP-12 | Packages & treatment plans | TODO |
+| CP-13 | Inventory consumption events | TODO (contract only; no second inventory) |
+| CP-14 | Clinical analytics | TODO |
+| CP-15 | Dashboard data contracts | TODO |
+| CP-16 | Patient 360 | **DONE** (read model, no new table) |
+| CP-17 | Clinical timeline | PARTIAL — timeline exists, keyset-paginated, lineage-aware; not yet filterable by kind |
+| CP-18 | Specialty configuration engine | STARTED — `appointment_type` and `clinical_resource` are the first config primitives |
+| CP-19 | Multi-tenant hierarchy (Location/Department/Room) | PARTIAL — `clinical_resource` is a bookable thing, not an org hierarchy (foundation-owned) |
+| CP-20 | Local-first verification | TODO (no clinical path requires egress today) |
+| CP-21 | FHIR-ready mapping | TODO (Agent 1 roadmap Phase 6) |
+
+### Document model (CP-9)
+`document_reference` (0108) is FHIR DocumentReference-shaped and stores
+**metadata only** — the bytes are never in the database. `storage_key` is an
+opaque pointer resolved by platform infrastructure (CCR-008); integrity columns
+(`size_bytes`, `checksum_sha256`) let a resolver verify what it fetched. Keeping
+content out of the DB keeps it out of logs, clinical-DB backups and every query.
+- **Versioning** by supersession: a new version links to the old, which is kept
+  (`superseded`), never edited or deleted. A mistake is voided
+  (`entered_in_error`), not removed.
+- **Access policy**: a `restricted` document needs `document:read:restricted`;
+  to a caller without it the document is filtered from lists and not-found on a
+  direct read, so its existence does not leak. The title (which can name a
+  condition) is redacted on the timeline for restricted documents.
+- Documents link to patient / encounter / episode and follow merge lineage.
+
+### Patient 360 (CP-16)
+`GET /patients/:id/360` is a read-only VIEW MODEL — no table, no duplicated
+query. It composes the existing permission-checked readers (identifiers,
+contacts, allergies, recent observations, upcoming appointments, recent visits,
+active prescriptions, documents, treatment episodes, open follow-ups) and
+includes each section only if the caller holds its read permission, the same way
+the encounter workspace does. A reception 360 and a doctor 360 therefore differ
+by content, not by a post-hoc filter, so an omitted section never implies the
+caller was allowed to see it. A merged record is flagged with `mergedIntoId` so
+the client can redirect to the survivor.
+
+### Safety model (CP-8)
+Allergies are now a structured record (`allergy`, 0107), distinct from the
+free-text `intake.allergies` triage note. Prescribing runs a **deterministic**
+safety check:
+- **Allergy match** — a prescribed line against the patient's active,
+  non-refuted medication allergies. Name-based today (whole-word, conservative)
+  until a coded drug↔allergen cross-reference exists (CCR-007); a `ref` match is
+  already treated as definitive when both sides carry one.
+- **Duplicate medication** — the same drug on another active prescription.
+- The check reads the patient's whole **merge lineage**, so an allergy recorded
+  on a duplicate record still protects the survivor.
+
+The platform provides the RULE; it never makes the decision. The check refuses
+by default and returns the alerts, but a doctor holding `safety:override` can
+prescribe through them with a required reason. Every override is written to the
+append-only `safety_override` ledger and audited. AI cannot bypass it — AI holds
+no prescribing principal and the override is a human acknowledgement, not a
+field a draft can set. A dry-run endpoint
+(`POST /encounters/:id/prescription-safety-check`) lets a client preview alerts
+as the prescription is built.
+
+### Observation engine notes (CP-3)
+- **`observation` does not replace `vital`.** The universal vital set keeps its
+  fast, CHECK-constrained, generated-BMI path (`vital`, 0100), which reports and
+  the timeline already read. `observation` is the OPEN extension for everything
+  specialty-specific — a PASI score, an ejection fraction, a gait note — driven
+  by an `observation_definition` catalog. Rewriting stable vitals into a generic
+  table would be a regression, not a cleanup (rule 31).
+- **Reference ranges are DATA.** A definition carries min/max (validation) and
+  reference_low/high (flagging); the abnormal flag is computed at record time
+  from the definition and stored, so it reflects the range then in force. This
+  is the one thing the vitals path hard-codes, now configurable per clinic.
+- **Definitions are config, not code (Phase 18).** A new specialty measurement
+  is an ADMIN-created row; clinicians read the catalog and record against it.
+- Value coercion and bounds are enforced by value type, so a clinic-defined
+  observation is validated exactly like a built-in one, with no code change.
+
+### Scheduling model notes (CP-2)
+- **A room cannot hold two patients at once**, so that is a database EXCLUDE
+  constraint (`ex_appointment_resource`, needs the `btree_gist` extension), not
+  a service check. No code path can book over it.
+- **A practitioner CAN be overbooked**, because clinics do that deliberately.
+  It is a service-level policy: refused by default with the conflicting
+  appointment ids, permitted with an explicit `allowDoubleBooking` by a holder
+  of `appointment:overbook`, and recorded as overbooked in the audit trail.
+- **`in_consultation` and `completed` are not settable from the front desk.**
+  They follow the linked encounter, which is the clinical source of truth for
+  whether a patient was actually seen. One fact, one owner.
+- **Arrival needs `encounter:checkin` as well as `appointment:arrival`,** because
+  it opens a clinical encounter. A nurse can move a patient through the waiting
+  room; opening the visit stays with the front desk.
+- Deferred deliberately, not forgotten: **recurring appointments** (needs a
+  series table plus an expansion/exception policy) and the **waitlist**.
+
+### Event naming — deviation from the program brief
+The brief suggests dotted event names (`appointment.created`). The established
+contract in this repository is SCREAMING_SNAKE (`APPOINTMENT_SCHEDULED`), and
+Agent 3's automation engine matches `automation_rule.event_type` against it as a
+plain string. Renaming would silently break every existing rule, so the existing
+convention is kept. Raised here rather than changed unilaterally.
+
 ## Next tasks
-C001–C007 are DONE. See `TASKS.md` and `docs/agent-state/agent-2.md`.
+CP-10 (referral & care coordination). See `docs/agent-state/agent-2.md`.

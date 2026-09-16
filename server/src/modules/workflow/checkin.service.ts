@@ -24,6 +24,16 @@ export async function checkIn(principal: Principal, patientId: string): Promise<
 
   const patient = await getPatientById(principal.clinicId, patientId);
   if (!patient) throw new NotFoundError('Patient');
+  // A visit cannot be opened on a record that is no longer the person's record.
+  // `inactive` is deliberately allowed: a returning patient checks straight in.
+  if (patient.status === 'merged') {
+    throw new ConflictError('This record was merged into another patient; use the surviving record', {
+      mergedIntoId: patient.mergedIntoId,
+    });
+  }
+  if (patient.status === 'deceased') {
+    throw new ConflictError('This patient record is marked deceased');
+  }
 
   try {
     return await withTransaction(async (client) => {

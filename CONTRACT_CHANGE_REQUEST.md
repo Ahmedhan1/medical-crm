@@ -144,6 +144,108 @@ inside your own feature module; adding a new table in your migration range.
   reach pharma today, by construction. Owner for the deferred build: Agent 1 +
   Agent 2.
 
+### CCR-008 — Document byte storage (local-first blob strategy)
+- Status: PROPOSED
+- Requested by: Agent 2 (Clinical Platform)
+- Date: 2026-09-16
+- Affects: Agent 1 (platform / local-first infrastructure), Agent 2 (documents)
+- Contract file(s): none. This asks the platform owner to choose a storage
+  backend; the clinical layer is already built against an opaque `storage_key`.
+- Change: CP-9 stores document METADATA only (`document_reference`, 0108). The
+  bytes are NOT in the database — `storage_key` is an opaque pointer. A platform
+  storage service is needed to (a) accept an upload, write the bytes to a
+  local-first backend (filesystem/object store on the MEDCORE box), return a
+  key + size + SHA-256, and (b) stream the bytes back on an authorized read.
+  Proposed shape: `putObject(clinicId, bytes) -> {key,size,sha256}` and
+  `getObject(clinicId, key) -> stream`, both tenant-scoped, with the clinical
+  layer remaining the authority on WHO may read a given document.
+- Reason: storing blobs in Postgres bloats the clinical DB, its backups and its
+  replication, and byte storage is a local-first infrastructure decision (Agent
+  1 roadmap Phase 3), not a clinical one. Keeping content out of the DB also
+  keeps it out of logs and every clinical query by construction.
+- Security: the storage service holds encrypted-at-rest bytes; it must never be
+  the authorization point — a read is authorized by Clinical Core
+  (`GET /documents/:id`, confidentiality-gated) which then resolves the key.
+  The integrity columns (`size_bytes`, `checksum_sha256`) let the resolver
+  verify what it fetched.
+- Backward compatibility: additive. Until the service exists, documents can be
+  registered against externally-produced keys (already supported and tested).
+- Tests: `test/integration/documents.test.ts` covers metadata, versioning,
+  access policy and isolation; byte round-trip tests arrive with the service.
+- Decision (Agent 1): _pending_
+
+### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
+- Status: PROPOSED
+- Requested by: Agent 2 (Clinical Platform)
+- Date: 2026-09-16
+- Affects: Agent 4 (drug/medication master, P002), Agent 2 (safety engine, CP-8)
+- Contract file(s): none edited. This is a forward-looking data contract; the
+  safety engine works today without it.
+- Change: the prescribing safety check (Phase 8) currently matches a prescribed
+  `medication_name` against an allergy `substance` by a conservative,
+  whole-word name heuristic (`safety.service.ts`), because there is no coded
+  drug↔ingredient↔allergen relationship available. Proposed: once the drug
+  master exposes stable ingredient/allergen codes, an allergy carries a
+  `substance_ref` and a prescription item a `medication_ref` drawn from it, and
+  the safety engine treats a `ref` match as definitive (it already does when
+  both refs are present), reserving the name heuristic for the un-coded case.
+- Reason: the name heuristic is deliberately conservative and will both
+  over-warn (a clinician clears it) and, for brand vs generic names, potentially
+  under-warn. A coded cross-reference makes the check precise. It must remain a
+  read across a governed boundary — the clinical safety engine must never query
+  the drug master's tables directly.
+- Backward compatibility: fully additive. `medication_ref`/`substance_ref` are
+  already nullable opaque strings; the engine already prefers a ref match when
+  present, so no clinical code changes when the codes arrive.
+- Security: allergen/medication codes are not PHI; the patient's allergy record
+  is, and stays in Clinical Core. The cross-reference lookup carries codes only.
+- Tests: `test/integration/allergies-safety.test.ts` covers the name-based
+  behaviour (whole-word match, no short-substring false positive, refuted/
+  inactive ignored, merged-lineage protection); ref-based matching gains tests
+  when the code source exists.
+- Decision (Agent 1): _pending_
+
+### CCR-006 — Patient record extension (lifecycle, identifiers, contacts, merge)
+- Status: PROPOSED
+- Requested by: Agent 2 (Clinical Platform)
+- Date: 2026-09-16
+- Affects: any workstream reading `patient` — Agent 3 (messaging recipients,
+  automation conditions), Agent 4 (intelligence de-identification).
+- Contract file(s): none edited. `patient` is extended by migration 0104 in
+  Agent 2's own range; no existing column, constraint or index changes.
+- Change:
+  1. `patient` gains `status` (`active|inactive|deceased|merged`, default
+     `active`), `deceased_date`, `merged_into_id`, `preferred_language`,
+     `email`, `address`, `updated_by`. All nullable or defaulted.
+  2. New tables `patient_identifier`, `patient_contact`, `patient_merge`
+     (append-only).
+  3. **`GET /patients/:id` response changes shape**: `birthDate` now serializes
+     as `"1980-04-02"` instead of `"1980-04-02T00:00:00.000Z"`. See below.
+- Reason: the patient record had no status, no contact detail, no external
+  identifiers and no update path at all; duplicate resolution was impossible.
+- **Consumer notes:**
+  - `status` matters to anyone acting on a patient. `merged` means the record
+    is superseded — messaging and automation should target `merged_into_id`.
+    Clinical writes and check-in already refuse a `merged` or `deceased` record.
+  - `preferred_language` is a BCP-47 tag owned here and intended for Agent 3's
+    template `locale` selection, which currently defaults to `en`. Wiring it in
+    is Agent 3's call; nothing changes until they do.
+  - A merge LINKS, it does not rewrite: historical rows keep their original
+    `patient_id`. Any longitudinal read over `patient_id` should resolve lineage
+    (`resolvePatientLineage`) or it will under-report a merged patient's history.
+    The clinical timeline already does.
+- Backward compatibility: additive at the schema level. The one behavioural
+  change is `birthDate`, which was a **bug**: input is validated as
+  `YYYY-MM-DD` but output was a UTC timestamp, so any client in a timezone west
+  of UTC rendered the wrong day for a date of birth. Fixed to match the
+  documented input contract. Called out here because it is a visible response
+  change, not silently.
+- Tests: `test/integration/patient-lifecycle.test.ts` (28) covers status
+  transitions, merge semantics and lineage, identifier uniqueness as a duplicate
+  signal, contact primary-demotion, PHI containment in audit metadata, RBAC per
+  role, and cross-tenant isolation. Full suite 398 green.
+- Decision (Agent 1): _pending_
+
 ### CCR-005 — Additional pharma role keys (fix ADMIN over-grant)
 - Status: **APPROVED** — implemented at integration
 - Requested by: Agent 4 (originally filed as CCR-002 on its branch)

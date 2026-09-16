@@ -5,6 +5,7 @@ import { audit } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { getPatientById } from '../identity/patients.repo.js';
+import { resolvePatientLineage } from '../identity/patients.lifecycle.service.js';
 
 /**
  * The patient timeline (blueprint §4.3): every clinical entry for one patient in
@@ -21,12 +22,12 @@ const TIMELINE_SOURCES: readonly string[] = [
           e.id AS encounter_id, NULL::text AS summary,
           jsonb_build_object('status', e.status) AS detail
      FROM encounter e
-    WHERE e.clinic_id = $1 AND e.patient_id = $2`,
+    WHERE e.clinic_id = $1 AND e.patient_id = ANY($2::uuid[])`,
 
   `SELECT i.id::text, 'intake', i.created_at, i.encounter_id, i.chief_complaint,
           jsonb_build_object('source', i.source)
      FROM intake i
-    WHERE i.clinic_id = $1 AND i.patient_id = $2`,
+    WHERE i.clinic_id = $1 AND i.patient_id = ANY($2::uuid[])`,
 
   `SELECT v.id::text, 'vitals', v.recorded_at, v.encounter_id, NULL::text,
           jsonb_strip_nulls(jsonb_build_object(
@@ -36,44 +37,53 @@ const TIMELINE_SOURCES: readonly string[] = [
             'weightKg', v.weight_kg, 'heightCm', v.height_cm, 'bmi', v.bmi,
             'bloodGlucoseMgdl', v.blood_glucose_mgdl, 'painScore', v.pain_score))
      FROM vital v
-    WHERE v.clinic_id = $1 AND v.patient_id = $2`,
+    WHERE v.clinic_id = $1 AND v.patient_id = ANY($2::uuid[])`,
+
+  `SELECT o.id::text, 'observation', o.performed_at, o.encounter_id, d.name,
+          jsonb_strip_nulls(jsonb_build_object(
+            'key', d.key, 'unit', o.unit, 'abnormal', o.is_abnormal,
+            'valueNumber', o.value_number, 'valueText', o.value_text,
+            'valueBoolean', o.value_boolean, 'valueCode', o.value_code))
+     FROM observation o
+     JOIN observation_definition d ON d.id = o.definition_id
+    WHERE o.clinic_id = $1 AND o.patient_id = ANY($2::uuid[])`,
 
   `SELECT a.id::text, 'assessment', a.updated_at, a.encounter_id, a.summary,
           jsonb_strip_nulls(jsonb_build_object('severity', a.severity))
      FROM assessment a
-    WHERE a.clinic_id = $1 AND a.patient_id = $2`,
+    WHERE a.clinic_id = $1 AND a.patient_id = ANY($2::uuid[])`,
 
   `SELECT d.id::text, 'diagnosis', d.created_at, d.encounter_id, d.description,
           jsonb_strip_nulls(jsonb_build_object(
             'category', d.category, 'certainty', d.certainty, 'status', d.status,
             'code', d.code, 'codeSystem', d.code_system))
      FROM diagnosis d
-    WHERE d.clinic_id = $1 AND d.patient_id = $2`,
+    WHERE d.clinic_id = $1 AND d.patient_id = ANY($2::uuid[])`,
 
   `SELECT t.id::text, 'treatment_plan', t.updated_at, t.encounter_id, t.summary,
           jsonb_strip_nulls(jsonb_build_object(
             'instructions', t.instructions, 'followUpInDays', t.follow_up_in_days))
      FROM treatment_plan t
-    WHERE t.clinic_id = $1 AND t.patient_id = $2`,
+    WHERE t.clinic_id = $1 AND t.patient_id = ANY($2::uuid[])`,
 
   `SELECT n.id::text, 'note', n.created_at, n.encounter_id, n.body,
           jsonb_strip_nulls(jsonb_build_object(
             'noteType', n.note_type, 'supersedesId', n.supersedes_id))
      FROM clinical_note n
-    WHERE n.clinic_id = $1 AND n.patient_id = $2`,
+    WHERE n.clinic_id = $1 AND n.patient_id = ANY($2::uuid[])`,
 
   `SELECT te.id::text, 'treatment_episode', te.created_at, te.origin_encounter_id, te.label,
           jsonb_strip_nulls(jsonb_build_object(
             'status', te.status, 'startedOn', te.started_on, 'endedOn', te.ended_on,
             'discontinuationReason', te.discontinuation_reason))
      FROM treatment_episode te
-    WHERE te.clinic_id = $1 AND te.patient_id = $2`,
+    WHERE te.clinic_id = $1 AND te.patient_id = ANY($2::uuid[])`,
 
   `SELECT tr.id::text, 'treatment_response', tr.created_at, tr.encounter_id, tr.notes,
           jsonb_strip_nulls(jsonb_build_object(
             'response', tr.response, 'observedOn', tr.observed_on, 'episodeId', tr.episode_id))
      FROM treatment_response tr
-    WHERE tr.clinic_id = $1 AND tr.patient_id = $2`,
+    WHERE tr.clinic_id = $1 AND tr.patient_id = ANY($2::uuid[])`,
 
   `SELECT pr.id::text, 'prescription', pr.issued_at, pr.encounter_id, NULL::text,
           jsonb_build_object(
@@ -82,13 +92,23 @@ const TIMELINE_SOURCES: readonly string[] = [
                                  FROM prescription_item i
                                 WHERE i.prescription_id = pr.id), '[]'::jsonb))
      FROM prescription pr
-    WHERE pr.clinic_id = $1 AND pr.patient_id = $2`,
+    WHERE pr.clinic_id = $1 AND pr.patient_id = ANY($2::uuid[])`,
 
   `SELECT fu.id::text, 'follow_up', fu.created_at, fu.origin_encounter_id, fu.reason,
           jsonb_strip_nulls(jsonb_build_object(
             'dueOn', fu.due_on, 'status', fu.status))
      FROM follow_up fu
-    WHERE fu.clinic_id = $1 AND fu.patient_id = $2`,
+    WHERE fu.clinic_id = $1 AND fu.patient_id = ANY($2::uuid[])`,
+
+  // Documents. The title can name a condition, so it is shown only for a
+  // normal-confidentiality document; a restricted one appears as a typed marker
+  // so the timeline is complete without leaking what the document is about.
+  `SELECT dr.id::text, 'document', dr.created_at, dr.encounter_id,
+          CASE WHEN dr.confidentiality = 'normal' THEN dr.title ELSE NULL END,
+          jsonb_build_object('docType', dr.doc_type, 'confidentiality', dr.confidentiality)
+     FROM document_reference dr
+    WHERE dr.clinic_id = $1 AND dr.patient_id = ANY($2::uuid[])
+      AND dr.status <> 'entered_in_error'`,
 ];
 
 export interface TimelineEntry {
@@ -176,6 +196,11 @@ export async function getPatientTimeline(
   const patient = await getPatientById(principal.clinicId, patientId);
   if (!patient) throw new NotFoundError('Patient');
 
+  // Duplicate resolution links records rather than rewriting them, so a
+  // patient's history can live across the survivor and everything merged into
+  // it. Reading the survivor must show the whole person (see migration 0104).
+  const lineage = await resolvePatientLineage(principal.clinicId, patient.id);
+
   const after = cursor ? decodeCursor(cursor) : null;
   const union = TIMELINE_SOURCES.join('\n    UNION ALL\n    ');
 
@@ -189,7 +214,7 @@ export async function getPatientTimeline(
              OR (occurred_at, entry_id) < ($3::timestamptz, $4::text))
       ORDER BY occurred_at DESC, entry_id DESC
       LIMIT $5`,
-    [principal.clinicId, patient.id, after?.occurredAt ?? null, after?.id ?? null, limit + 1],
+    [principal.clinicId, lineage, after?.occurredAt ?? null, after?.id ?? null, limit + 1],
   );
 
   const hasMore = rows.length > limit;

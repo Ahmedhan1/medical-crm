@@ -13,6 +13,7 @@ import {
   getWorkspace,
   type EncounterWorkspace,
 } from '../clinical/workspace.service.js';
+import { syncAppointmentFromEncounterTx } from '../clinical/scheduling.service.js';
 
 /**
  * Atomically claim the longest-waiting `ready` encounter for this doctor.
@@ -51,6 +52,7 @@ export async function claimNextReadyTx(
     payload: { from: 'ready', to: 'in_progress', reason: 'queue_advance' },
   });
   await attachDoctorTx(client, principal, claimed);
+  await syncAppointmentFromEncounterTx(client, principal, claimed.id, 'in_consultation');
   return claimed;
 }
 
