@@ -56,6 +56,15 @@ export const PharmaPermission = {
   CAMPAIGN_READ: 'campaign:read',
   CAMPAIGN_MANAGE: 'campaign:manage',
 
+  // --- Reporting & export ----------------------------------------------------
+  /**
+   * Bulk extraction of pharma data. Deliberately SEPARATE from every read
+   * permission: being allowed to see a record on screen must not by itself
+   * authorise exporting it in bulk, because an export leaves the system and is
+   * rarely re-checked afterwards.
+   */
+  PHARMA_EXPORT: 'pharma:export',
+
   // --- Healthcare intelligence ----------------------------------------------
   /** Read published, threshold-gated, de-identified signals. Never raw data. */
   INTELLIGENCE_SIGNAL_READ: 'intelligence:signal-read',
@@ -91,6 +100,8 @@ export const pharmaPermissions: WorkstreamPermissions = {
     [PharmaPermission.SEGMENT_MANAGE]: 'Define HCP segments and their membership',
     [PharmaPermission.CAMPAIGN_READ]: 'View campaigns and their targets',
     [PharmaPermission.CAMPAIGN_MANAGE]: 'Create and manage campaigns',
+    [PharmaPermission.PHARMA_EXPORT]:
+      'Export pharma/HCP data in bulk (required in addition to the relevant read permission)',
     [PharmaPermission.INTELLIGENCE_SIGNAL_READ]: 'Read published aggregated intelligence signals',
     [PharmaPermission.INTELLIGENCE_PUBLISH]: 'Run the intelligence firewall and publish signals',
   },
@@ -119,6 +130,7 @@ export const pharmaPermissions: WorkstreamPermissions = {
     // Data steward: HCP/HCO/medication master stewardship (verify, merge, write).
     // No content approval, no territory/campaign management, no publication.
     [RoleKey.PHARMA_DATA_STEWARD]: [
+      PharmaPermission.PHARMA_EXPORT,
       PharmaPermission.HCP_READ,
       PharmaPermission.HCP_SEARCH,
       PharmaPermission.HCP_WRITE,
@@ -148,6 +160,7 @@ export const pharmaPermissions: WorkstreamPermissions = {
     // Pharma manager: field oversight, segmentation/campaigns and intelligence
     // publication. No master-data verification, no content approval.
     [RoleKey.PHARMA_MANAGER]: [
+      PharmaPermission.PHARMA_EXPORT,
       PharmaPermission.HCP_READ,
       PharmaPermission.HCP_SEARCH,
       PharmaPermission.HCO_READ,
