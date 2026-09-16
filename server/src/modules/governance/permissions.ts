@@ -12,6 +12,7 @@
  *   Permission, PERMISSION_DESCRIPTIONS, RoleKey, ROLE_DEFINITIONS
  */
 import { RoleKey, ROLE_DESCRIPTIONS, type WorkstreamPermissions } from './roles.js';
+import { platformPermissions, PlatformPermission } from './permissions.platform.js';
 import { clinicalPermissions, ClinicalPermission } from './permissions.clinical.js';
 import { automationPermissions, AutomationPermission } from './permissions.automation.js';
 import { pharmaPermissions, PharmaPermission } from './permissions.pharma.js';
@@ -20,6 +21,7 @@ export { RoleKey } from './roles.js';
 
 /** All permission constants, merged. Access as `Permission.PATIENT_READ`, etc. */
 export const Permission = {
+  ...PlatformPermission,
   ...ClinicalPermission,
   ...AutomationPermission,
   ...PharmaPermission,
@@ -28,6 +30,7 @@ export const Permission = {
 export type Permission = (typeof Permission)[keyof typeof Permission];
 
 const WORKSTREAMS: WorkstreamPermissions[] = [
+  platformPermissions,
   clinicalPermissions,
   automationPermissions,
   pharmaPermissions,

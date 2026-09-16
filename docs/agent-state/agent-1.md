@@ -8,9 +8,28 @@ interoperability, dependency governance, release engineering, and integration/QA
 Does NOT build Agent 2–4 domain features.
 
 ## Current status
-**Foundation (F001) done; integration (I001) done; platform Phase 1 in progress**
-on `integration/medcore-v1`. Full suite green; migrations apply from empty incl.
-the new platform range.
+**Foundation (F001) done; integration (I001) done; platform Phase 1 done;
+platform Phase 2 (Backup & Restore) done** on `integration/medcore-v1`. Full
+suite green; migrations apply from empty incl. the platform range.
+
+## Platform Phase 2 — Backup & Restore (Priority 1)
+Objectively the highest-priority incomplete risk (local-first with no recovery).
+- `modules/backup` — `pg_dump` custom-format backups, optional AES-256-GCM
+  at-rest encryption (dependency-free `node:crypto`), SHA-256 integrity,
+  verify (checksum + archive readability), GFS retention selector, restore.
+  Credentials passed via PG* env (never argv); no shell.
+- `0901_backup.sql` — instance-level `backup_run` ledger (no PHI, no creds).
+- Admin API `POST/GET /admin/backups`, `POST /admin/backups/:id/verify`
+  (`backup:manage`, ADMIN) — **no download, no HTTP restore** by design.
+- Operator CLI `npm run backup -- backup|list|verify|prune|restore` — restore is
+  CLI-only; live-DB restore refused without `--yes`.
+- New `permissions.platform.ts` (`backup:manage`) wired into the barrel.
+- Config: `BACKUP_DIR`, `BACKUP_ENCRYPTION_KEY`, retention counts (validated).
+- **Tested for real:** backup → drop/create fresh DB → restore → verified
+  migrations, tables, a clinical row, RBAC catalog, append-only triggers and
+  platform indexes all survive; encryption tamper/wrong-key detection; CLI smoke.
+- Docs: `PRODUCTION-READINESS.md` (matrix + RPO/RTO + release gates), roadmap
+  recovery runbook.
 
 ## History
 - **F001 — Multi-agent foundation.** Parallel-safe seams (per-workstream
@@ -68,8 +87,10 @@ the new platform range.
   `CONTRACT_CHANGE_REQUEST.md`. No PHI in logs/QR/audit/event payloads.
 
 ## Next
-Phase 4 (backup/recovery) or Phase 5 (i18n + Arabic PDF) next, each as its own
-tested increment. Wire the governance/security gates into CI (Phase 9/F-12).
+Priority 2 — **Arabic / RTL document generation** (F-03): fix Arabic PDFs
+(`????`) with an embedded OFL Unicode font + shaping, offline-capable. Then
+Priority 3 (auth/session hardening + central pg-error redaction), Priority 4
+(observability expansion), Priority 9 (CI wiring of the governance gates).
 
 ## Last commit
 Set on push of the platform Phase-1 increment to `integration/medcore-v1`.
