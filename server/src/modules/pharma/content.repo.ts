@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { toDateString } from './dates.js';
 
 type Runner = Pick<PoolClient, 'query'>;
 
@@ -44,9 +45,9 @@ interface ContentRow {
   approved_by: string | null;
   approved_at: string | null;
   rejection_reason: string | null;
-  effective_date: string | null;
-  expiry_date: string | null;
-  review_due_date: string | null;
+  effective_date: Date | string | null;
+  expiry_date: Date | string | null;
+  review_due_date: Date | string | null;
   external_ref: string | null;
   storage_uri: string | null;
   record_version: number;
@@ -71,9 +72,9 @@ function mapContent(row: ContentRow): ApprovedContent {
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     rejectionReason: row.rejection_reason,
-    effectiveDate: row.effective_date,
-    expiryDate: row.expiry_date,
-    reviewDueDate: row.review_due_date,
+    effectiveDate: toDateString(row.effective_date),
+    expiryDate: toDateString(row.expiry_date),
+    reviewDueDate: toDateString(row.review_due_date),
     externalRef: row.external_ref,
     storageUri: row.storage_uri,
     recordVersion: row.record_version,

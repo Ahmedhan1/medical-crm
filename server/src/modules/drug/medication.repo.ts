@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { toDateString } from '../pharma/dates.js';
 import type { VerificationStatus } from '../pharma/provenance.js';
 
 type Runner = Pick<PoolClient, 'query'>;
@@ -349,8 +350,8 @@ interface ProductRow {
   regulatory_authority: string | null;
   regulatory_identifier: string | null;
   regulatory_status: MedicationProduct['regulatoryStatus'];
-  approval_date: string | null;
-  withdrawal_date: string | null;
+  approval_date: Date | string | null;
+  withdrawal_date: Date | string | null;
   source: string;
   source_version: string | null;
   source_ref: string | null;
@@ -378,8 +379,8 @@ function mapProduct(row: ProductRow): MedicationProduct {
     regulatoryAuthority: row.regulatory_authority,
     regulatoryIdentifier: row.regulatory_identifier,
     regulatoryStatus: row.regulatory_status,
-    approvalDate: row.approval_date,
-    withdrawalDate: row.withdrawal_date,
+    approvalDate: toDateString(row.approval_date),
+    withdrawalDate: toDateString(row.withdrawal_date),
     source: row.source,
     sourceVersion: row.source_version,
     sourceRef: row.source_ref,
@@ -417,14 +418,21 @@ export async function insertProduct(
     createdBy: string;
   },
 ): Promise<MedicationProduct> {
+  // The manufacturer name is resolved in the same statement so a freshly created
+  // product is shaped exactly like one read back through `listProducts`.
   const { rows } = await client.query<ProductRow>(
-    `INSERT INTO medication_product
-       (clinic_id, medication_id, brand_name, manufacturer_id, dosage_form, route, strength_text,
-        package_description, package_size, package_unit, jurisdiction, regulatory_authority,
-        regulatory_identifier, regulatory_status, approval_date, withdrawal_date,
-        source, source_version, source_ref, license_basis, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-     RETURNING *`,
+    `WITH inserted AS (
+       INSERT INTO medication_product
+         (clinic_id, medication_id, brand_name, manufacturer_id, dosage_form, route, strength_text,
+          package_description, package_size, package_unit, jurisdiction, regulatory_authority,
+          regulatory_identifier, regulatory_status, approval_date, withdrawal_date,
+          source, source_version, source_ref, license_basis, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       RETURNING *
+     )
+     SELECT i.*, m.name AS manufacturer_name
+       FROM inserted i
+       LEFT JOIN manufacturer m ON m.id = i.manufacturer_id`,
     [
       input.clinicId,
       input.medicationId,

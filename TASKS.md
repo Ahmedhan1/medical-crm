@@ -140,46 +140,79 @@ touched · **API** expected endpoints · **DB** expected schema changes ·
 
 ## Pharma / HCP / Drug / Intelligence — Agent 4 (P0xx)
 
-### P001 — Physician / HCP master *(TODO)*
+### P001 — Physician / HCP master *(DONE)*
 - **Obj:** Provenance-aware HCP identity + HCO affiliations, verification state,
   source/last_verified, confidence (blueprint §6, §7). **Deps:** none.
 - **Files:** `modules/hcp/**`, `permissions.pharma.ts`, `events.pharma.ts`, migration 0300.
 - **API:** `POST/GET /hcps`, `GET /hcps/:id` (HCP 360 — NO patient data).
-- **DB:** `hcp`, `hco`, `hcp_hco_affiliation`. **Tests:** provenance required,
-  pharma-only authz, no patient linkage.
-- **Status:** TODO · **Owner:** Agent 4
+- **DB:** `hcp`, `hco`, `hcp_hco_affiliation` (+ `specialty`, `hcp_identifier`,
+  `hcp_specialty`, `hcp_practice_location`, `hcp_professional_interest`,
+  append-only `hcp_revision`).
+- **Tests:** 20 in `hcp-master.test.ts` — provenance required, pharma-only authz,
+  no patient linkage, verification is stewardship, versioning, merge,
+  professional-identifiers-only.
+- **Status:** DONE · **Owner:** Agent 4
 
-### P002 — Drug / medication master *(TODO)*
+### P002 — Drug / medication master *(DONE)*
 - **Obj:** Canonical medication concept with jurisdiction, source, version,
   status, last_verified; import/provider architecture (§8). **Deps:** none.
 - **Files:** `modules/drug/**`, migration 0301.
 - **API:** `GET /medications`, `GET /medications/:id`.
-- **DB:** `medication`, `medication_product`, `medication_ingredient`, provenance cols.
-- **Tests:** multi-jurisdiction, provenance/last_verified enforced, no proprietary copy.
-- **Status:** TODO · **Owner:** Agent 4
+- **DB:** `medication`, `medication_product`, `medication_ingredient`, provenance
+  cols (+ `manufacturer`, `medication_revision`, `medication_import_run`).
+- **Tests:** 17 in `drug-master.test.ts` — multi-jurisdiction, provenance/
+  last_verified enforced, unregistered provider rejected (no unlicensed ingestion).
+- **Status:** DONE · **Owner:** Agent 4
 
-### P003 — Territory + Medical Rep workflow *(TODO)*
+### P003 — Territory + Medical Rep workflow *(DONE)*
 - **Obj:** Territory assignment, rep visit plan, pre-visit brief, call report (§18–20).
 - **Deps:** P001. **DB:** `territory`, `territory_assignment`, `visit`, `call_report`.
-- **API:** `GET /rep/territory`, `POST /visits`, `POST /visits/:id/call-report`.
-- **Tests:** rep sees only assigned HCPs, no patient data, authz.
-- **Status:** TODO · **Owner:** Agent 4
+- **API:** `GET /rep/territory`, `GET /rep/today`, `POST /visits`,
+  `GET /visits/:id/briefing`, `POST /visits/:id/call-report`,
+  `POST/GET /scientific-requests`, `GET /rep/follow-ups`.
+- **Tests:** 20 in `pharma-field.test.ts` — rep sees only assigned HCPs (and a rep
+  with no territory sees nothing), no patient data, authz.
+- **Status:** DONE · **Owner:** Agent 4
 
-### P004 — Approved content hub *(TODO)*
+### P004 — Approved content hub *(DONE)*
 - **Obj:** Versioned approved scientific content with owner/effective/expiry/
   jurisdiction; reps access only authorized content (§21). **Deps:** P001.
-- **DB:** `approved_content`. **Tests:** expiry gating, territory authz.
-- **Status:** TODO · **Owner:** Agent 4
+- **DB:** `approved_content`, `approved_content_revision`, `content_engagement`.
+- **Tests:** 21 in `pharma-content.test.ts` — expiry gating (in SQL), territory
+  authz, author cannot approve their own content, append-only decision history.
+- **Status:** DONE · **Owner:** Agent 4
 
-### P005 — Intelligence firewall + aggregated signals *(TODO)*
+### P005 — Intelligence firewall + aggregated signals *(DONE except the clinical input, which is blocked by design)*
 - **Obj:** Pipeline: classification → authorization → de-identification →
   aggregation → min-cohort threshold → policy → signal; returns nothing below
   threshold (blueprint §24, §25). **Deps:** P001; read-only over clinical events.
 - **CONTRACT:** requires a governed read path — file a contract request; pharma
   must never touch the clinical DB directly. **DB:** `aggregated_signal`.
-- **API:** `GET /intelligence/signals`. **Tests:** below-threshold → empty,
-  no re-identification, pharma cannot reach patient rows.
-- **Status:** BLOCKED (needs Agent 1 governed-read contract) · **Owner:** Agent 4
+- **API:** `GET /intelligence/signals`, `POST /intelligence/runs`,
+  `GET /intelligence/sources`, `PUT/GET /intelligence/policies`.
+- **DB:** `aggregated_signal`, `intelligence_run`, `intelligence_policy`.
+- **Tests:** 20 unit (`firewall.test.ts`) + 63 integration
+  (`pharma-firewall.test.ts`) — below-threshold → empty, no re-identification,
+  pharma cannot reach patient rows, threshold cannot be weakened from API or DB,
+  the clinical source refuses every request.
+- **Status:** All seven stages built, tested and live over pharma's own field
+  data. The `clinical_governed` source is registered and refuses every request
+  (HTTP 501, audited) pending **CCR-001** — pharma must not read clinical tables
+  to unblock itself. · **Owner:** Agent 4
+
+### P006 — HCP segmentation, campaigns & engagement *(DONE)*
+- **Obj:** Pharma marketing foundations: declarative HCP segments, campaigns,
+  content distribution and measured engagement (blueprint §22, §26).
+- **Deps:** P001, P004. **Files:** `modules/pharma/marketing.service.ts`,
+  `content.service.ts`, migration 0303.
+- **API:** `POST/GET /pharma/segments`, `POST /pharma/segments/:id/resolve`,
+  `POST/GET /pharma/campaigns`, `POST /pharma/campaigns/:id/targets`,
+  `POST /pharma/content/:id/engagements`.
+- **DB:** `hcp_segment`, `hcp_segment_member`, `campaign`, `campaign_target`,
+  `content_engagement`.
+- **Tests:** segment criteria are declarative and contain no clinical dimension;
+  rep can read but not define; engagement refused for expired content.
+- **Status:** DONE · **Owner:** Agent 4
 
 ---
 

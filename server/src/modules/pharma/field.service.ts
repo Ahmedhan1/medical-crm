@@ -9,6 +9,7 @@ import { getHcpById, listHcpSpecialties, listInterests } from '../hcp/hcp.repo.j
 import * as content from './content.repo.js';
 import { isUsable } from './content.service.js';
 import * as repo from './field.repo.js';
+import { today } from './dates.js';
 import { assertFreeTextClean } from './guards.js';
 import { territoriesForHcp } from './territory.repo.js';
 import { assertHcpInScope, territoryScopeFor } from './visibility.js';
@@ -323,7 +324,7 @@ export async function preVisitBriefing(principal: Principal, visitId: string) {
     medicationId: null,
     contentType: null,
     usableOnly: true,
-    onDate: new Date().toISOString().slice(0, 10),
+    onDate: today(),
     limit: 20,
   });
 
@@ -620,7 +621,7 @@ export async function answerScientificRequest(
     if (input.answerContentId) {
       const cited = await content.getContentById(principal.clinicId, input.answerContentId, client);
       if (!cited) throw new NotFoundError('Cited content');
-      if (!isUsable(cited, new Date().toISOString().slice(0, 10))) {
+      if (!isUsable(cited, today())) {
         throw new ConflictError(
           'Cited content is not approved or is outside its validity window; a scientific answer must cite usable approved content',
         );

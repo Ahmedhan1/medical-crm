@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { toDateString } from './dates.js';
 
 type Runner = Pick<PoolClient, 'query'>;
 
@@ -118,8 +119,8 @@ export async function insertAssignment(
     territory_id: string;
     user_id: string;
     assignment_role: TerritoryAssignment['assignmentRole'];
-    valid_from: string;
-    valid_to: string | null;
+    valid_from: Date | string;
+    valid_to: Date | string | null;
   }>(
     `INSERT INTO territory_assignment
        (clinic_id, territory_id, user_id, assignment_role, valid_from, valid_to, created_by)
@@ -143,8 +144,8 @@ export async function insertAssignment(
     territoryName: '',
     userId: row.user_id,
     assignmentRole: row.assignment_role,
-    validFrom: row.valid_from,
-    validTo: row.valid_to,
+    validFrom: toDateString(row.valid_from)!,
+    validTo: toDateString(row.valid_to),
   };
 }
 
@@ -159,8 +160,8 @@ export async function listAssignmentsForUser(
     name: string;
     user_id: string;
     assignment_role: TerritoryAssignment['assignmentRole'];
-    valid_from: string;
-    valid_to: string | null;
+    valid_from: Date | string;
+    valid_to: Date | string | null;
   }>(
     `SELECT a.id, a.territory_id, t.code, t.name, a.user_id, a.assignment_role,
             a.valid_from, a.valid_to
@@ -179,8 +180,8 @@ export async function listAssignmentsForUser(
     territoryName: r.name,
     userId: r.user_id,
     assignmentRole: r.assignment_role,
-    validFrom: r.valid_from,
-    validTo: r.valid_to,
+    validFrom: toDateString(r.valid_from)!,
+    validTo: toDateString(r.valid_to),
   }));
 }
 

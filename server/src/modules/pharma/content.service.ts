@@ -7,6 +7,7 @@ import { Permission } from '../governance/permissions.js';
 import { hasPermission, requirePermission, type Principal } from '../governance/rbac.js';
 import { getHcpById } from '../hcp/hcp.repo.js';
 import * as repo from './content.repo.js';
+import { today } from './dates.js';
 import { JurisdictionSchema } from './provenance.js';
 import { assertFreeTextClean } from './guards.js';
 import { assertHcpInScope } from './visibility.js';
@@ -77,10 +78,6 @@ function parse<T extends z.ZodTypeAny>(schema: T, raw: unknown, what: string): z
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new ValidationError(`Invalid ${what}`, parsed.error.flatten());
   return parsed.data;
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export async function createContent(principal: Principal, raw: unknown) {

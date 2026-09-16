@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { toDateString } from '../pharma/dates.js';
 import type { AllowedSignal, FirewallPolicy } from './firewall.js';
 
 type Runner = Pick<PoolClient, 'query'>;
@@ -41,8 +42,8 @@ interface SignalRow {
   scope_label: string | null;
   jurisdiction: string;
   aggregation_level: string;
-  period_start: string;
-  period_end: string;
+  period_start: Date | string;
+  period_end: Date | string;
   value: string;
   value_unit: string;
   cohort_size: number;
@@ -70,8 +71,8 @@ function mapSignal(row: SignalRow): StoredSignal {
     scopeLabel: row.scope_label,
     jurisdiction: row.jurisdiction,
     aggregationLevel: row.aggregation_level,
-    periodStart: row.period_start,
-    periodEnd: row.period_end,
+    periodStart: toDateString(row.period_start)!,
+    periodEnd: toDateString(row.period_end)!,
     value: Number(row.value),
     valueUnit: row.value_unit,
     cohortSize: row.cohort_size,
@@ -253,8 +254,8 @@ export async function listRuns(clinicId: string, limit: number) {
     cohorts_suppressed: number;
     signals_published: number;
     min_cohort_size: number;
-    period_start: string;
-    period_end: string;
+    period_start: Date | string;
+    period_end: Date | string;
     started_at: string;
   }>(
     `SELECT id, source_kind, signal_type, status, cohorts_evaluated, cohorts_suppressed,
@@ -274,8 +275,8 @@ export async function listRuns(clinicId: string, limit: number) {
     cohortsSuppressed: r.cohorts_suppressed,
     signalsPublished: r.signals_published,
     minCohortSize: r.min_cohort_size,
-    periodStart: r.period_start,
-    periodEnd: r.period_end,
+    periodStart: toDateString(r.period_start)!,
+    periodEnd: toDateString(r.period_end)!,
     startedAt: r.started_at,
   }));
 }

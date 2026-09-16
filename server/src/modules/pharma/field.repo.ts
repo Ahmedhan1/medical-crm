@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { toDateString } from './dates.js';
 
 type Runner = Pick<PoolClient, 'query'>;
 
@@ -226,7 +227,7 @@ interface CallReportRow {
   summary: string;
   hcp_sentiment: CallReport['hcpSentiment'];
   next_step: string | null;
-  follow_up_date: string | null;
+  follow_up_date: Date | string | null;
   submitted_at: string;
 }
 
@@ -239,7 +240,7 @@ function mapCallReport(row: CallReportRow): CallReport {
     summary: row.summary,
     hcpSentiment: row.hcp_sentiment,
     nextStep: row.next_step,
-    followUpDate: row.follow_up_date,
+    followUpDate: toDateString(row.follow_up_date),
     submittedAt: row.submitted_at,
   };
 }
@@ -448,7 +449,7 @@ interface ScientificRequestRow {
   question: string;
   urgency: ScientificRequest['urgency'];
   status: ScientificRequest['status'];
-  due_date: string | null;
+  due_date: Date | string | null;
   answer_summary: string | null;
   answer_content_id: string | null;
   answered_by: string | null;
@@ -467,7 +468,7 @@ function mapRequest(row: ScientificRequestRow): ScientificRequest {
     question: row.question,
     urgency: row.urgency,
     status: row.status,
-    dueDate: row.due_date,
+    dueDate: toDateString(row.due_date),
     answerSummary: row.answer_summary,
     answerContentId: row.answer_content_id,
     answeredBy: row.answered_by,
@@ -590,7 +591,7 @@ interface FollowUpRow {
   visit_id: string | null;
   owner_user_id: string;
   action: string;
-  due_date: string;
+  due_date: Date | string;
   status: FollowUpAction['status'];
   completed_at: string | null;
   created_at: string;
@@ -603,7 +604,7 @@ function mapFollowUp(row: FollowUpRow): FollowUpAction {
     visitId: row.visit_id,
     ownerUserId: row.owner_user_id,
     action: row.action,
-    dueDate: row.due_date,
+    dueDate: toDateString(row.due_date)!,
     status: row.status,
     completedAt: row.completed_at,
     createdAt: row.created_at,
