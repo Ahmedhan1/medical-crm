@@ -13,8 +13,11 @@ IN PROGRESS. Working the C0xx series on branch `claude/inspiring-cori-tk3ej8`
   assessment, diagnoses, treatment plan, append-only clinical notes, and the
   permission-shaped workspace read with previous visits.
 
+- **C003 — Save & Next (queue advance).** Atomic complete-then-claim, plus a
+  standalone "take the next patient" entry point.
+
 ## In Progress
-- C003 — Save & Next (queue advance).
+- C004 — Patient timeline.
 
 ## Database Changes
 Reserved migration range **0100–0199**.
@@ -52,6 +55,8 @@ Reserved migration range **0100–0199**.
 | PATCH | `/encounters/:id/diagnoses/:diagnosisId` | `diagnosis:write` | Audited before/after |
 | POST | `/encounters/:id/notes` | `note:write` | Append-only |
 | POST | `/encounters/:id/complete` | `encounter:complete` | Requires assessment or diagnosis |
+| POST | `/encounters/:id/complete-and-next` | `encounter:complete` + `encounter:clinical:write` | Atomic; returns `{ completed, next }` |
+| POST | `/queue/next` | `encounter:clinical:write` | Claim the next waiting patient |
 
 No existing endpoint changed shape.
 
@@ -79,9 +84,9 @@ clinical updates carry the names of the sections touched, never their content.
 
 ## Files Owned / Modified
 - Added: `modules/clinical/{encounter.repo,status.service,intake.repo,intake.service,vitals.repo,vitals.service,encounter.clinical.repo,workspace.service}.ts`,
-  `http/routes/{intake,encounters}.routes.ts`,
+  `modules/workflow/queue.service.ts`, `http/routes/{intake,encounters}.routes.ts`,
   `db/migrations/{0100_clinical_intake_vitals,0101_clinical_encounter}.sql`,
-  `test/integration/{intake,workspace}.test.ts`.
+  `test/integration/{intake,workspace,queue}.test.ts`.
 - Modified (all Agent-2 owned): `permissions.clinical.ts`, `events.clinical.ts`,
   `http/features/clinical.feature.ts`, `modules/workflow/checkin.service.ts`
   (now reuses the shared `encounter.repo` types instead of redeclaring them).
@@ -95,8 +100,13 @@ clinical updates carry the names of the sections touched, never their content.
   doctor-only completion, one-primary-diagnosis rule, diagnosis-revision audit
   before/after, append-only note enforcement at the DB level, record closed
   after completion, permission-shaped workspace read, cross-clinic 404.
+- `test/integration/queue.test.ts` — 8 tests, including a genuine concurrency
+  test: two overlapping transactions claim while the first still holds its row
+  lock uncommitted, proving `FOR UPDATE SKIP LOCKED` never hands one patient to
+  two doctors. Also FIFO ordering, empty queue, cross-clinic isolation, and
+  rollback (a refused completion leaves the next patient queued).
 
-Suite: **78 passing** (30 inherited + 48 new). Typecheck and build clean.
+Suite: **86 passing** (30 inherited + 56 new). Typecheck and build clean.
 
 ## Dependencies Added
 None.
@@ -124,7 +134,7 @@ None.
 None.
 
 ## Next Tasks
-C002 → C003 → C004 → C005 → C006 (see `TASKS.md`).
+C004 → C005 → C006 (see `TASKS.md`).
 
 ## Last Commit
 - (see branch head)

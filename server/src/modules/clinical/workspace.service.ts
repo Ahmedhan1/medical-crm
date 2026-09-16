@@ -174,31 +174,63 @@ export async function startConsultation(
       current = await applyStatusTx(client, principal, encounter, 'in_progress', 'staff_decision');
     }
 
-    const clinical = await markStarted(client, principal.clinicId, encounter.id, principal.userId);
-
-    await emitEvent(client, {
-      clinicId: principal.clinicId,
-      type: EventType.ENCOUNTER_STARTED,
-      subjectType: 'encounter',
-      subjectId: encounter.id,
-      actorId: principal.userId,
-      payload: { patientId: encounter.patientId, handover: isHandover },
-    });
-    await auditTx(client, {
-      clinicId: principal.clinicId,
-      actorId: principal.userId,
-      action: isHandover ? 'encounter.takeover' : 'encounter.start',
-      outcome: 'success',
-      targetType: 'encounter',
-      targetId: encounter.id,
-      metadata: {
-        patientId: encounter.patientId,
-        ...(isHandover ? { previousDoctorId: existing.attendingDoctorId } : {}),
-      },
+    const clinical = await attachDoctorTx(client, principal, current, {
+      isHandover,
+      previousDoctorId: existing.attendingDoctorId,
     });
 
     return { encounter: current, clinical };
   });
+}
+
+/**
+ * Record the attending doctor on an in-progress encounter and journal it.
+ * Shared by `startConsultation` and by "Save & Next" (C003), so both paths
+ * produce the same clinical record, event and audit trail.
+ */
+export async function attachDoctorTx(
+  client: PoolClient,
+  principal: Principal,
+  encounter: Encounter,
+  opts: { isHandover?: boolean; previousDoctorId?: string | null } = {},
+): Promise<EncounterClinical> {
+  const isHandover = opts.isHandover ?? false;
+  await ensureEncounterClinical(
+    client,
+    principal.clinicId,
+    encounter.id,
+    encounter.patientId,
+    principal.userId,
+  );
+  const clinical = await markStarted(
+    client,
+    principal.clinicId,
+    encounter.id,
+    principal.userId,
+  );
+
+  await emitEvent(client, {
+    clinicId: principal.clinicId,
+    type: EventType.ENCOUNTER_STARTED,
+    subjectType: 'encounter',
+    subjectId: encounter.id,
+    actorId: principal.userId,
+    payload: { patientId: encounter.patientId, handover: isHandover },
+  });
+  await auditTx(client, {
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: isHandover ? 'encounter.takeover' : 'encounter.start',
+    outcome: 'success',
+    targetType: 'encounter',
+    targetId: encounter.id,
+    metadata: {
+      patientId: encounter.patientId,
+      ...(isHandover ? { previousDoctorId: opts.previousDoctorId ?? null } : {}),
+    },
+  });
+
+  return clinical;
 }
 
 /**
@@ -212,52 +244,62 @@ export async function completeEncounter(
   encounterId: string,
 ): Promise<Encounter> {
   requirePermission(principal, Permission.ENCOUNTER_COMPLETE);
+  return withTransaction((client) => completeEncounterTx(client, principal, encounterId));
+}
 
-  return withTransaction(async (client) => {
-    const encounter = await lockEncounter(client, principal.clinicId, encounterId);
-    if (encounter.status !== 'in_progress') {
-      throw new ConflictError(
-        `Only an in-progress consultation can be completed (encounter is ${encounter.status})`,
-      );
-    }
+/**
+ * Transaction-scoped completion. "Save & Next" (C003) calls this so closing one
+ * consultation and claiming the next patient commit as a single unit. The
+ * caller asserts `encounter:complete` before entering the transaction.
+ */
+export async function completeEncounterTx(
+  client: PoolClient,
+  principal: Principal,
+  encounterId: string,
+): Promise<Encounter> {
+  const encounter = await lockEncounter(client, principal.clinicId, encounterId);
+  if (encounter.status !== 'in_progress') {
+    throw new ConflictError(
+      `Only an in-progress consultation can be completed (encounter is ${encounter.status})`,
+    );
+  }
 
-    const [assessment, diagnoses] = await Promise.all([
-      getAssessment(principal.clinicId, encounter.id, client),
-      listDiagnoses(principal.clinicId, encounter.id, client),
-    ]);
-    if (!assessment && diagnoses.length === 0) {
-      throw new ConflictError(
-        'Record an assessment or a diagnosis before completing the consultation',
-      );
-    }
+  const [assessment, diagnoses] = await Promise.all([
+    getAssessment(principal.clinicId, encounter.id, client),
+    listDiagnoses(principal.clinicId, encounter.id, client),
+  ]);
+  if (!assessment && diagnoses.length === 0) {
+    throw new ConflictError(
+      'Record an assessment or a diagnosis before completing the consultation',
+    );
+  }
 
-    const updated = await applyStatusTx(client, principal, encounter, 'completed');
-    await markCompleted(client, principal.clinicId, encounter.id, principal.userId);
+  const updated = await applyStatusTx(client, principal, encounter, 'completed');
+  await markCompleted(client, principal.clinicId, encounter.id, principal.userId);
 
-    await emitEvent(client, {
-      clinicId: principal.clinicId,
-      type: EventType.ENCOUNTER_COMPLETED,
-      subjectType: 'encounter',
-      subjectId: encounter.id,
-      actorId: principal.userId,
-      payload: {
-        patientId: encounter.patientId,
-        diagnosisCount: diagnoses.length,
-        hasAssessment: !!assessment,
-      },
-    });
-    await auditTx(client, {
-      clinicId: principal.clinicId,
-      actorId: principal.userId,
-      action: 'encounter.complete',
-      outcome: 'success',
-      targetType: 'encounter',
-      targetId: encounter.id,
-      metadata: { patientId: encounter.patientId, diagnosisCount: diagnoses.length },
-    });
-
-    return updated;
+  await emitEvent(client, {
+    clinicId: principal.clinicId,
+    type: EventType.ENCOUNTER_COMPLETED,
+    subjectType: 'encounter',
+    subjectId: encounter.id,
+    actorId: principal.userId,
+    payload: {
+      patientId: encounter.patientId,
+      diagnosisCount: diagnoses.length,
+      hasAssessment: !!assessment,
+    },
   });
+  await auditTx(client, {
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: 'encounter.complete',
+    outcome: 'success',
+    targetType: 'encounter',
+    targetId: encounter.id,
+    metadata: { patientId: encounter.patientId, diagnosisCount: diagnoses.length },
+  });
+
+  return updated;
 }
 
 // ---------------------------------------------------------------------------
