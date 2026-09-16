@@ -10,11 +10,10 @@ import { RoleKey, type WorkstreamPermissions } from './roles.js';
  *
  * Least privilege inside pharma: anything that changes *governed* state —
  * verifying master data, approving content, managing territories, publishing an
- * intelligence signal — is deliberately NOT granted to PHARMA_REP. Those
- * permissions exist and are held only by ADMIN (who receives every permission
- * automatically), which stands in for the data-steward / medical-affairs /
- * pharma-manager roles until those RoleKeys are approved (see
- * `CONTRACT_CHANGE_REQUEST.md` CCR-002).
+ * intelligence signal — is deliberately NOT granted to PHARMA_REP. Following
+ * CCR-005 those governed permissions are held by the purpose-built roles
+ * PHARMA_DATA_STEWARD, MEDICAL_AFFAIRS and PHARMA_MANAGER (below), so ADMIN is
+ * no longer the only holder. ADMIN still receives every permission automatically.
  */
 export const PharmaPermission = {
   // --- HCP / HCO master data -------------------------------------------------
@@ -115,6 +114,56 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.SEGMENT_READ,
       PharmaPermission.CAMPAIGN_READ,
       PharmaPermission.INTELLIGENCE_SIGNAL_READ,
+    ],
+
+    // Data steward: HCP/HCO/medication master stewardship (verify, merge, write).
+    // No content approval, no territory/campaign management, no publication.
+    [RoleKey.PHARMA_DATA_STEWARD]: [
+      PharmaPermission.HCP_READ,
+      PharmaPermission.HCP_SEARCH,
+      PharmaPermission.HCP_WRITE,
+      PharmaPermission.HCP_VERIFY,
+      PharmaPermission.HCP_MERGE,
+      PharmaPermission.HCO_READ,
+      PharmaPermission.HCO_WRITE,
+      PharmaPermission.MEDICATION_READ,
+      PharmaPermission.MEDICATION_WRITE,
+    ],
+
+    // Medical affairs: scientific content lifecycle and scientific-request
+    // fulfilment. (Author≠approver is enforced separately in the content service.)
+    [RoleKey.MEDICAL_AFFAIRS]: [
+      PharmaPermission.HCP_READ,
+      PharmaPermission.HCP_SEARCH,
+      PharmaPermission.HCO_READ,
+      PharmaPermission.MEDICATION_READ,
+      PharmaPermission.SCIENTIFIC_REQUEST_READ,
+      PharmaPermission.SCIENTIFIC_REQUEST_FULFILL,
+      PharmaPermission.CONTENT_READ,
+      PharmaPermission.CONTENT_WRITE,
+      PharmaPermission.CONTENT_APPROVE,
+      PharmaPermission.INTELLIGENCE_SIGNAL_READ,
+    ],
+
+    // Pharma manager: field oversight, segmentation/campaigns and intelligence
+    // publication. No master-data verification, no content approval.
+    [RoleKey.PHARMA_MANAGER]: [
+      PharmaPermission.HCP_READ,
+      PharmaPermission.HCP_SEARCH,
+      PharmaPermission.HCO_READ,
+      PharmaPermission.MEDICATION_READ,
+      PharmaPermission.TERRITORY_READ,
+      PharmaPermission.TERRITORY_MANAGE,
+      PharmaPermission.VISIT_READ,
+      PharmaPermission.CALL_REPORT_READ,
+      PharmaPermission.SCIENTIFIC_REQUEST_READ,
+      PharmaPermission.CONTENT_READ,
+      PharmaPermission.SEGMENT_READ,
+      PharmaPermission.SEGMENT_MANAGE,
+      PharmaPermission.CAMPAIGN_READ,
+      PharmaPermission.CAMPAIGN_MANAGE,
+      PharmaPermission.INTELLIGENCE_SIGNAL_READ,
+      PharmaPermission.INTELLIGENCE_PUBLISH,
     ],
   },
 };

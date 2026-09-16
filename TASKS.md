@@ -9,6 +9,15 @@ Legend for fields: **Obj** objective · **Deps** dependencies · **Files** modul
 touched · **API** expected endpoints · **DB** expected schema changes ·
 **Tests** required coverage.
 
+> **Integration status (I001, `integration/medcore-v1`):** F001 DONE; Clinical
+> C001–C007 DONE; AI/Automation A001–A005 DONE (A004 review-first portion; clinical
+> auto-promotion DEFERRED); Pharma P001–P006 DONE (P005 firewall live over field
+> data, clinical input fail-closed). Integration hardening added: CCR-002 global
+> log redaction and CCR-005 pharma roles (both DONE). Open follow-ups: Arabic PDF
+> (HIGH, deferred), governed clinical→intelligence read (CCR-004), live
+> `medication_ref` resolver (CCR-001), scheduled-automation dispatcher. Full
+> findings: `docs/agent-state/integration.md`.
+
 ---
 
 ## Foundation — Agent 1 (F0xx)

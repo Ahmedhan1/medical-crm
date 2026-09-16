@@ -16,6 +16,12 @@ export const RoleKey = {
   NURSE: 'NURSE',
   DOCTOR: 'DOCTOR',
   PHARMA_REP: 'PHARMA_REP',
+  // Pharma separation-of-duties roles (CCR-005). These exist so that governed
+  // pharma actions (verify/approve/publish/manage) are held by a purpose-built
+  // role rather than defaulting to ADMIN. None may hold any clinical permission.
+  PHARMA_DATA_STEWARD: 'PHARMA_DATA_STEWARD',
+  MEDICAL_AFFAIRS: 'MEDICAL_AFFAIRS',
+  PHARMA_MANAGER: 'PHARMA_MANAGER',
 } as const;
 
 export type RoleKey = (typeof RoleKey)[keyof typeof RoleKey];
@@ -26,6 +32,12 @@ export const ROLE_DESCRIPTIONS: Record<RoleKey, string> = {
   [RoleKey.NURSE]: 'Nursing/intake — identification, intake, queue',
   [RoleKey.DOCTOR]: 'Physician — clinical read access and queue',
   [RoleKey.PHARMA_REP]: 'Pharma field representative — NO patient/clinical access',
+  [RoleKey.PHARMA_DATA_STEWARD]:
+    'Pharma data steward — HCP/HCO/medication master verification and merge; NO patient/clinical access',
+  [RoleKey.MEDICAL_AFFAIRS]:
+    'Medical affairs — scientific content authoring/approval and scientific-request fulfilment; NO patient/clinical access',
+  [RoleKey.PHARMA_MANAGER]:
+    'Pharma manager — territory, segmentation, campaigns and intelligence publication; NO patient/clinical access',
 };
 
 /**

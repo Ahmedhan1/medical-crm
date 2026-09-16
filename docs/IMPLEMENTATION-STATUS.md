@@ -5,6 +5,25 @@ blueprint's acceptance criteria (§52). Nothing here is a placeholder: every
 endpoint has a backend, schema, validation, authorization, error handling,
 audit where sensitive, and tests.
 
+## Integration state (I001, branch `integration/medcore-v1`)
+
+All four workstreams are integrated: Foundation (F001), Clinical Core (C001–C007),
+AI/WhatsApp/Automation (A001–A005), Pharma/HCP/Drug/Intelligence (P001–P006).
+
+- **Migrations:** 11 apply cleanly from empty → **69 tables** (`0001`, `0100–0103`,
+  `0200`, `0300–0304`).
+- **Tests:** full suite green (see `docs/agent-state/integration.md` §12).
+- **Security posture:** pharma↔clinical firewall enforced (code + schema + RBAC +
+  input screening + intelligence fail-closed); AI review-first (code + DB CHECK);
+  request-log PHI leak fixed globally; RBAC least-privilege with dedicated pharma
+  separation-of-duties roles.
+- **Known limitation:** PDF reports render Arabic as `????` — a HIGH-severity,
+  DEFERRED finding for the Egypt deployment (see integration report §8, Finding 3).
+
+Detailed integration, security, RBAC, PHI and contract findings:
+**`docs/agent-state/integration.md`**. The sections below describe the original
+V1 foundation slice and remain accurate for that layer.
+
 ## Multi-agent readiness (current)
 
 The project is organized for parallel work by four agents (see `AGENTS.md`,

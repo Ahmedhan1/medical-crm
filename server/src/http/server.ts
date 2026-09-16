@@ -1,4 +1,5 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import type { FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
 import { isAppError } from '../domain/errors.js';
 import { getPool } from '../db/pool.js';
@@ -8,9 +9,55 @@ import { clinicalFeature } from './features/clinical.feature.js';
 import { automationFeature } from './features/automation.feature.js';
 import { pharmaFeature } from './features/pharma.feature.js';
 
-export function buildServer(): FastifyInstance {
+/**
+ * Request-log serializer (CCR-002, governance rule 9: never put PHI in logs).
+ *
+ * Fastify's default request log records the full URL including the query string,
+ * so `GET /patients/search?q=Ahmed` — or any future endpoint whose query carries
+ * a name, phone, MRN or other identifier — would write PHI into application logs.
+ * We log the method, the PATH ONLY (query string stripped), and the hostname.
+ * This is a single cross-cutting control so no individual route can re-create the
+ * leak. Path params (e.g. an opaque patient UUID) are retained: they are not PHI
+ * and are needed to correlate requests.
+ */
+export function requestLogSerializer(req: FastifyRequest): {
+  method: string;
+  url: string;
+  hostname: string;
+} {
+  const rawUrl = req.url ?? '';
+  const qIndex = rawUrl.indexOf('?');
+  const path = qIndex === -1 ? rawUrl : rawUrl.slice(0, qIndex);
+  return { method: req.method, url: path, hostname: req.hostname };
+}
+
+// Shared pino config: strip query strings via the serializer and remove
+// credential-bearing headers outright (defense in depth).
+const LOGGER_CONFIG = {
+  serializers: { req: requestLogSerializer },
+  redact: {
+    paths: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-api-key"]'],
+    remove: true,
+  },
+};
+
+export interface BuildServerOptions {
+  /**
+   * Test hook: capture logs through this stream using the PRODUCTION serializer,
+   * so a regression test exercises the real logger config rather than a stand-in.
+   */
+  loggerStream?: NodeJS.WritableStream;
+}
+
+export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
+  const logger: FastifyServerOptions['logger'] = opts.loggerStream
+    ? { level: 'info', stream: opts.loggerStream, ...LOGGER_CONFIG }
+    : process.env.NODE_ENV !== 'test'
+      ? LOGGER_CONFIG
+      : false;
+
   const app = Fastify({
-    logger: process.env.NODE_ENV !== 'test',
+    logger,
     trustProxy: true,
     bodyLimit: 1_000_000,
   });
