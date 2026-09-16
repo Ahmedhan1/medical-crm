@@ -15,7 +15,7 @@ branch, which carries the working agreement and the shared contracts.
 - `modules/governance/permissions.pharma.ts`
 - `domain/events.pharma.ts`
 - `http/features/pharma.feature.ts` + `http/routes/{hcp,medication,rep,pharma-content,intelligence}.routes.ts`
-- Migrations **0300–0399** (0300–0304 used)
+- Migrations **0300–0399** (0300–0305 used)
 - Pharma tests, this file, `docs/agent-state/agent-4.md`
 
 ---
@@ -73,9 +73,48 @@ with `available: false` and refuses every request with HTTP 501
 `governed_read_contract_unavailable`, recording a denied run in the audit log.
 
 Implementing it here would mean pharma code querying clinical tables — the exact
-shortcut the architecture forbids. It is blocked on **CCR-001**, which specifies
-the aggregate-only read contract for Agent 1 to implement. The refusal is the
-feature, and it is tested.
+shortcut the architecture forbids. **CCR-004** (filed by this workstream as
+CCR-001, renumbered at integration) is APPROVED as the contract shape, but Agent 1
+deferred the provider build to Agent 1 + Agent 2, calling the current fail-closed
+behaviour "the correct production posture". So the refusal stays, and it is
+tested. Hardening the sink (Phase 28/29 below) before that pipe opens is
+deliberate ordering.
+
+### Disclosure control and query governance (Phase 28/29)
+The minimum-cohort threshold decides *whether* a cohort may be published. It does
+not, on its own, stop an analyst asking a **sequence** of individually-legal
+questions and subtracting the answers. That gap was verified against the running
+system before it was closed:
+
+```
+run over {territory A, B}  -> cohort 10
+run over {territory B}     -> cohort  8
+=> territory A had 2 — a below-threshold cohort, recovered by arithmetic
+```
+
+Five controls now close it, all policy-driven and CHECK-bounded so none can be
+configured away:
+
+| Control | What it stops | Where |
+| --- | --- | --- |
+| **Cohort banding** | Exact counts are what a differencing attack subtracts. The API returns `cohortBand` (`"5-9"`); the exact count stays in the table for the operator's audit and the 0304 CHECKs. | `disclosure.ts` |
+| **Value rounding** | A one-subject delta between two narrowed queries. Published measurements round to the policy base (default 5), and a non-zero value never rounds to 0. | `disclosure.ts` |
+| **Complementary suppression** | A lone suppressed cohort is recoverable from its published siblings, so the smallest survivor is withheld with it. | `disclosure.ts` |
+| **Narrowing detection** | The chain itself. A request whose slice is strictly contained in slices this principal already ran is refused past `maxNarrowingDepth` (default 2). | `query-governance.ts` |
+| **Query budget** | Volume. Differencing needs many queries; runs are bounded per principal per rolling window (default 30/24h). | `query-governance.ts` |
+
+Both governance checks run **before the source is touched**: a refused request is
+never computed, not computed and withheld. Refusals return HTTP 429
+`intelligence_query_governance` naming the control, are audited, and are written
+to the append-only `intelligence_query_log` — a principal probing the boundary
+leaves a trail they cannot erase. A refused attempt deliberately does **not**
+deepen the narrowing chain, so a principal cannot lock themselves out with
+rejected probes, and `GET /intelligence/query-budget` reports a caller their own
+position so they need not discover the limit by probing it.
+
+The honest cost: with only two cohorts where one is below threshold,
+complementary suppression means **nothing** is published. That is the intended
+trade-off and is covered by a named test rather than hidden.
 
 ### Provenance on every reference field (§8, §23)
 `source`, `source_version`, `source_ref`, `jurisdiction`, `last_verified_at` and
@@ -227,6 +266,7 @@ only the first, and sees only signals scoped to their own territories.
 | POST/GET | `/pharma/campaigns`, `/pharma/campaigns/:id/targets` | `campaign:manage` / `campaign:read` |
 | GET | `/intelligence/sources`, `/intelligence/signals`, `/intelligence/policies` | `intelligence:signal-read` |
 | PUT/POST/GET | `/intelligence/policies`, `/intelligence/runs` | `intelligence:publish` |
+| GET | `/intelligence/query-budget` | `intelligence:publish` (own usage only) |
 
 ---
 
@@ -245,11 +285,14 @@ Two local conventions worth keeping:
   `assertFreeTextClean` first.
 
 ## 5. Cross-agent dependencies
-- **CCR-001** (governed aggregate-only clinical read) — PROPOSED. Until Agent 1
-  approves and implements it, `clinical_governed` refuses every request. Do not
-  read clinical tables to unblock this.
-- **CCR-002** (pharma role keys) — PROPOSED. Stewardship/approval/publication
-  permissions currently resolve to `ADMIN` only.
+- **CCR-004** (governed aggregate-only clinical read) — APPROVED as a contract;
+  implementation DEFERRED to Agent 1 + Agent 2. `clinical_governed` refuses every
+  request until they build it. Do not read clinical tables to unblock this.
+- **CCR-005** (pharma role keys) — APPROVED and implemented at integration.
+  `PHARMA_DATA_STEWARD`, `MEDICAL_AFFAIRS` and `PHARMA_MANAGER` now hold the
+  elevated permissions; the ADMIN over-grant is fixed.
+- **CCR-006** (signal response: `cohortSize` → `cohortBand`) — filed as a
+  notification; the change is confined to this workstream's own endpoints.
 - HCP QR (fast field identification) would reuse Agent 1's QR primitive with a
   pharma permission — no PHI, same opaque-token contract. Not yet built.
 
@@ -263,11 +306,24 @@ Two local conventions worth keeping:
 | `test/integration/drug-master.test.ts` | 17 | licensing discipline, jurisdiction, regulatory identity, imports |
 | `test/integration/pharma-field.test.ts` | 20 | territory scope, visits, briefing, call reports, scientific requests |
 | `test/integration/pharma-content.test.ts` | 21 | approval lifecycle, expiry gating, engagement, segments, campaigns |
-| `test/integration/pharma-firewall.test.ts` | 63 | the four firewall layers, the blocked clinical source, end-to-end signals, threshold immutability |
+| `test/integration/pharma-firewall.test.ts` | 67 | the four firewall layers, the blocked clinical source, end-to-end signals, threshold immutability |
+| `test/unit/query-governance.test.ts` | 22 | narrowing detection, budget decisions, banding, rounding, complementary suppression |
+| `test/integration/intelligence-redteam.test.ts` | 17 | differencing, narrowing chains, budget exhaustion, controls that cannot be configured away |
 
 ## 7. Next tasks
-- Swap the `clinical_governed` stub for Agent 1's provider once CCR-001 is approved.
-- Grant pharma permissions to the new role keys once CCR-002 is approved.
+- **Phase 19 — adverse-event safety handoff.** Nothing exists today: a rep who
+  hears about a suspected adverse event has no governed route for it. This is the
+  largest remaining regulatory gap in the workstream.
+- **Phase 6 — HCO 360**, plus first-class HCO locations and departments (today a
+  department is a text field on an affiliation).
+- **Phases 1–2 hardening** — HCP professional category (physician / pharmacist /
+  dentist / nurse) and credentials; verification states `rejected`, `suspended`
+  and `expired` with an expiry engine.
+- **Phase 63 — intelligence lifecycle** (draft → review → published → expired →
+  archived); signals are currently published on creation and never expire.
+- `clinical_governed` stays fail-closed: CCR-004 is APPROVED as a contract but
+  its implementation is **deferred and owned by Agent 1 + Agent 2**, not by this
+  workstream.
 - HCP QR identity for fast field identification (reuses the QR primitive).
 - Regional/country roll-up signals above territory precision, and period-over-period
   trend signals derived from stored aggregates (no new source needed).

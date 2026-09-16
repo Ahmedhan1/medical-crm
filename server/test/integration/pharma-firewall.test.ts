@@ -500,7 +500,9 @@ describe('intelligence firewall — end to end over field data', () => {
       jurisdiction: 'EG',
       aggregationLevel: 'territory',
       valueUnit: 'count',
-      cohortSize: ABSOLUTE_MIN_COHORT,
+      // Phase 28: the published surface is a band; the exact count stays in the
+      // database for the operator audit only.
+      cohortBand: `${ABSOLUTE_MIN_COHORT}-9`,
       minCohortSize: ABSOLUTE_MIN_COHORT,
       policyKey: 'default',
       policyStatus: 'passed',
@@ -515,11 +517,27 @@ describe('intelligence firewall — end to end over field data', () => {
   });
 
   it('suppresses the small cohort while publishing the large one', async () => {
-    await seedObjectionCohort(ABSOLUTE_MIN_COHORT + 2, 'cost');
+    // Three cohorts: one large, one medium, one below threshold. The small one
+    // is suppressed by the threshold and — because a lone suppressed cell is
+    // recoverable by subtraction — the SMALLEST survivor is withheld with it
+    // (Phase 28 complementary suppression). The large cohort still publishes.
+    await seedObjectionCohort(ABSOLUTE_MIN_COHORT + 7, 'cost');
+    await seedObjectionCohort(ABSOLUTE_MIN_COHORT + 1, 'efficacy');
     await seedObjectionCohort(2, 'guideline');
     const outcome = (await runToday()).json();
     expect(outcome.signals.map((s: { signalKey: string }) => s.signalKey)).toEqual(['cost']);
-    expect(outcome.cohortsSuppressed).toBe(1);
+    expect(outcome.cohortsSuppressed).toBe(2);
+  });
+
+  it('publishes NOTHING when suppressing one cohort would expose it by subtraction', async () => {
+    // Only two cohorts, one below threshold. Publishing the survivor alongside a
+    // single hidden cell would disclose the hidden one, so neither is published.
+    // This is a deliberate utility cost of disclosure control, not a bug.
+    await seedObjectionCohort(ABSOLUTE_MIN_COHORT + 2, 'cost');
+    await seedObjectionCohort(2, 'guideline');
+    const outcome = (await runToday()).json();
+    expect(outcome.signals).toEqual([]);
+    expect(outcome.cohortsSuppressed).toBe(2);
   });
 
   it('carries no HCP identifier into a published signal', async () => {
@@ -587,8 +605,10 @@ describe('intelligence firewall — end to end over field data', () => {
       sourceKind: 'pharma_field',
       signalType: 'hcp_feedback_theme',
       status: 'completed',
-      signalsPublished: 1,
-      cohortsSuppressed: 1,
+      // The lone below-threshold cohort is suppressed, and the single survivor
+      // is withheld with it (complementary suppression), so nothing publishes.
+      signalsPublished: 0,
+      cohortsSuppressed: 2,
       minCohortSize: ABSOLUTE_MIN_COHORT,
     });
   });
