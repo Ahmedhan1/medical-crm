@@ -116,6 +116,19 @@ const TIMELINE_SOURCES: readonly string[] = [
             'specialty', rf.receiving_specialty))
      FROM referral rf
     WHERE rf.clinic_id = $1 AND rf.patient_id = ANY($2::uuid[])`,
+
+  `SELECT pc.id::text, 'procedure', pc.created_at, pc.encounter_id, pc.name,
+          jsonb_strip_nulls(jsonb_build_object(
+            'status', pc.status, 'code', pc.code, 'codeSystem', pc.code_system,
+            'bodySite', pc.body_site))
+     FROM procedure pc
+    WHERE pc.clinic_id = $1 AND pc.patient_id = ANY($2::uuid[])
+      AND pc.status <> 'entered_in_error'`,
+
+  `SELECT cp.id::text, 'care_plan', cp.created_at, cp.origin_encounter_id, cp.title,
+          jsonb_strip_nulls(jsonb_build_object('status', cp.status, 'intent', cp.intent))
+     FROM care_plan cp
+    WHERE cp.clinic_id = $1 AND cp.patient_id = ANY($2::uuid[])`,
 ];
 
 export interface TimelineEntry {

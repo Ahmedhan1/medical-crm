@@ -7,7 +7,7 @@ import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { getPatientById } from '../identity/patients.repo.js';
 import { findEncounter } from './encounter.repo.js';
-import { toIsoDate } from './dates.js';
+import { toIsoDate, todayIso } from './dates.js';
 
 /**
  * Referrals & care coordination (Phase 10).
@@ -513,4 +513,90 @@ export async function listPatientReferrals(
     metadata: { count: rows.length },
   });
   return rows.map(mapReferral);
+}
+
+// ---------------------------------------------------------------------------
+// SLA / expiry detection (referral hardening)
+//
+// A referral with a due_date that passes while still open has breached its SLA.
+// Detection classifies referrals against a reference date (a READ) and an
+// idempotent sweep publishes REFERRAL_SLA_BREACHED at most once per referral.
+// It NEVER auto-transitions a referral's clinical status — expiry stays an
+// explicit, human decision; the platform only surfaces the breach for Agent 3.
+// ---------------------------------------------------------------------------
+const SLA_OPEN_STATUSES: readonly ReferralStatus[] = ['draft', 'ordered', 'sent', 'accepted', 'scheduled'];
+
+export type ReferralSlaState = 'no_due_date' | 'within_sla' | 'approaching' | 'breached';
+
+export function classifyReferralSla(
+  dueDate: string | null,
+  status: ReferralStatus,
+  asOf: string,
+  approachingDays: number,
+): ReferralSlaState {
+  if (!dueDate || !SLA_OPEN_STATUSES.includes(status)) return dueDate ? 'within_sla' : 'no_due_date';
+  if (dueDate < asOf) return 'breached';
+  const horizon = new Date(`${asOf}T00:00:00.000Z`);
+  horizon.setUTCDate(horizon.getUTCDate() + approachingDays);
+  if (dueDate <= horizon.toISOString().slice(0, 10)) return 'approaching';
+  return 'within_sla';
+}
+
+const SlaQuery = z.object({
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  approachingDays: z.coerce.number().int().min(1).max(90).default(7),
+  state: z.enum(['within_sla', 'approaching', 'breached']).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+});
+
+export async function getReferralSlaDetection(principal: Principal, rawQuery: unknown): Promise<{ asOf: string; entries: Array<{ id: string; patientId: string; status: ReferralStatus; dueDate: string | null; slaState: ReferralSlaState }> }> {
+  requirePermission(principal, Permission.REFERRAL_READ);
+  const parsed = SlaQuery.safeParse(rawQuery ?? {});
+  if (!parsed.success) throw new ValidationError('Invalid query', parsed.error.flatten());
+  const asOf = parsed.data.asOf ?? todayIso();
+  const { rows } = await getPool().query<ReferralRow>(
+    `SELECT ${REFERRAL_COLS} FROM referral
+      WHERE clinic_id = $1 AND status = ANY($2::text[]) AND due_date IS NOT NULL
+      ORDER BY due_date ASC LIMIT $3`,
+    [principal.clinicId, SLA_OPEN_STATUSES, parsed.data.limit],
+  );
+  const entries = rows
+    .map((r) => {
+      const ref = mapReferral(r);
+      return { id: ref.id, patientId: ref.patientId, status: ref.status, dueDate: ref.dueDate, slaState: classifyReferralSla(ref.dueDate, ref.status, asOf, parsed.data.approachingDays) };
+    })
+    .filter((e) => (parsed.data.state ? e.slaState === parsed.data.state : true));
+  return { asOf, entries };
+}
+
+export async function runReferralSlaSweep(principal: Principal): Promise<{ asOf: string; scanned: number; breachedEmitted: number }> {
+  requirePermission(principal, Permission.REFERRAL_MANAGE);
+  const asOf = todayIso();
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<{ id: string; patient_id: string; due_date: string | Date }>(
+      `SELECT id, patient_id, due_date FROM referral
+        WHERE clinic_id = $1 AND status = ANY($2::text[])
+          AND due_date IS NOT NULL AND due_date < $3::date AND sla_breach_event_at IS NULL
+        ORDER BY due_date ASC
+        FOR UPDATE SKIP LOCKED`,
+      [principal.clinicId, SLA_OPEN_STATUSES, asOf],
+    );
+    let breachedEmitted = 0;
+    for (const row of rows) {
+      await emitEvent(client, {
+        clinicId: principal.clinicId,
+        type: EventType.REFERRAL_SLA_BREACHED,
+        subjectType: 'referral',
+        subjectId: row.id,
+        actorId: principal.userId,
+        payload: { patientId: row.patient_id, dueDate: toIsoDate(row.due_date) },
+      });
+      await client.query(`UPDATE referral SET sla_breach_event_at = now() WHERE id = $1 AND clinic_id = $2`, [row.id, principal.clinicId]);
+      breachedEmitted += 1;
+    }
+    if (breachedEmitted > 0) {
+      await auditTx(client, { clinicId: principal.clinicId, actorId: principal.userId, action: 'referral.sla.sweep', outcome: 'success', targetType: 'clinic', targetId: principal.clinicId, metadata: { asOf, scanned: rows.length, breachedEmitted } });
+    }
+    return { asOf, scanned: rows.length, breachedEmitted };
+  });
 }
