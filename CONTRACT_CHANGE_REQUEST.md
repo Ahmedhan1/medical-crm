@@ -39,7 +39,31 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
-_(none yet)_
+### CCR-001 — Prescription → medication-master reference
+- Status: PROPOSED
+- Requested by: Agent 2
+- Date: 2026-09-16
+- Affects: Agent 4 (P002 drug/medication master), Agent 2 (C007 prescriptions)
+- Contract file(s): none yet — this request exists so the eventual link is
+  agreed rather than improvised. No shared file changes today.
+- Change: `prescription_item` (migration 0103) stores `medication_name` as free
+  text plus an OPTIONAL opaque `medication_ref text`. There is deliberately **no
+  foreign key** to any medication table. Proposed future contract: once P002
+  lands, `medication_ref` carries a stable, documented identifier from the
+  medication master (e.g. `<system>:<code>`), resolved through a service Agent 4
+  owns. Clinical Core would still never query Agent 4's tables directly, and
+  `medication_ref` would remain nullable.
+- Reason: prescribing must work for anything not yet in the catalog — a
+  compounded preparation, an import, a drug the master has not ingested. A hard
+  foreign key would make those unprescribable and would couple the clinical
+  schema to another workstream's migration order. Recording the reference now
+  means no data migration is needed later.
+- Backward compatibility: fully additive. `medication_ref` is already nullable
+  and unconstrained, so existing prescriptions stay valid whatever P002 chooses.
+  If Agent 4 picks a different identifier shape, only new rows are affected.
+- Tests: `test/integration/prescriptions.test.ts` asserts a `medicationRef` is
+  stored and returned without any catalog being present.
+- Decision (Agent 1): _pending_
 
 ---
 

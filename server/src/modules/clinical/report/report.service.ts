@@ -17,6 +17,8 @@ import {
   listNotes,
 } from '../encounter.clinical.repo.js';
 import { listPreviousVisits } from '../workspace.service.js';
+import { listEncounterPrescriptions, type Prescription } from '../prescriptions.service.js';
+import { listFollowUpsByEncounter } from '../followups.service.js';
 import { renderPdf, type PdfBlock, type PdfDocument } from './pdf.js';
 
 /**
@@ -72,6 +74,15 @@ function vitalsLine(v: Vital): string {
   return `${asMinute(v.recordedAt)} — ${parts.join(', ')}`;
 }
 
+/** One prescribed line, in the order a dispensing pharmacist reads it. */
+function prescriptionLine(item: Prescription['items'][number]): string {
+  const parts = [item.medicationName, item.dose, item.route, item.frequency];
+  if (item.durationDays !== null) parts.push(`for ${item.durationDays} days`);
+  if (item.quantity) parts.push(`qty ${item.quantity}`);
+  const line = parts.join(' — ');
+  return item.instructions ? `${line} (${item.instructions})` : line;
+}
+
 /** Build the encounter report's document model (no rendering, no I/O policy). */
 export async function buildEncounterReport(
   clinicId: string,
@@ -82,15 +93,18 @@ export async function buildEncounterReport(
   const patient = await getPatientById(clinicId, encounter.patientId);
   if (!patient) throw new NotFoundError('Patient');
 
-  const [clinical, intake, vitals, assessment, diagnoses, plan, notes] = await Promise.all([
-    getEncounterClinical(clinicId, encounter.id),
-    getIntakeByEncounter(clinicId, encounter.id),
-    listVitalsByEncounter(clinicId, encounter.id),
-    getAssessment(clinicId, encounter.id),
-    listDiagnoses(clinicId, encounter.id),
-    getTreatmentPlan(clinicId, encounter.id),
-    listNotes(clinicId, encounter.id),
-  ]);
+  const [clinical, intake, vitals, assessment, diagnoses, plan, notes, prescriptions, followUps] =
+    await Promise.all([
+      getEncounterClinical(clinicId, encounter.id),
+      getIntakeByEncounter(clinicId, encounter.id),
+      listVitalsByEncounter(clinicId, encounter.id),
+      getAssessment(clinicId, encounter.id),
+      listDiagnoses(clinicId, encounter.id),
+      getTreatmentPlan(clinicId, encounter.id),
+      listNotes(clinicId, encounter.id),
+      listEncounterPrescriptions(clinicId, encounter.id),
+      listFollowUpsByEncounter(clinicId, encounter.id),
+    ]);
 
   const blocks: PdfBlock[] = [
     { kind: 'title', text: 'Encounter Report' },
@@ -163,6 +177,30 @@ export async function buildEncounterReport(
     }
   } else {
     blocks.push({ kind: 'paragraph', text: 'No treatment plan recorded.' });
+  }
+
+  blocks.push({ kind: 'heading', text: 'Prescriptions' });
+  if (prescriptions.length > 0) {
+    for (const p of prescriptions) {
+      blocks.push({
+        kind: 'field',
+        label: `Issued ${asMinute(p.issuedAt)}`,
+        value: p.status === 'cancelled' ? `CANCELLED — ${p.cancellationReason}` : 'Active',
+      });
+      for (const item of p.items) blocks.push({ kind: 'bullet', text: prescriptionLine(item) });
+    }
+  } else {
+    blocks.push({ kind: 'paragraph', text: 'No prescription issued at this visit.' });
+  }
+
+  if (followUps.length > 0) {
+    blocks.push({ kind: 'heading', text: 'Follow-up' });
+    for (const f of followUps) {
+      blocks.push({
+        kind: 'bullet',
+        text: `Due ${f.dueOn} (${f.status})${f.reason ? ` — ${f.reason}` : ''}`,
+      });
+    }
   }
 
   if (notes.length > 0) {

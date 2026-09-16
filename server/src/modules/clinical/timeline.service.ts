@@ -74,6 +74,21 @@ const TIMELINE_SOURCES: readonly string[] = [
             'response', tr.response, 'observedOn', tr.observed_on, 'episodeId', tr.episode_id))
      FROM treatment_response tr
     WHERE tr.clinic_id = $1 AND tr.patient_id = $2`,
+
+  `SELECT pr.id::text, 'prescription', pr.issued_at, pr.encounter_id, NULL::text,
+          jsonb_build_object(
+            'status', pr.status,
+            'items', COALESCE((SELECT jsonb_agg(i.medication_name ORDER BY i.line_no)
+                                 FROM prescription_item i
+                                WHERE i.prescription_id = pr.id), '[]'::jsonb))
+     FROM prescription pr
+    WHERE pr.clinic_id = $1 AND pr.patient_id = $2`,
+
+  `SELECT fu.id::text, 'follow_up', fu.created_at, fu.origin_encounter_id, fu.reason,
+          jsonb_strip_nulls(jsonb_build_object(
+            'dueOn', fu.due_on, 'status', fu.status))
+     FROM follow_up fu
+    WHERE fu.clinic_id = $1 AND fu.patient_id = $2`,
 ];
 
 export interface TimelineEntry {

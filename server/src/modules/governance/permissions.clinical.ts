@@ -32,6 +32,11 @@ export const ClinicalPermission = {
   TREATMENT_EPISODE_READ: 'treatment_episode:read',
   TREATMENT_EPISODE_WRITE: 'treatment_episode:write',
   REPORT_GENERATE: 'report:generate',
+  PRESCRIPTION_READ: 'prescription:read',
+  PRESCRIPTION_WRITE: 'prescription:write',
+  FOLLOWUP_READ: 'followup:read',
+  FOLLOWUP_WRITE: 'followup:write',
+  FOLLOWUP_CLOSE: 'followup:close',
 } as const;
 
 export const clinicalPermissions: WorkstreamPermissions = {
@@ -62,6 +67,11 @@ export const clinicalPermissions: WorkstreamPermissions = {
     [ClinicalPermission.TREATMENT_EPISODE_WRITE]:
       'Start, stop or record the response to a treatment episode',
     [ClinicalPermission.REPORT_GENERATE]: 'Generate a clinical report (patient or encounter)',
+    [ClinicalPermission.PRESCRIPTION_READ]: 'View prescriptions',
+    [ClinicalPermission.PRESCRIPTION_WRITE]: 'Issue or cancel a prescription',
+    [ClinicalPermission.FOLLOWUP_READ]: 'View the follow-up / recall worklist',
+    [ClinicalPermission.FOLLOWUP_WRITE]: 'Schedule a follow-up',
+    [ClinicalPermission.FOLLOWUP_CLOSE]: 'Complete or cancel a scheduled follow-up',
   },
   roleGrants: {
     [RoleKey.RECEPTION]: [
@@ -74,6 +84,8 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.ENCOUNTER_READ,
       ClinicalPermission.ENCOUNTER_STATUS,
       ClinicalPermission.QUEUE_READ,
+      ClinicalPermission.FOLLOWUP_READ,
+      ClinicalPermission.FOLLOWUP_CLOSE,
     ],
     [RoleKey.NURSE]: [
       ClinicalPermission.PATIENT_READ,
@@ -89,6 +101,9 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.ENCOUNTER_CLINICAL_READ,
       ClinicalPermission.TIMELINE_READ,
       ClinicalPermission.TREATMENT_EPISODE_READ,
+      ClinicalPermission.PRESCRIPTION_READ,
+      ClinicalPermission.FOLLOWUP_READ,
+      ClinicalPermission.FOLLOWUP_CLOSE,
     ],
     [RoleKey.DOCTOR]: [
       ClinicalPermission.PATIENT_READ,
@@ -110,6 +125,11 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.TREATMENT_EPISODE_READ,
       ClinicalPermission.TREATMENT_EPISODE_WRITE,
       ClinicalPermission.REPORT_GENERATE,
+      ClinicalPermission.PRESCRIPTION_READ,
+      ClinicalPermission.PRESCRIPTION_WRITE,
+      ClinicalPermission.FOLLOWUP_READ,
+      ClinicalPermission.FOLLOWUP_WRITE,
+      ClinicalPermission.FOLLOWUP_CLOSE,
     ],
   },
 };

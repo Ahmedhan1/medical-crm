@@ -15,6 +15,8 @@ import {
 import { applyStatusTx } from './status.service.js';
 import { getIntakeByEncounter, type Intake } from './intake.repo.js';
 import { listVitalsByEncounter, type Vital } from './vitals.repo.js';
+import { listEncounterPrescriptions, type Prescription } from './prescriptions.service.js';
+import { listFollowUpsByEncounter, type FollowUp } from './followups.service.js';
 import {
   ensureEncounterClinical,
   findDiagnosis,
@@ -629,6 +631,8 @@ export interface EncounterWorkspace {
   diagnoses?: Diagnosis[];
   treatmentPlan?: TreatmentPlan | null;
   notes?: ClinicalNote[];
+  prescriptions?: Prescription[];
+  followUps?: FollowUp[];
   previousVisits?: PreviousVisit[];
 }
 
@@ -664,6 +668,12 @@ export async function getWorkspace(
   }
   if (hasPermission(principal, Permission.VITALS_READ)) {
     workspace.vitals = await listVitalsByEncounter(principal.clinicId, encounter.id);
+  }
+  if (hasPermission(principal, Permission.PRESCRIPTION_READ)) {
+    workspace.prescriptions = await listEncounterPrescriptions(principal.clinicId, encounter.id);
+  }
+  if (hasPermission(principal, Permission.FOLLOWUP_READ)) {
+    workspace.followUps = await listFollowUpsByEncounter(principal.clinicId, encounter.id);
   }
   if (hasPermission(principal, Permission.ENCOUNTER_CLINICAL_READ)) {
     const [clinical, assessment, diagnoses, treatmentPlan, notes, previousVisits] =

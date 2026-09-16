@@ -72,6 +72,92 @@ Guarantees Agent 3 can rely on:
 This needs no shared-file change, so **no CONTRACT_CHANGE_REQUEST is required**
 to consume it. File one only if A004 needs a different write shape.
 
+## Delivered (C001–C007)
+
+The full clinical workflow is implemented: Patient → Registration/Identification
+→ Intake → History → Vitals → Encounter → Queue → Doctor Workspace → Previous
+Visits → Examination → Assessment → Diagnosis → Treatment → Prescription →
+Follow-up → Patient Timeline → Treatment Response.
+
+### API surface
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| POST | `/encounters/:id/intake` | `intake:record` |
+| GET | `/encounters/:id/intake` | `intake:read` |
+| POST | `/encounters/:id/vitals` | `vitals:record` |
+| GET | `/encounters/:id/vitals` | `vitals:read` |
+| POST | `/encounters/:id/status` | `encounter:status` |
+| GET | `/encounters/:id` | `encounter:read` (sections shaped per permission) |
+| POST | `/encounters/:id/start` | `encounter:clinical:write` |
+| PATCH | `/encounters/:id/clinical` | `encounter:clinical:write` (+ `treatment:write`) |
+| POST | `/encounters/:id/diagnoses` | `diagnosis:write` |
+| PATCH | `/encounters/:id/diagnoses/:diagnosisId` | `diagnosis:write` |
+| POST | `/encounters/:id/notes` | `note:write` |
+| POST | `/encounters/:id/complete` | `encounter:complete` |
+| POST | `/encounters/:id/complete-and-next` | `encounter:complete` + `encounter:clinical:write` |
+| POST | `/queue/next` | `encounter:clinical:write` |
+| GET | `/patients/:id/timeline` | `timeline:read` |
+| POST/GET | `/patients/:id/treatment-episodes` | `treatment_episode:write` / `:read` |
+| GET | `/treatment-episodes/:id` | `treatment_episode:read` |
+| POST | `/treatment-episodes/:id/responses` | `treatment_episode:write` |
+| POST | `/treatment-episodes/:id/end` | `treatment_episode:write` |
+| GET | `/reports/encounter/:id.pdf` | `report:generate` |
+| GET | `/reports/patient/:id.pdf` | `report:generate` |
+| POST/GET | `/encounters/:id/prescriptions` | `prescription:write` / `:read` |
+| GET | `/prescriptions/:id` | `prescription:read` |
+| POST | `/prescriptions/:id/cancel` | `prescription:write` |
+| GET | `/patients/:id/prescriptions` | `prescription:read` |
+| POST | `/encounters/:id/follow-ups` | `followup:write` |
+| GET | `/patients/:id/follow-ups` | `followup:read` |
+| GET | `/follow-ups` | `followup:read` (recall worklist) |
+| POST | `/follow-ups/:id/close` | `followup:close` |
+
+### Clinical permission matrix
+
+The operational/clinical authority split. ADMIN inherits everything;
+PHARMA_REP holds nothing here, by design.
+
+| Permission | RECEPTION | NURSE | DOCTOR |
+| --- | :---: | :---: | :---: |
+| `encounter:status` | ✅ | ✅ | ✅ |
+| `intake:record` / `intake:read` | — | ✅ | ✅ |
+| `vitals:record` / `vitals:read` | — | ✅ | ✅ |
+| `encounter:clinical:read` | — | ✅ | ✅ |
+| `encounter:clinical:write` | — | — | ✅ |
+| `encounter:complete` | — | — | ✅ |
+| `diagnosis:write` | — | — | ✅ |
+| `treatment:write` | — | — | ✅ |
+| `note:write` | — | — | ✅ |
+| `timeline:read` | — | ✅ | ✅ |
+| `treatment_episode:read` | — | ✅ | ✅ |
+| `treatment_episode:write` | — | — | ✅ |
+| `report:generate` | — | — | ✅ |
+| `prescription:read` | — | ✅ | ✅ |
+| `prescription:write` | — | — | ✅ |
+| `followup:read` | ✅ | ✅ | ✅ |
+| `followup:close` | ✅ | ✅ | ✅ |
+| `followup:write` | — | — | ✅ |
+
+Reception holds **no clinical read or write permission**. It moves patients
+through the workflow and works the recall list, which is the operational half of
+the split; every clinical decision belongs to the nurse (collection) or the
+doctor (authority).
+
+> `docs/GOVERNANCE.md` still shows the pre-C001 eight-permission matrix. That
+> file is Agent 1's, so it is not edited here — Agent 1 should regenerate it
+> from `permissions.clinical.ts` at I001.
+
+## Clinical safety rules enforced beyond the task specs
+- A clinical write requires an **open consultation held by the writing doctor**;
+  a second clinician performs an audited handover first.
+- Completing a consultation requires an assessment or a diagnosis.
+- `clinical_note`, `treatment_response` and `prescription_item` are append-only
+  at the database level; `prescription` is immutable once issued (cancel and
+  re-issue).
+- Audit metadata and event payloads carry identifiers, controlled vocabularies
+  and counts — never complaint text, measured values, medication names or
+  clinical narrative. Each of those is asserted by a test.
+
 ## Next tasks
-C001 intake+vitals → C002 doctor workspace → C003 Save&Next → C004 timeline →
-C005 treatment episodes → C006 reports. See `TASKS.md`.
+C001–C007 are DONE. See `TASKS.md` and `docs/agent-state/agent-2.md`.
