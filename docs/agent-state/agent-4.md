@@ -1,200 +1,178 @@
-# Agent 4 — Pharma / HCP / Drug / Intelligence — State
+# Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — BATCH PARTIALLY COMPLETE (read this first)
-Branch `claude/jolly-carson-8t7ufe`, rebased onto baseline `48a456b`.
+## Current Status — COMPLETION PASS DONE
+Branch `claude/jolly-carson-8t7ufe`, merged onto the trusted baseline
+`integration/medcore-v1` (`659b285`).
 
-A six-item parallel expansion batch was attempted with three sub-agents in
-isolated worktrees (separate databases `medcore_a/b/c` so they could not race
-each other's schema resets). **All three sub-agents were terminated mid-task by
-a session rate limit (HTTP 429), not by any defect.**
+The five reserved WIP migrations `0307`–`0311` are now **complete end-to-end**:
+schema, repository, service, routes, RBAC, tenant/territory isolation,
+validation, audit, events, tests and integration. The three `a4/*` WIP branches
+are superseded and should be considered dead — their material was verified, not
+trusted, and several parts were changed or extended before being used.
 
-| Item | State |
-| --- | --- |
-| 1. HCO Master | **WIP, unmerged** on `a4/hco` — migrations 0307/0308 + types, no service/routes/tests |
-| 2. HCO 360 / Locations | **not started** (depended on item 1) |
-| 3. Medical Rep / Field Force | **WIP, unmerged** on `a4/field-ma` — migrations 0309/0310 + lifecycle modules, no service/routes/tests |
-| 4. Medical Affairs | **WIP, unmerged** on `a4/field-ma` (same branch) |
-| 5. Intelligence signal lifecycle | **WIP, unmerged** on `a4/intel-lifecycle` — migration 0311 + lifecycle module, no service/routes/tests |
-| 6. Reporting / Export | **DONE and verified** — on this branch |
+| Reserved migration | Was | Now |
+| --- | --- | --- |
+| `0307` HCO master | schema only, never applied | complete |
+| `0308` HCO locations / departments / 360 | schema only | complete |
+| `0309` Medical rep / field force | schema only | complete, plus four holes closed |
+| `0310` Medical affairs | schema only | complete, plus separation of duties made real |
+| `0311` Intelligence signal lifecycle | schema only | complete; the pipeline no longer publishes itself |
 
-Only item 6 is merged. The WIP branches are committed so nothing is lost, and
-are marked `WIP(unverified)` — none of that code has been executed, applied or
-tested. It must not be merged without service/route layers, tests, a
-migration-from-empty run and the full firewall/cohort/territory regression.
+**Suite: 1047 tests green** (848 at the baseline, 199 added here). Typecheck,
+build and a from-empty migration run are clean.
 
-Suite: **749 tests green** (698 at baseline). Typecheck, build and
-migration-from-empty clean.
+## Phase 1 — audit findings (what was actually wrong)
 
-## Previous status
-Working on `claude/jolly-carson-8t7ufe`, merged up to `integration/medcore-v1`
-(`97f1680`, platform P2 backup engine). This increment adds **Phases 5–7 — HCP
-master hardening, the verification lifecycle and attribute provenance** — and
-files **CCR-007**, the adverse-event handoff contract (design only).
+Traced against the code at `659b285`, not against any earlier summary.
 
-Suite: **464 tests green** (421 at the merged integration head). Typecheck, build
-and a from-empty migration run are clean.
+| # | Area | Finding | Status |
+| --- | --- | --- | --- |
+| 1 | HCO master | Real master data with far less governance than `hcp`: no identifiers, no ownership or operating status, no revision history, five-state verification vocabulary, no merge path. Three endpoints in total (`POST`/`GET`/`GET :id`). | fixed (0307) |
+| 2 | HCO sites / departments | Did not exist. A "department" was free text on an affiliation, so `Cardiology`, `cardiology` and `Dept. of Cardiology` were three departments and none could be verified or counted. | fixed (0308) |
+| 3 | HCO 360 | Did not exist. | fixed (0308) |
+| 4 | Duplicate `Hco` type | Defined in `hcp.types.ts` **and** in the WIP `hco.types.ts`. | fixed — one definition, re-exported |
+| 5 | Field force | No representative profile and no reporting hierarchy. The only way to supervise another rep was `territory:manage`, which reaches the whole clinic: a district manager saw nobody or everybody. | fixed (0309) |
+| 6 | Visit status | Enforced only "completed is terminal". A cancelled call could be un-cancelled; a no-access needed no reason; nothing recorded how a visit reached its state. | fixed (0309) |
+| 7 | Institutional calls | `visit.hcp_id` was `NOT NULL`, so a call on a hospital procurement office was unrepresentable. | fixed (0309) |
+| 8 | Visit modality | Missing. A virtual detail and a face-to-face detail were indistinguishable. | fixed (0309) |
+| 9 | `listVisits` scoping | **Pre-existing defect.** A territory-scoped principal was filtered by ownership AND territory. Ownership is the stronger scope, so the territory clause could only subtract — and did, hiding a rep's own institutional call whenever the organisation had no sited location. | fixed |
+| 10 | Medical affairs | No assignment, no medical classification, no service level, no escalation, no event trail, and a rejection needed no reason. | fixed (0310) |
+| 11 | Separation of duties (medical affairs) | Rested on an accident: MEDICAL_AFFAIRS had no permission to raise a request, so nobody could answer their own question because nobody could ask one. An ADMIN could. | fixed — now an identity rule, and the grant that exposed it was added |
+| 12 | Signal publication | A firewall run published its own output on computation. The arithmetic was reviewed; the claim never was. | fixed (0311) |
+| 13 | Signal retraction / expiry | Neither existed. A signal later known to be wrong stayed on display for ever. | fixed (0311) |
+| 14 | Re-running the pipeline | An upsert silently replaced the value of an already-published signal, keeping its publication. | fixed — a re-computed signal returns to `draft` |
+| 15 | Export eligibility | `intelligence_signals` filtered on `published_at IS NOT NULL`, the honest proxy available at the time. | fixed — filters the EFFECTIVE lifecycle status |
 
-## Completed
-- **P001–P006** (merged at integration `6df7385`): HCP master, Physician 360,
-  drug master, territory + medical-rep platform, approved-content hub, pharma
-  marketing, and the seven-stage intelligence firewall.
-- **Phase 44 — role hardening** — delivered by Agent 1 under CCR-005, not by this
-  workstream. `PHARMA_DATA_STEWARD`, `MEDICAL_AFFAIRS` and `PHARMA_MANAGER` now
-  hold the elevated pharma permissions; the ADMIN over-grant is closed.
-- **Phase 28 — disclosure control** *(this increment)*: cohort banding, value
-  rounding, complementary suppression.
-- **Phase 29 — query governance** *(this increment)*: per-principal query budget,
-  narrowing-chain detection, append-only query log, budget transparency endpoint.
-- **Phase 58 — PHI/disclosure red team**: 21 attack tests (4 added this
-  increment pinning the deliberate absence of any safety/clinical workflow).
-- **Phases 5–7 — HCP master hardening** *(this increment)*: professional
-  category, credentials, record validity window, `source_date`, the full
-  verification lifecycle with derived expiry and a sweep, and attribute-level
-  provenance resolved from the revision history.
-- **CCR-007 — adverse-event handoff contract** *(this increment)*: filed as a
-  proposal. No cross-domain workflow implemented, by directive.
+Deliberately **not** changed: the firewall, `ABSOLUTE_MIN_COHORT = 5`, banding,
+rounding, complementary suppression, narrowing detection, query budgets,
+`clinical_governed` fail-closed (CCR-004), CCR-007 (design only) and CCR-010.
+No adverse-event pathway was built.
 
-## The gap this increment closed
-Before this work the pipeline enforced a per-query minimum cohort but nothing
-about *sequences* of queries. Verified against the running system with a throwaway
-probe before any code was written:
+## Design decisions worth knowing
 
-- published signals carried **exact cohort sizes**, so `{A,B}=10` minus `{B}=8`
-  recovers a below-threshold cohort of 2 in A;
-- **unlimited repeated narrowing runs** were accepted — no budget, no rate limit,
-  no detection, no record that a principal was narrowing a prior query.
+- **One lifecycle module per concept, reused rather than copied.** The HCO master
+  reuses `hcp/verification.ts` and the SQL function
+  `pharma_effective_verification`, so the two masters cannot drift about what
+  "expired" means, and the HCO verification API uses the same field names as the
+  HCP one.
+- **Derived state beats swept state.** Verification expiry, SLA breach and signal
+  expiry are all computed on read (in SQL where a filter needs them), so
+  correctness never depends on a background job having run. The sweeps only make
+  the stored value agree with what callers already see.
+- **`territory:manage` stays clinic-wide, deliberately.** It owns the territory
+  model itself and is held by PHARMA_MANAGER, never by a representative. Field
+  supervision no longer needs it: the reporting hierarchy gives a district
+  manager their own subtree. This trade-off is recorded rather than implicit.
+- **Refusals are attributed.** Rejected/suspended master data, cancelled and
+  no-access visits, rejected scientific requests, and rejected or withdrawn
+  signals all require a recorded reason, enforced by CHECK constraints as well as
+  by the services.
 
-Severity was moderate today (cohort subjects are HCPs, whose data pharma already
-holds) but this is the approved landing zone for clinical aggregates under
-CCR-004. Hardening the sink before that pipe opens was the point.
-
-## Database Changes
-Reserved range **0300–0399**; 0300–0306 used.
+## Database changes
+Reserved range **0300–0399**; `0300`–`0312` used.
 
 | Migration | Contents |
 | --- | --- |
-| `0300`–`0304` | (unchanged, see integration history) |
-| `0305_query_governance` | `intelligence_query_log` (append-only); governance columns on `intelligence_policy`; `cohort_band` + `value_rounding_base` on `aggregated_signal` |
-| `0312_pharma_export_log` | append-only `pharma_export_log` — export receipts (filter shape + counts, never row content) |
-| `0306_hcp_master_hardening` | `hcp_credential`; `professional_category`, `source_date`, `effective_from/to`, `verification_expires_at`, `verification_note` on `hcp`; widened verification vocabulary; `pharma_effective_verification()` |
+| `0300`–`0306` | (unchanged — HCP master, drug master, field, content, intelligence, query governance, HCP hardening) |
+| `0307_hco_master` | ownership, operating status, merge target, source/effective dates, eight-state verification, evidenced-refusal CHECK, `hco_identifier`, append-only `hco_revision` |
+| `0308_hco_locations` | `hco_location`, `hco_department`, governed department link on `hcp_hco_affiliation` (legacy text kept, never backfilled) |
+| `0309_field_force` | `field_rep_profile`, `visit.modality`, nullable visit/report subject with `*_has_subject` CHECKs, append-only `visit_event` |
+| `0310_medical_affairs` | assignment, inquiry category, priority, SLA, source channel, escalation with an evidence CHECK, append-only `scientific_request_event` |
+| `0311_intelligence_lifecycle` | `aggregated_signal` lifecycle columns, no-self-approval CHECK, evidenced refusal/withdrawal CHECKs, `pharma_effective_signal_status()` |
+| `0312_pharma_export_log` | append-only export receipts |
 
-Constraints carrying governance rather than integrity:
-- `intelligence_policy.max_queries_per_window` bounded `1..1000`;
-  `query_window_hours` `1..720`; `max_narrowing_depth` `0..10`;
-  `value_rounding_base` `1..100`.
-- `complementary_suppression` is `CHECK (complementary_suppression)` — true only.
-  An operator may make disclosure control stricter, never switch it off.
-- `intelligence_query_log` rejects UPDATE/DELETE, so a principal cannot erase
-  their own narrowing history to reset the budget.
+`0311` deliberately RETRACTS pre-existing signals to `draft`. Grandfathering
+unreviewed claims as published truth is the finding the migration exists to
+close; `generated_at` still records when each was computed.
 
-## API Changes
-- **New:** `GET /intelligence/query-budget` (`intelligence:publish`) — the
-  caller's own budget position, so the limit need not be discovered by probing.
-- **Changed (CCR-006):** published signals return `cohortBand` + `valueRoundingBase`
-  instead of `cohortSize`, and `value` is rounded. The exact count stays in the
-  database for the operator's audit and the 0304 CHECKs.
-- **New refusal:** HTTP 429 `intelligence_query_governance` with
-  `details.control` = `denied_budget` | `denied_narrowing`. 429 rather than 403
-  because the principal holds the permission — the same request may succeed once
-  the window rolls forward.
-- `PUT /intelligence/policies` accepts `maxQueriesPerWindow`, `queryWindowHours`,
-  `maxNarrowingDepth`, `valueRoundingBase`, each bounded to mirror the CHECKs.
+## API changes
+
+New: fourteen `/hcos*` endpoints (master, verification, sweep, merge,
+identifiers, locations, departments, history, 360); `/field-force/profiles`
+(PUT/GET/GET :id); `GET /visits/:id/history`; `GET /scientific-requests/:id`,
+`/queue`, `POST .../triage`, `POST .../escalate`;
+`GET /intelligence/signals/:id`, `POST /intelligence/signals/:id/decision`,
+`POST /intelligence/signals/expiry-sweep`.
+
+Changed:
+- `POST /visits` takes `hcpId`, `hcoId` or both, and a `modality`.
+- `GET /visits` filters on `hcoId` and `modality`.
+- `GET /intelligence/signals` returns only `published` to a consumer and accepts
+  `lifecycleStatus` from a governance principal; a consumer asking for anything
+  else is **refused**, not silently narrowed.
+- `POST /hcps/:id/affiliations` accepts `hcoDepartmentId`.
 
 ## Permissions
-No new permissions. `queryBudget` reuses `intelligence:publish` and reports only
-the caller's own usage, never another principal's.
+Three changes, each with a reason:
+- **`hco:verify`, `hco:write`-adjacent `hco:merge`** — new, granted to
+  PHARMA_DATA_STEWARD only. Attesting that a record is true is a different act
+  from recording what someone told you.
+- **`scientificrequest:write` granted to MEDICAL_AFFAIRS** — 0310 gives a request
+  a `source_channel`; a medical-information line, an email or a congress question
+  arrives with no representative to raise it, so those channels were unreachable.
+  Separation of duties does not weaken: it never should have depended on
+  withholding a permission and is now carried by `assertAnswerable`.
+
+No new permission was invented for the field force (`territory:read` /
+`territory:manage`) or for the signal lifecycle (`intelligence:publish`), because
+neither adds a decision an existing permission does not already carry.
 
 ## Events
-One new type in `events.pharma.ts`: `INTELLIGENCE_QUERY_DENIED`.
-
-## Intelligence Changes
-Two new modules, both pure so the rules are exhaustively testable:
-- `intelligence/disclosure.ts` — banding, rounding, complementary suppression.
-  Runs after the threshold stage and can only remove or blur; it never admits a
-  cohort the firewall rejected.
-- `intelligence/query-governance.ts` — slice containment, narrowing depth, budget
-  and narrowing decisions.
-
-Both governance checks run **before the source is fetched**: a refused request is
-never computed. A refused attempt does not deepen the narrowing chain, so a
-principal cannot lock themselves out with rejected probes.
+New in `events.pharma.ts`: `HCO_UPDATED`, `HCO_VERIFICATION_CHANGED`,
+`HCO_MERGED`, `HCO_LOCATION_ADDED`, `HCO_DEPARTMENT_ADDED`,
+`FIELD_REP_PROFILE_CHANGED`, `SCIENTIFIC_REQUEST_ASSIGNED`,
+`SCIENTIFIC_REQUEST_ESCALATED`, `INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED`.
+Every payload carries shape and identifiers only — never a signal's value, never
+free text, never anything patient-identifiable.
 
 ## Tests
-**464 green** (421 at the merged integration head + 43 new this increment).
+**199 new** in this pass, on top of the suites already in the baseline.
 
 | File | Tests | Covers |
 | --- | --- | --- |
-| `test/unit/hcp-verification.test.ts` | 11 | transition graph (no state reaches `verified` directly), material-change rule, expiry arithmetic |
-| `test/integration/hcp-hardening.test.ts` | 23 | professional category, credentials, full lifecycle, derived expiry, sweep idempotency, attribute provenance, DB refusals |
-| `test/integration/hcp-master.test.ts` | 23 (+3) | updated to the governed lifecycle; adds material vs non-material edit and reason-required cases |
-| `test/integration/intelligence-redteam.test.ts` | 21 (+4) | adds safety negatives pinning the deliberate absence of any adverse-event or clinical path |
-| `test/unit/query-governance.test.ts` | 22 | narrowing containment, depth, budget/narrowing decisions, banding, rounding, complementary suppression |
-| `test/integration/pharma-firewall.test.ts` | 69 | the four firewall layers, banded contract, threshold immutability |
+| `test/integration/hco-master.test.ts` | 48 | identity, provenance, authorization, the verification lifecycle and its derived expiry, updates and material change, merge (including chain refusal), identifiers |
+| `test/integration/hco-360.test.ts` | 12 | composition, governed department resolution, territory scope as a second dimension, the clinical firewall |
+| `test/integration/pharma-fieldforce.test.ts` | 33 | profiles, hierarchy (subtree not clinic, cycles, a cycle planted past the service), modality, institutional calls, the visit status trail |
+| `test/integration/pharma-medaffairs.test.ts` | 34 | triage, service levels, escalation, separation of duties, the request trail, the queue, tenancy |
+| `test/integration/intelligence-lifecycle.test.ts` | 25 | drafts, the review path, self-approval, retraction, derived expiry, re-runs, export eligibility |
+| `test/unit/visit-lifecycle.test.ts` | 11 | the transition graph, terminal states, evidenced outcomes, modality/status vocabularies not overlapping |
+| `test/unit/request-lifecycle.test.ts` | 18 | the graph, separation of duties, SLA arithmetic, escalation preconditions |
+| `test/unit/signal-lifecycle.test.ts` | 18 | nothing publishes itself, self-approval, derived expiry, what a consumer may read |
 
-## Breaking change in this increment
-`POST /hcps` now **requires** `professionalCategory`. Defaulting it to
-`physician` would invent a fact about a real professional, which the workstream's
-own "nothing is invented" rule forbids. The only consumers were this
-workstream's own tests, which were updated to state the category explicitly.
-Recorded here rather than filed as a CCR because no other workstream calls the
-HCP API; if that changes, the next such change needs one.
+The firewall and red-team suites were **updated, not weakened**: they now drive
+their drafts through review by a second principal, because a run no longer
+publishes its own output.
 
-## Defect found and fixed while testing
-Territory scoping keyed only on `territory:manage`, so a `PHARMA_DATA_STEWARD`
-— who legitimately has no territory — was locked out of the HCP master they
-exist to curate, and `MEDICAL_AFFAIRS` would have been locked out of scientific
-requests. `visibility.ts` now names an explicit
-`CLINIC_WIDE_PHARMA_PERMISSIONS` set (`territory:manage`, `hcp:verify`,
-`scientificrequest:fulfill`). `PHARMA_REP` holds none of them and remains
-territory-scoped, asserted by the field-force and red-team suites.
+## Known issues / limitations
+- **A single-manager clinic cannot publish a signal.** No self-approval means two
+  distinct `intelligence:publish` holders are required. This is the intended
+  governance cost, the same one the content lifecycle already pays.
+- **Escalation requires an actual SLA breach.** A critical question cannot be
+  escalated while still in window. Escalating early would empty the signal, but
+  it does mean urgency has to be expressed by priority at triage, not by escalation.
+- **The legacy `hcp_hco_affiliation.department` text is not backfilled.** Guessing
+  which structured department a free-text string meant is the data invention this
+  platform refuses. Reads prefer the governed name when the link exists.
+- **Territory scope on the HCO master itself is clinic-wide.** An organisation is
+  not targeted the way a professional is; the people-bearing sections of HCO 360
+  are scoped instead, and the response says which happened.
+- Everything recorded in the previous state file about disclosure control still
+  holds: per-principal (not clinic-wide) narrowing detection, a count-based rather
+  than differentially-private budget, deterministic rounding.
 
-## Known Issues / Limitations
-- **Complementary suppression costs utility.** With only two cohorts where one is
-  below threshold, nothing is published. Intended, and covered by a named test
-  rather than hidden.
-- **Narrowing detection is per-principal.** Two colluding principals can still
-  difference across their separate histories. Closing that needs a clinic-wide
-  budget, which would let one analyst exhaust another's quota — a trade-off worth
-  making deliberately, not by default. Deferred and recorded here.
-- **The budget is a fixed count, not a true privacy budget.** A differential-privacy
-  accountant (ε per query, composed over the window) is the principled version;
-  the abstraction is shaped to accept one without an API change.
-- **Rounding is deterministic**, so repeated identical queries return the same
-  rounded value. That is fine against differencing but would not survive an
-  averaging attack over many *distinct* slices; the narrowing and budget controls
-  are what bound that today.
-- `clinical_governed` remains fail-closed. CCR-004 is APPROVED as a contract but
-  its implementation is **owned by Agent 1 + Agent 2**, not this workstream.
+## Contract changes
+No new CCRs in this pass. CCR-004 remains APPROVED-as-contract with the
+implementation owned by Agents 1 + 2 and `clinical_governed` still fail-closed;
+CCR-007 remains DESIGN/PROPOSED with no adverse-event workflow built; CCR-010 is
+untouched.
 
-## Contract Changes
-- **CCR-004** — APPROVED (contract); implementation deferred to Agent 1 + Agent 2.
-- **CCR-005** — APPROVED and implemented at integration.
-- **CCR-006** — notification that `cohortSize` was replaced by `cohortBand` on
-  this workstream's own endpoints, with the security rationale. Filed rather than
-  waived, because the rule should not be set aside by the agent making the change.
-- **CCR-007** *(new)* — Adverse Event Handoff Contract. Defines source,
-  classification, minimal payload, destination port, authorization, audit,
-  status, escalation, retention, PHI restrictions and failure behaviour. **Design
-  only**: Agent 4 builds the field-side intake once approved and never the
-  destination. Notably it proposes replacing today's reject-and-discard PHI guard
-  with quarantine — losing a possible safety report is worse than storing it
-  under restricted read.
-
-## Next Tasks
-Following the directive's recommended order, with the audit's findings:
-1. **Phase 3 — HCO locations and departments** as first-class entities (a
-   department is still a text field on an affiliation), then **Phase 6 — HCO 360**.
-2. **Phases 10–11 — medical-representative profile and manager hierarchy.**
-   Authorization must follow the hierarchy; a manager must not reach every
-   territory by default.
-3. **Phase 12/13 — field-visit modality and field-note quarantine.** Quarantine
-   is coupled to CCR-007: it replaces today's reject-and-discard, so it should
-   land with (or after) that approval.
-4. **Phase 63 — intelligence lifecycle** (draft → review → published → expired →
-   archived). Signals publish on creation today and never expire.
-5. **Phase 19 — adverse-event handoff**, only once CCR-007 is approved by
-   Agent 1 + Agent 2. Not to be built unilaterally.
-
-## Last Commit
-See `git log` on `claude/jolly-carson-8t7ufe`; this increment is the
-`pharma(P5-P7)` commit on top of the merge of `integration/medcore-v1` (`97f1680`).
+## Next tasks
+1. HCO verification/expiry for **sites and departments** — the columns and the
+   derived function are in place, but only the organisation has a decision
+   endpoint today.
+2. An HCO directory report, once someone actually needs one. Not added
+   speculatively.
+3. Signal lifecycle history as a first-class trail. Today the decisions are in
+   `audit_log` and `event`; a dedicated table would match `visit_event` and
+   `scientific_request_event`.
+4. CCR-007 remains blocked on approval by Agents 1 + 2.

@@ -161,11 +161,17 @@ describe('field-force profiles', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('every field-force endpoint requires authentication', async () => {
+  it('every field-force and visit endpoint requires authentication', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcpId, plannedAt: tomorrow() });
     for (const [method, url] of [
       ['PUT', '/field-force/profiles'],
       ['GET', '/field-force/profiles'],
       ['GET', `/field-force/profiles/${repA.userId}`],
+      ['POST', '/visits'],
+      ['GET', '/visits'],
+      ['GET', `/visits/${visit.id}/history`],
+      ['GET', `/visits/${visit.id}/briefing`],
+      ['POST', `/visits/${visit.id}/status`],
     ] as const) {
       const res = await app.inject({ method, url, payload: {} });
       expect(res.statusCode, `${method} ${url}`).toBe(401);
