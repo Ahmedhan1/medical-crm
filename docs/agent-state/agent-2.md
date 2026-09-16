@@ -1,13 +1,13 @@
 # Agent 2 — Clinical Platform — State
 
 ## Current Status
-Clinical Platform program **CP-1, CP-2, CP-3, CP-8, CP-9 delivered** on branch
+Clinical Platform program **CP-1, CP-2, CP-3, CP-8, CP-9, CP-16 delivered** on branch
 `claude/inspiring-cori-tk3ej8`, which is fast-forwarded onto
 `integration/medcore-v1` (Agent 1's integrated tree, including I001 hardening
 and platform Phase 1). The earlier C001–C007 Clinical Core series is merged and
 live in the integrated branch.
 
-Suite: **483 tests / 35 files green.** Typecheck, build and a from-empty
+Suite: **489 tests / 36 files green.** Typecheck, build and a from-empty
 migration run (17 migrations) all clean.
 
 ## Completed
@@ -80,6 +80,12 @@ episodes, report engine, prescriptions + follow-ups. See git history.
   audited. AI cannot bypass (no prescribing principal; override is a human act).
 - Dry-run preview endpoint; allergies on the workspace.
 
+### CP-16 — Patient 360 *(read model, no migration)*
+- `GET /patients/:id/360` composes existing permission-checked readers into one
+  authorization-shaped summary; no new table, no duplicated SQL. Each section is
+  gated by the caller's read permission (workspace pattern). Merged record
+  flagged with `mergedIntoId`. Audited (section names only, no PHI).
+
 ### CP-9 — Document references *(migration 0108)*
 - `document_reference` (FHIR DocumentReference-shaped), METADATA ONLY — bytes
   are never in the DB; `storage_key` is an opaque pointer (byte storage = CCR-008,
@@ -114,6 +120,8 @@ New in CP-8: `POST|GET /patients/:id/allergies`,
 
 New in CP-9: `POST /documents`, `GET /documents/:id`, `POST /documents/:id/void`,
 `GET /patients/:id/documents`.
+
+New in CP-16: `GET /patients/:id/360`.
 
 Changed: `GET /patients/:id` — `birthDate` is now `YYYY-MM-DD` (see CCR-006).
 `POST /encounters/:id/prescriptions` gains optional `acknowledgeAlerts` +
@@ -154,6 +162,7 @@ string, so renaming would silently break every existing rule. Raised, not change
 - `test/integration/observations.test.ts` — 18
 - `test/integration/allergies-safety.test.ts` — 20
 - `test/integration/documents.test.ts` — 14
+- `test/integration/patient360.test.ts` — 6
 Covering lifecycle transitions, merge semantics and lineage, identifier
 uniqueness, contact primary-demotion, room double-booking (and slot release),
 deliberate overbooking, encounter-driven appointment status, arrival atomicity,
@@ -192,11 +201,10 @@ allowlist test passes). One PostgreSQL contrib extension: `btree_gist`.
 None.
 
 ## Next Tasks
-- **CP-16** — Patient 360 read model unifying demographics, allergies,
-  observations, appointments, encounters, diagnoses, prescriptions, documents,
-  episodes and follow-ups behind one authorization-aware view.
-- **CP-10** — referral & care-coordination.
+- **CP-10** — referral & care-coordination: internal/external referrals with a
+  status lifecycle, and clinical tasks with assignee/due-date.
+- **CP-11** — overdue follow-up detection (event-driven, for recall automation).
 See `docs/workstreams/clinical-core.md` for the full CP-1..CP-21 status table.
 
 ## Last Commit
-- `platform(clinical P9): document references (metadata layer, FHIR-shaped)`
+- `platform(clinical P16): Patient 360 read model`

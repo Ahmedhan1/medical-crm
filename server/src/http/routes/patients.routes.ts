@@ -8,6 +8,7 @@ import {
 } from '../../modules/identity/patients.service.js';
 import { issuePatientQr, resolveQr } from '../../modules/qr/qr.service.js';
 import { getPatientTimeline } from '../../modules/clinical/timeline.service.js';
+import { getPatient360 } from '../../modules/clinical/patient360.service.js';
 import {
   addContact,
   addIdentifier,
@@ -140,6 +141,13 @@ export async function patientRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) throw new ValidationError('Invalid identifiers');
     await removeContact(principalOf(req), parsed.data.id, parsed.data.subId);
     return reply.code(204).send();
+  });
+
+  // Patient 360 — an authorization-shaped read-only summary (§4.3)
+  app.get('/patients/:id/360', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    return reply.send(await getPatient360(principalOf(req), parsed.data.id));
   });
 
   // Longitudinal clinical history (§4.3)

@@ -182,7 +182,7 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-13 | Inventory consumption events | TODO (contract only; no second inventory) |
 | CP-14 | Clinical analytics | TODO |
 | CP-15 | Dashboard data contracts | TODO |
-| CP-16 | Patient 360 | TODO (lineage resolution landed in CP-1) |
+| CP-16 | Patient 360 | **DONE** (read model, no new table) |
 | CP-17 | Clinical timeline | PARTIAL — timeline exists, keyset-paginated, lineage-aware; not yet filterable by kind |
 | CP-18 | Specialty configuration engine | STARTED — `appointment_type` and `clinical_resource` are the first config primitives |
 | CP-19 | Multi-tenant hierarchy (Location/Department/Room) | PARTIAL — `clinical_resource` is a bookable thing, not an org hierarchy (foundation-owned) |
@@ -203,6 +203,17 @@ content out of the DB keeps it out of logs, clinical-DB backups and every query.
   direct read, so its existence does not leak. The title (which can name a
   condition) is redacted on the timeline for restricted documents.
 - Documents link to patient / encounter / episode and follow merge lineage.
+
+### Patient 360 (CP-16)
+`GET /patients/:id/360` is a read-only VIEW MODEL — no table, no duplicated
+query. It composes the existing permission-checked readers (identifiers,
+contacts, allergies, recent observations, upcoming appointments, recent visits,
+active prescriptions, documents, treatment episodes, open follow-ups) and
+includes each section only if the caller holds its read permission, the same way
+the encounter workspace does. A reception 360 and a doctor 360 therefore differ
+by content, not by a post-hoc filter, so an omitted section never implies the
+caller was allowed to see it. A merged record is flagged with `mergedIntoId` so
+the client can redirect to the survivor.
 
 ### Safety model (CP-8)
 Allergies are now a structured record (`allergy`, 0107), distinct from the
@@ -266,5 +277,4 @@ plain string. Renaming would silently break every existing rule, so the existing
 convention is kept. Raised here rather than changed unilaterally.
 
 ## Next tasks
-CP-10 (referral & care coordination), then CP-16 (Patient 360 read model over
-everything built so far). See `docs/agent-state/agent-2.md`.
+CP-10 (referral & care coordination). See `docs/agent-state/agent-2.md`.
