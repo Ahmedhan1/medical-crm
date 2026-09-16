@@ -54,4 +54,20 @@ export const PharmaEventType = {
   INTELLIGENCE_COHORT_SUPPRESSED: 'INTELLIGENCE_COHORT_SUPPRESSED',
   /** A run refused by query governance (budget or narrowing depth) — Phase 29. */
   INTELLIGENCE_QUERY_DENIED: 'INTELLIGENCE_QUERY_DENIED',
+
+  // Aggregate-signal lifecycle (Phase 31, migration 0311). A run now produces a
+  // DRAFT; `INTELLIGENCE_SIGNAL_PUBLISHED` above is emitted by the publish
+  // TRANSITION, not by the run that computed the number.
+  /** A firewall run persisted a signal in `draft`, awaiting review. */
+  INTELLIGENCE_SIGNAL_DRAFTED: 'INTELLIGENCE_SIGNAL_DRAFTED',
+  /** The producer submitted a draft for review. */
+  INTELLIGENCE_SIGNAL_SUBMITTED: 'INTELLIGENCE_SIGNAL_SUBMITTED',
+  /** A reviewer accepted the claim (never the principal who generated it). */
+  INTELLIGENCE_SIGNAL_APPROVED: 'INTELLIGENCE_SIGNAL_APPROVED',
+  /** A reviewer refused the claim, with a recorded note. */
+  INTELLIGENCE_SIGNAL_REJECTED: 'INTELLIGENCE_SIGNAL_REJECTED',
+  /** A published or approved signal was retracted, with a recorded reason. */
+  INTELLIGENCE_SIGNAL_WITHDRAWN: 'INTELLIGENCE_SIGNAL_WITHDRAWN',
+  /** A published signal passed its shelf life and the sweep persisted it. */
+  INTELLIGENCE_SIGNAL_EXPIRED: 'INTELLIGENCE_SIGNAL_EXPIRED',
 } as const;

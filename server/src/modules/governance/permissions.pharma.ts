@@ -59,8 +59,19 @@ export const PharmaPermission = {
   // --- Healthcare intelligence ----------------------------------------------
   /** Read published, threshold-gated, de-identified signals. Never raw data. */
   INTELLIGENCE_SIGNAL_READ: 'intelligence:signal-read',
-  /** Run the firewall pipeline and publish signals — a governance action. */
+  /** Run the firewall pipeline and publish approved signals — a governance action. */
   INTELLIGENCE_PUBLISH: 'intelligence:publish',
+  /**
+   * Approve, reject or withdraw an aggregate signal (Phase 31 lifecycle).
+   *
+   * Held SEPARATELY from `intelligence:publish`, and deliberately not by the
+   * role that runs the pipeline: the producer of a claim must not also be its
+   * reviewer. This mirrors `content:approve`, which medical affairs holds and
+   * the pharma manager does not. The per-record rule ("not by the principal who
+   * generated THIS signal") is enforced on top, in `signal-lifecycle.ts` and by
+   * a CHECK constraint in migration 0311.
+   */
+  INTELLIGENCE_REVIEW: 'intelligence:review',
 } as const;
 
 export const pharmaPermissions: WorkstreamPermissions = {
@@ -93,6 +104,8 @@ export const pharmaPermissions: WorkstreamPermissions = {
     [PharmaPermission.CAMPAIGN_MANAGE]: 'Create and manage campaigns',
     [PharmaPermission.INTELLIGENCE_SIGNAL_READ]: 'Read published aggregated intelligence signals',
     [PharmaPermission.INTELLIGENCE_PUBLISH]: 'Run the intelligence firewall and publish signals',
+    [PharmaPermission.INTELLIGENCE_REVIEW]:
+      'Approve, reject or withdraw an aggregated intelligence signal',
   },
   roleGrants: {
     // The field representative: HCP engagement workflow and read access to
@@ -143,10 +156,17 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.CONTENT_WRITE,
       PharmaPermission.CONTENT_APPROVE,
       PharmaPermission.INTELLIGENCE_SIGNAL_READ,
+      // Reviews aggregate signals before they become published truth. Medical
+      // affairs holds no `intelligence:publish`, so the role that produces a
+      // signal and the role that accepts it are structurally different — the
+      // same separation as authoring vs approving scientific content.
+      PharmaPermission.INTELLIGENCE_REVIEW,
     ],
 
     // Pharma manager: field oversight, segmentation/campaigns and intelligence
-    // publication. No master-data verification, no content approval.
+    // publication. No master-data verification, no content approval — and no
+    // `intelligence:review`: the role that runs the firewall does not get to
+    // sign off on its own output.
     [RoleKey.PHARMA_MANAGER]: [
       PharmaPermission.HCP_READ,
       PharmaPermission.HCP_SEARCH,

@@ -2,6 +2,7 @@ import { getPool, type PoolClient } from '../../db/pool.js';
 import { toDateString } from '../pharma/dates.js';
 import { cohortBand as bandFor, type PublishedSignal } from './disclosure.js';
 import type { FirewallPolicy } from './firewall.js';
+import { SignalLifecycle } from './signal-lifecycle.js';
 
 type Runner = Pick<PoolClient, 'query'>;
 
@@ -37,7 +38,26 @@ export interface StoredSignal {
   policyStatus: string;
   deidentified: boolean;
   generatedAt: string;
-  publishedAt: string;
+  generatedBy: string | null;
+  /**
+   * The EFFECTIVE lifecycle status, computed by `pharma_effective_signal_status`
+   * — so a published signal past its `expiresAt` reads as `expired` here even
+   * if the sweep has never run. The stored column is deliberately not exposed
+   * separately: there is one answer to "what is this signal", not two.
+   */
+  lifecycleStatus: SignalLifecycle;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  publishedBy: string | null;
+  /** NULL until the publish transition; a draft has never been published. */
+  publishedAt: string | null;
+  withdrawnBy: string | null;
+  withdrawnAt: string | null;
+  withdrawalReason: string | null;
+  expiresAt: string | null;
+  reviewNote: string | null;
 }
 
 interface SignalRow {
@@ -67,8 +87,36 @@ interface SignalRow {
   policy_status: string;
   deidentified: boolean;
   generated_at: string;
-  published_at: string;
+  generated_by: string | null;
+  lifecycle_status: SignalLifecycle;
+  /** Computed by `pharma_effective_signal_status` — see SELECT_SIGNAL_COLUMNS. */
+  effective_lifecycle_status: SignalLifecycle;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  published_by: string | null;
+  published_at: string | null;
+  withdrawn_by: string | null;
+  withdrawn_at: string | null;
+  withdrawal_reason: string | null;
+  expires_at: string | null;
+  review_note: string | null;
 }
+
+/**
+ * Every signal read goes through this list rather than `SELECT *`, so the
+ * derived lifecycle status is computed consistently and cannot be forgotten by
+ * a new query. `s` is the required alias for the `aggregated_signal` table.
+ * Same contract as `SELECT_HCP_COLUMNS` in the HCP repository.
+ */
+const SELECT_SIGNAL_COLUMNS = `s.*,
+         pharma_effective_signal_status(s.lifecycle_status, s.expires_at)
+           AS effective_lifecycle_status`;
+
+/** The same expression for a WHERE clause — filters MUST agree with reads. */
+const EFFECTIVE_SIGNAL_STATUS =
+  'pharma_effective_signal_status(s.lifecycle_status, s.expires_at)';
 
 function mapSignal(row: SignalRow): StoredSignal {
   return {
@@ -99,7 +147,21 @@ function mapSignal(row: SignalRow): StoredSignal {
     policyStatus: row.policy_status,
     deidentified: row.deidentified,
     generatedAt: row.generated_at,
+    generatedBy: row.generated_by,
+    // Expiry is DERIVED, so a lapsed signal reads as `expired` even if no sweep
+    // has run. A missed background job can never leave a stale claim on display.
+    lifecycleStatus: row.effective_lifecycle_status,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    publishedBy: row.published_by,
     publishedAt: row.published_at,
+    withdrawnBy: row.withdrawn_by,
+    withdrawnAt: row.withdrawn_at,
+    withdrawalReason: row.withdrawal_reason,
+    expiresAt: row.expires_at,
+    reviewNote: row.review_note,
   };
 }
 
