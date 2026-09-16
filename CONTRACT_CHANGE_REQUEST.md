@@ -396,6 +396,16 @@ regulatory submission, any clinical write, or any AI that classifies autonomousl
   store must ship with its own backup coverage before documents are used for
   primary storage in production.
 
+### CCR review — Clinical Expansion Batch (Procedures/CarePlans/FHIR/Referral SLA/Follow-up)
+- Reviewed CCR-001 (medication-master ref), CCR-004 (governed aggregate read,
+  fail-closed), CCR-007 (drug↔allergen coding). **No new CCR required and none
+  bypassed.** The FHIR MedicationRequest/AllergyIntolerance/Condition/Procedure
+  mappers pass any coded reference (medicationRef, substanceRef, diagnosis/
+  procedure code+system) through VERBATIM and emit text-only when no code
+  exists — they invent no drug/allergen codes and never read the Drug Master.
+  CCR-004's fail-closed pharma/intelligence read path is untouched (this batch
+  adds no clinical→pharma export). CCR-001/007 remain PROPOSED/deferred.
+
 ### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
 - Status: PROPOSED
 - Requested by: Agent 2 (Clinical Platform)

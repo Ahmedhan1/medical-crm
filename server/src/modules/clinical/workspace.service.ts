@@ -18,6 +18,7 @@ import { getIntakeByEncounter, type Intake } from './intake.repo.js';
 import { listVitalsByEncounter, type Vital } from './vitals.repo.js';
 import { listEncounterObservations, type Observation } from './observations.service.js';
 import { listAllergies, type Allergy } from './allergies.service.js';
+import { listEncounterProcedures, type Procedure } from './procedures.service.js';
 import { listEncounterPrescriptions, type Prescription } from './prescriptions.service.js';
 import { listFollowUpsByEncounter, type FollowUp } from './followups.service.js';
 import {
@@ -635,6 +636,7 @@ export interface EncounterWorkspace {
   vitals?: Vital[];
   observations?: Observation[];
   allergies?: Allergy[];
+  procedures?: Procedure[];
   clinical?: EncounterClinical | null;
   assessment?: Assessment | null;
   diagnoses?: Diagnosis[];
@@ -683,6 +685,9 @@ export async function getWorkspace(
   }
   if (hasPermission(principal, Permission.ALLERGY_READ)) {
     workspace.allergies = await listAllergies(principal, encounter.patientId);
+  }
+  if (hasPermission(principal, Permission.PROCEDURE_READ)) {
+    workspace.procedures = await listEncounterProcedures(principal.clinicId, encounter.id);
   }
   if (hasPermission(principal, Permission.PRESCRIPTION_READ)) {
     workspace.prescriptions = await listEncounterPrescriptions(principal.clinicId, encounter.id);
