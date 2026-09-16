@@ -15,6 +15,8 @@ import { validateActions } from './actions.js';
 import * as repo from './automation.repo.js';
 import { processNewEvents, type ProcessSummary } from './engine.js';
 import { runDueActions, type RunScheduledSummary } from './scheduler.runner.js';
+import { simulateRule, type RuleSimulation } from './simulate.js';
+import type { EventContext } from './automation.types.js';
 import { listScheduled, getScheduled, cancelScheduled } from './scheduled.repo.js';
 import type { ScheduledAction } from './automation.types.js';
 import { ConflictError } from '../../domain/errors.js';
@@ -165,4 +167,36 @@ export async function cancelScheduledAction(principal: Principal, id: string): P
   const action = await getScheduled(principal.clinicId, id);
   if (!action) throw new NotFoundError('Scheduled action');
   return action;
+}
+
+/**
+ * DRY-RUN a rule against a hypothetical event (E5). Pure: evaluates trigger +
+ * conditions + PLANNED actions and explains why each would/would not execute.
+ * It NEVER sends a message, schedules an action, or mutates any data.
+ */
+export interface SimulateEventInput {
+  type: string;
+  subjectType?: string;
+  subjectId?: string;
+  payload?: Record<string, unknown>;
+}
+
+export async function simulateRuleForEvent(
+  principal: Principal,
+  ruleId: string,
+  eventInput: SimulateEventInput,
+): Promise<RuleSimulation> {
+  requirePermission(principal, Permission.AUTOMATION_READ);
+  const rule = await repo.getRuleById(principal.clinicId, ruleId);
+  if (!rule) throw new NotFoundError('Automation rule');
+  const ctx: EventContext = {
+    type: eventInput.type,
+    subjectType: eventInput.subjectType ?? 'simulation',
+    subjectId: eventInput.subjectId ?? '00000000-0000-0000-0000-000000000000',
+    clinicId: principal.clinicId,
+    actorId: null,
+    payload: eventInput.payload ?? {},
+    occurredAt: new Date().toISOString(),
+  };
+  return simulateRule(rule, ctx);
 }

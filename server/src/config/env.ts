@@ -19,6 +19,14 @@ const EnvSchema = z.object({
   SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(43_200),
   QR_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
 
+  // --- Auth throttling / lockout (brute-force protection) ---
+  // Per-account: N failed logins within the window locks the account for the
+  // lockout period. Per-IP: a coarse request cap on the login route.
+  LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  LOGIN_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
+  LOGIN_IP_MAX_PER_MINUTE: z.coerce.number().int().positive().default(30),
+
   // --- Backup / recovery (Phase 2) ---
   // Directory the backup engine writes to. Local-first: a path on the MEDCORE
   // box (or a mounted external/encrypted volume). Never exposed via any API.
@@ -40,6 +48,13 @@ export interface BackupConfig {
   retainMonthly: number;
 }
 
+export interface AuthThrottleConfig {
+  maxAttempts: number;
+  windowSeconds: number;
+  lockoutSeconds: number;
+  ipMaxPerMinute: number;
+}
+
 export type AppConfig = {
   nodeEnv: 'development' | 'test' | 'production';
   host: string;
@@ -49,6 +64,7 @@ export type AppConfig = {
   sessionTtlSeconds: number;
   qrTtlSeconds: number;
   backup: BackupConfig;
+  authThrottle: AuthThrottleConfig;
 };
 
 let cached: AppConfig | null = null;
@@ -86,6 +102,12 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
       retainDaily: env.BACKUP_RETAIN_DAILY,
       retainWeekly: env.BACKUP_RETAIN_WEEKLY,
       retainMonthly: env.BACKUP_RETAIN_MONTHLY,
+    },
+    authThrottle: {
+      maxAttempts: env.LOGIN_MAX_ATTEMPTS,
+      windowSeconds: env.LOGIN_WINDOW_SECONDS,
+      lockoutSeconds: env.LOGIN_LOCKOUT_SECONDS,
+      ipMaxPerMinute: env.LOGIN_IP_MAX_PER_MINUTE,
     },
   };
 }

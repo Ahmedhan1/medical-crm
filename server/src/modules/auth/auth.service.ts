@@ -7,6 +7,7 @@ import type { Permission } from '../governance/permissions.js';
 import { findUserForLogin, findUserBySessionHash } from '../identity/users.repo.js';
 import { verifyPassword } from './password.js';
 import { generateToken, hashToken } from './tokens.js';
+import { getLoginThrottle, accountKey } from './throttle.js';
 
 export interface LoginResult {
   token: string;
@@ -27,6 +28,15 @@ export async function login(
   password: string,
   ip?: string,
 ): Promise<LoginResult> {
+  const throttle = getLoginThrottle();
+  const acctKey = accountKey(clinicId, username);
+
+  // Brute-force protection (fail-closed): reject before doing any work if this
+  // IP is over its per-minute cap or this account is locked. Generic messages —
+  // never reveal whether the account exists.
+  throttle.assertIpUnderLimit(ip);
+  throttle.assertAccountNotLocked(acctKey);
+
   const user = await findUserForLogin(clinicId, username);
 
   // Constant-ish work whether or not the user exists (mitigates enumeration).
@@ -36,6 +46,7 @@ export async function login(
   const ok = await verifyPassword(password, hashToCheck);
 
   if (!user || !user.isActive || !ok) {
+    throttle.recordFailure(acctKey);
     await audit({
       clinicId,
       action: 'auth.login',
@@ -45,6 +56,8 @@ export async function login(
     });
     throw new UnauthorizedError('Invalid credentials');
   }
+
+  throttle.recordSuccess(acctKey);
 
   const token = generateToken();
   const tokenHash = hashToken(token);

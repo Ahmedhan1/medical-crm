@@ -13,6 +13,65 @@ Does NOT build Agent 2–4 domain features.
 all done. Full suite green (698 tests / 53 files); 25 migrations apply from empty
 → 91 tables; typecheck + build clean; integrated backup→restore verified.
 
+## Integration Gate I-6 (2026-09-16) — consolidation on I-5 baseline
+Baseline `integration/medcore-v1` @ `f369d83` (I-5). Integrated ONLY the three
+verified deliverables, in order Clinical → AI → Pharma, by cherry-pick (all three
+branches had been rebased onto the `48a456b` merge-base, so cherry-pick applied
+each clean increment onto `f369d83`; zero conflicts):
+- **Agent 2** (`9f5a0f6`): clinical batch — procedures (0111), care plans (0112),
+  referral SLA/expiry detection (0113), follow-up completion/cancellation events,
+  and a pure internal FHIR mapping foundation (no endpoint, no migration).
+- **Agent 3** (`16a1980`): AI & automation batch (A3-E5) — structured output
+  schemas + versioning, eval harness, AI observability (0204), read-only AI tools,
+  receptionist intents, automation dry-run simulation. AI writes stay confined to
+  AI tables; read-only tools verified side-effect-free.
+- **Agent 4** (`9abba3e` code + `c3dca78` docs): governed aggregate reporting and
+  export (batch item 6) — export-policy core, report repo/service, export receipt
+  ledger `pharma_export_log` (0312, append-only), per-report permission +
+  territory scope + row caps.
+**WIP intentionally NOT merged (directive):** Agent 4 branches `a4/hco`
+(0307/0308), `a4/field-ma` (0309/0310), `a4/intel-lifecycle` (0311) — unverified
+schema-only work. Confirmed absent from the tree; the pharma range keeps a
+deliberate 0307–0311 gap reserved for them. Migration 0312 and all reporting code
+were verified to reference only baseline pharma/intelligence tables (no WIP-table
+dependency), so the gap is safe.
+Gate result: **30 migrations apply from empty → 97 tables**; **831 tests / 65
+files green**; typecheck + build clean; backup → verify → restore into a fresh DB
+round-trips the full 97-table schema. Security audits all clean: no AI/pharma/
+automation module reads or writes clinical tables; no cross-workstream imports;
+AI writes only AI tables; pharma reporting reads only pharma/intelligence tables;
+CCR-004 governed clinical read stays fail-closed (501); export authorization +
+territory scope enforced; PHI absent from logs and event payloads; every new
+table carries `clinic_id` and the export ledger is append-only. CCR ledger: no new
+CCR required and none bypassed (Agent 2 recorded a review note only); no id
+collisions this gate. No new features implemented; no new dependency.
+
+## Platform Hardening Batch (I-5, 2026-09-16)
+Six platform tasks, executed inline (all touch platform-owned files; three edit
+`server.ts`, and all tests share one Postgres — parallel worktrees would race,
+so sequential was safer):
+1. **Auth/session hardening** — in-memory per-account lockout + per-IP login
+   rate limit (`modules/auth/throttle.ts`), fail-closed, generic messages
+   (no enumeration), 429 + Retry-After. Wired into `login`. Config-driven.
+2. **DB/API error redaction (F-06 closed)** — central pino `err` serializer in
+   `server.ts` logs type/code/message/stack only; drops pg `detail`/`where`/
+   `parameters` (PHI). Clients still get the generic 500 envelope.
+3. **CI** — `.github/workflows/ci.yml`: typecheck, build, migrate-from-empty,
+   full suite (governance/security/backup/PDF) on a Postgres service + the
+   Playwright image (real PDF regression). `npm audit` informational.
+4. **Observability** — `/metrics` (bounded-cardinality, PHI-safe counters via an
+   onResponse hook) + `/health/detailed` enriched with pool stats + last-backup.
+5. **PDF/BOX** — bundled DejaVu (Latin) alongside Amiri for deterministic,
+   offline cross-box rendering; determinism test; `MEDCORE-BOX.md` Chromium/font
+   packaging audit.
+6. **Backup CCR-008 gap** — audited: no document bytes exist yet (metadata-only),
+   so nothing to back up; recorded the clean file-store→backup integration path;
+   implementation deferred (safe).
+Verified: full suite green, typecheck + build clean, migrations from empty,
+security/PHI/observability tests. No new runtime dependency except
+`playwright-core` (already in the governance allowlist from Phase 3); no new
+migration. No CCRs opened; CCR-008 design extended.
+
 ## Integration Gate I-4 (2026-09-16) — consolidation
 Re-audited all agent branches (they had advanced; Agent 3 had force-pushed a
 rebase). Integrated the latest valid work, preserving every ownership boundary:

@@ -17,6 +17,8 @@ import { listPatientDocuments, type DocumentReference } from './documents.servic
 import { listEpisodes, type TreatmentEpisode } from './episodes.service.js';
 import { listFollowUpsForPatient, type FollowUp } from './followups.service.js';
 import { listPatientReferrals, type Referral } from './referrals.service.js';
+import { listPatientProcedures, type Procedure } from './procedures.service.js';
+import { listPatientCarePlans, type CarePlan } from './care-plans.service.js';
 import { listPreviousVisits, type PreviousVisit } from './workspace.service.js';
 import { todayIso } from './dates.js';
 
@@ -54,6 +56,8 @@ export interface Patient360 {
   treatmentEpisodes?: TreatmentEpisode[];
   openFollowUps?: FollowUp[];
   referrals?: Referral[];
+  procedures?: Procedure[];
+  carePlans?: CarePlan[];
 }
 
 /** Best-effort section load: a section the caller may see, or undefined. */
@@ -87,6 +91,8 @@ export async function getPatient360(
     treatmentEpisodes,
     openFollowUps,
     referrals,
+    procedures,
+    carePlans,
   ] = await Promise.all([
     section(principal, Permission.PATIENT_IDENTIFIER_READ, () =>
       listIdentifiers(principal, patient.id),
@@ -122,6 +128,12 @@ export async function getPatient360(
     section(principal, Permission.REFERRAL_READ, () =>
       listPatientReferrals(principal, patient.id, 20),
     ),
+    section(principal, Permission.PROCEDURE_READ, () =>
+      listPatientProcedures(principal, patient.id, { limit: 20 }),
+    ),
+    section(principal, Permission.CARE_PLAN_READ, () =>
+      listPatientCarePlans(principal, patient.id, { limit: 20 }),
+    ),
   ]);
 
   // Reading a full patient summary is a high-value access; record it (no PHI).
@@ -132,7 +144,7 @@ export async function getPatient360(
     outcome: 'success',
     targetType: 'patient',
     targetId: patient.id,
-    metadata: { sections: sectionNames({ identifiers, contacts, allergies, recentObservations, upcomingAppointments, recentVisits, activePrescriptions, documents, treatmentEpisodes, openFollowUps, referrals }) },
+    metadata: { sections: sectionNames({ identifiers, contacts, allergies, recentObservations, upcomingAppointments, recentVisits, activePrescriptions, documents, treatmentEpisodes, openFollowUps, referrals, procedures, carePlans }) },
   });
 
   const view: Patient360 = {
@@ -160,6 +172,8 @@ export async function getPatient360(
   if (treatmentEpisodes !== undefined) view.treatmentEpisodes = treatmentEpisodes;
   if (openFollowUps !== undefined) view.openFollowUps = openFollowUps;
   if (referrals !== undefined) view.referrals = referrals;
+  if (procedures !== undefined) view.procedures = procedures;
+  if (carePlans !== undefined) view.carePlans = carePlans;
   return view;
 }
 

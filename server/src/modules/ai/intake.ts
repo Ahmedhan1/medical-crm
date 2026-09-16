@@ -5,6 +5,8 @@ import { Permission } from '../governance/permissions.js';
 import { authorizeAiRequest } from './gateway.js';
 import { insertDraft, type AIDraft } from './drafts.js';
 import { recordGeneration, recordGenerationPool } from './observability.js';
+import { validateAiOutput } from './schema/output-schemas.js';
+import { SCHEMA_VERSIONS, PROMPT_VERSIONS } from './schema/versions.js';
 
 /**
  * AI voice/text → structured intake DRAFT (blueprint §12; task A004).
@@ -75,6 +77,32 @@ export async function extractIntakeToDraft(
   }
   const latencyMs = Date.now() - started;
 
+  // Structured-output gate: a malformed/unsafe AI output is REJECTED and never
+  // becomes a draft (review-first preserved). Validation issues are PHI-safe.
+  const validation = validateAiOutput('intake_extraction', extraction);
+  if (!validation.ok) {
+    await recordGenerationPool({
+      clinicId: principal.clinicId,
+      kind: 'intake',
+      provider: provider.id,
+      model: provider.model,
+      status: 'failed',
+      inputChars: text.length,
+      latencyMs,
+      errorCode: 'invalid_ai_output',
+      failureStage: 'validate',
+      validationStatus: 'invalid',
+      schemaVersion: validation.schemaVersion,
+      promptVersion: PROMPT_VERSIONS.intake_extraction,
+      createdBy: principal.userId,
+      dataClass: auth.classification,
+      policyDecision: auth.decision,
+      providerTier: auth.providerTier,
+      requestId: auth.requestId,
+    });
+    throw new ValidationError('AI produced an invalid intake output', { issues: validation.issues });
+  }
+
   return withTransaction(async (client) => {
     const draft = await insertDraft(client, {
       clinicId: principal.clinicId,
@@ -94,6 +122,10 @@ export async function extractIntakeToDraft(
       provider: provider.id,
       model: provider.model,
       status: 'succeeded',
+      validationStatus: 'valid',
+      schemaVersion: SCHEMA_VERSIONS.intake_extraction,
+      promptVersion: PROMPT_VERSIONS.intake_extraction,
+      attempt: 1,
       inputChars: text.length,
       outputChars: JSON.stringify(extraction.fields).length,
       sourceCount: extraction.citations.length,

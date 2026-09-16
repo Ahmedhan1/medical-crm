@@ -247,3 +247,35 @@ append-only, authz (ADMIN-only), and a 16-point RED-TEAM.
 Structured-output schema validation, prompt/output governance, and BOUNDED agents
 (Reception, Scheduling, Documentation…) that call `executeAiAction`. No autonomous
 execution until the kernel is proven and integrated.
+
+---
+
+## Increment E5 — Parallel AI & Automation batch (migration 0204)
+
+Built on `integration/medcore-v1` @ 48a456b. Six items; three independent
+pure-logic slices (structured-output schemas, automation simulation, AI-eval
+fixtures/scoring) were produced by isolated worktree sub-agents (typecheck-only,
+no shared DB — races avoided), then cherry-picked and consolidated here; the
+coupled pieces were built inline.
+
+- **Structured AI output** (`modules/ai/schema/**`): versioned strict zod schemas +
+  `validateAiOutput` (PHI-safe issues). `intake.ts`/`summaries.ts` reject malformed
+  output (never a draft) and tag `ai_generation` with validation status + versions.
+- **AI evaluation** (`modules/ai/eval/**`, `eval.service.ts`): deterministic
+  PHI-free fixtures + pure scoring + local-provider runner; `ai_eval_run`
+  append-only ledger (ids + numbers only). `POST /ai/eval/run`, `GET /ai/eval/runs`.
+- **AI observability**: `ai_generation` + `attempt/retryable/failure_stage/
+  validation_status/schema_version/prompt_version` (labels only, no PHI).
+- **Bounded read-only AI** (`modules/ai/kernel/readonly-tools.ts`): `clinic.info.read`,
+  `automation.runs.read`, `messaging.status.read` — clinic-scoped aggregates, no
+  mutation, executed only through `executeAiAction` (Action Guard + classification
+  + tenant policy). Clinical PHI reads stay authorization-only (need a CCR).
+- **AI Receptionist** (`modules/ai/receptionist/**`): deterministic admin intent +
+  routing; clinical-first escalation (never answers a medical question); non-mutating;
+  governed by the E3 gateway; text never stored. `POST /ai/receptionist`.
+- **Automation simulation** (`modules/automation/simulate.ts`): pure dry-run;
+  `POST /automations/:id/simulate` — no sends, no mutations.
+
+Permissions added (ADMIN-only unless noted): `ai:receptionist` (also RECEPTION),
+`ai:eval-run`. Safety invariants (E4 guard, human confirmation, consent, quiet
+hours, idempotency/retry, tenant isolation, no Pharma access) preserved and green.

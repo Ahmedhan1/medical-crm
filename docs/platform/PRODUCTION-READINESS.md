@@ -11,19 +11,19 @@ evidence. "Partial" = implemented + tested but incomplete for full production.
 | **Backup** | Ready | `createBackup` (pg_dump custom + checksum + optional AES-256-GCM); round-trip + CLI tested | Low | A1 |
 | **Restore** | Ready | tested restore into a fresh DB — migrations, tables, a clinical row, RBAC, triggers, indexes all survive; CLI restore + live-restore refusal | Low | A1 |
 | Backup security | Ready | creds via PG* env (never argv); no download/restore HTTP endpoint; artifacts gitignored; PHI-free ledger; audited | Low | A1 |
-| Authentication | Partial | scrypt+pepper hashing, opaque hashed sessions, logout revocation, enumeration-resistant login | No rate-limiting / lockout yet (Priority 3) | A1 |
+| Authentication | Ready | scrypt+pepper, opaque hashed sessions, logout revocation, enumeration-resistant login, **per-account lockout + per-IP login rate limit (fail-closed, 429+Retry-After)** | in-memory throttle (single-box); multi-instance needs a shared store | A1 |
 | Authorization (RBAC) | Ready | per-permission catalog; ADMIN=all; pharma SoD roles; negative-authz tests | Low | A1 |
 | Tenant isolation | Ready | every domain table `clinic_id`; governance test; cross-clinic 404 tests | Low | A1 |
-| PHI logging | Partial | global query-string redaction + header redaction + serializer test | pg error `detail` leakage not yet centrally redacted (Priority 3/§10) | A1 |
+| PHI logging | Ready | global query-string redaction + header redaction + **central error serializer strips pg detail/where/parameters** (F-06 closed); serializer + audit tests | A1 |
+| Observability | Ready (core) | `/health` (liveness), `/health/detailed` (db latency, migration count, pool stats, backup status), `/metrics` (bounded-cardinality, PHI-safe) | tracing/provider-health later | A1 |
+| CI | Ready | `.github/workflows/ci.yml`: typecheck, build, migrate-from-empty, full suite (governance/security/backup/PDF) on Postgres + Playwright image | wire required-checks in repo settings | A1 |
 | PDF / Latin | Ready | Agent 2 base-14 renderer (unchanged, default) | Low | A2 |
 | PDF / Arabic (RTL) | Implemented — pending visual sign-off | Chromium+Amiri(OFL) renderer; 7 tests: glyph ink + Unicode round-trip + no `?` + multi-page; sample sent for human sign-off | flips to Ready on sign-off; adds Chromium to BOX (Phase 11) | A1 |
-| Observability | Partial | `/health` (liveness) + `/health/detailed` (DB latency, migration count, uptime) | metrics/provider health pending (§16) | A1 |
 | Error contract | Partial | consistent `{error:{code,message,details}}`; internals never leaked | no `request_id` yet (§11) | A1 |
 | Configuration | Ready | zod-validated fail-fast config incl. backup; prod refuses placeholder pepper | Low | A1 |
 | Frontend | Planned | none exists | n/a until Priority 5 | A1 |
 | Design system | Planned | none (no client yet) | n/a until Priority 6 | A1 |
 | FHIR | Planned | naming-aligned only | Priority 7 | A1 |
-| CI | Planned | governance/security gates run locally only | drift risk until wired (Priority 9) | A1 |
 | Performance | Partial | high-value indexes added; no load testing | Priority 10 | A1 |
 | Deployment / BOX | Planned | single-host run works; no packaging | Priority 11 | A1 |
 | Upgrade | Partial | forward-only migrate-on-boot; backup-before-upgrade now possible | rollback flow not automated (Priority 12) | A1 |
@@ -53,9 +53,33 @@ and validates the numbers on its own hardware.
 | tenant isolation / RBAC / PHI-leak tests | PASS |
 | backup test / restore test | PASS (this phase) |
 | Arabic PDF test | PASS — implemented (Chromium+Amiri); 7 tests green; visual sign-off pending |
-| auth security test (rate-limit/lockout) | not yet (Priority 3) |
+| auth security test (rate-limit/lockout) | PASS — lockout + IP rate limit tested; error-redaction (pg detail) tested |
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |
+
+## Consolidated baseline I-6 (2026-09-16) — current source of truth
+
+On `integration/medcore-v1`, on the I-5 hardening baseline (`f369d83`). Integrated
+the three verified workstream deliverables (Clinical `9f5a0f6`, AI/automation
+`16a1980`, Pharma reporting/export `9abba3e`+`c3dca78`) by clean cherry-pick.
+
+- **Migrations:** 30 apply from empty in order (0001 / 0100–0113 / 0200–0204 /
+  0300–0306 / **0312** / 0900–0901) → **97 tables**. The pharma range keeps a
+  deliberate **0307–0311 gap** reserved for Agent 4's unverified WIP (HCO master,
+  field force, medical affairs, intelligence lifecycle) — those branches were
+  **NOT merged**.
+- **Tests:** **831 / 65 files green**; typecheck + build clean.
+- **Integrated recovery (§6):** backup → verify (checksum + archive) → restore into
+  a fresh DB round-trips all 97 tables, including the new `procedure`, `care_plan`,
+  `ai_eval_run`, and `pharma_export_log`.
+- **Security (verified this gate):** no AI/pharma/automation module reads or writes
+  clinical tables; no cross-workstream imports; AI writes only AI-owned tables;
+  pharma reporting reads only pharma/intelligence tables; CCR-004 governed clinical
+  read stays fail-closed (501); export enforces per-report permission + territory
+  scope + row caps and writes an append-only receipt (`pharma_export_log`); PHI
+  absent from logs and event payloads; every new table carries `clinic_id`.
+- **CCRs:** no new CCR required, none bypassed, no id collisions (Agent 2 recorded a
+  clinical-batch review note only). CCR-004 fail-closed, CCR-007/CCR-010 unchanged.
 
 ## Consolidated baseline I-4 (2026-09-16) — current source of truth
 

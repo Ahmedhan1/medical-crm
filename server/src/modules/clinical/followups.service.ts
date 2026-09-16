@@ -205,6 +205,9 @@ export async function closeFollowUp(
     );
     const followUp = mapFollowUp(rows[0]!);
 
+    // Keep the backward-compatible FOLLOW_UP_CLOSED, and add an unambiguous
+    // completion/resolution event so Agent 3 can distinguish a fulfilled
+    // follow-up from an abandoned one without inspecting the payload.
     await emitEvent(client, {
       clinicId: principal.clinicId,
       type: EventType.FOLLOW_UP_CLOSED,
@@ -212,6 +215,19 @@ export async function closeFollowUp(
       subjectId: followUp.id,
       actorId: principal.userId,
       payload: { patientId: existing.patient_id, status: followUp.status },
+    });
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: followUp.status === 'completed'
+        ? EventType.FOLLOW_UP_COMPLETED
+        : EventType.FOLLOW_UP_CANCELLED,
+      subjectType: 'follow_up',
+      subjectId: followUp.id,
+      actorId: principal.userId,
+      payload: {
+        patientId: existing.patient_id,
+        ...(followUp.completedEncounterId ? { encounterId: followUp.completedEncounterId } : {}),
+      },
     });
     await auditTx(client, {
       clinicId: principal.clinicId,

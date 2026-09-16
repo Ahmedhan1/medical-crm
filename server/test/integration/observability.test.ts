@@ -40,4 +40,32 @@ describe('observability (Phase 1)', () => {
     const res = await app.inject({ method: 'GET', url: '/health/detailed' });
     expect(res.statusCode).toBe(200);
   });
+
+  it('GET /health/detailed includes pool + backup readiness (Task 4)', async () => {
+    const body = (await app.inject({ method: 'GET', url: '/health/detailed' })).json();
+    expect(body.checks.pool).toBeDefined();
+    expect(typeof body.checks.pool.total).toBe('number');
+    expect(typeof body.checks.pool.idle).toBe('number');
+    expect(typeof body.checks.pool.waiting).toBe('number');
+    expect(body.checks.backup).toBeDefined(); // present (possibly empty), never throws
+  });
+
+  it('GET /metrics exposes bounded-cardinality counters with no PHI', async () => {
+    // Generate a couple of requests so counters are non-empty.
+    await app.inject({ method: 'GET', url: '/health' });
+    await app.inject({ method: 'GET', url: '/does-not-exist' });
+    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(typeof body.errorsTotal).toBe('number');
+    const keys = Object.keys(body.requestsTotal);
+    expect(keys.length).toBeGreaterThan(0);
+    // Every label key is "METHOD /route/template Nxx" — bounded, no ids/PHI.
+    for (const k of keys) {
+      expect(k).toMatch(/^[A-Z]+ \S+ [1-5]xx$/);
+      expect(k).not.toMatch(/patient|mrn|phone|diagnosis|\d{6,}/i);
+    }
+    // The 404 was bucketed as 'unmatched', not stored as a concrete path.
+    expect(keys.some((k) => k.includes('/does-not-exist'))).toBe(false);
+  });
 });

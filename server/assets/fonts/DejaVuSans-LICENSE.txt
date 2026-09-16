@@ -1,0 +1,11 @@
+DejaVu Fonts — License (summary)
+
+DejaVu fonts are based on the Bitstream Vera Fonts and are freely
+redistributable under a permissive, non-copyleft license. Bitstream Vera and
+the DejaVu changes may be freely used, embedded in documents, and redistributed;
+the fonts may not be sold on their own. Full text:
+https://dejavu-fonts.github.io/License.html
+
+Vendored here (DejaVuSans.ttf) to give MEDCORE's Arabic/RTL PDF renderer a
+deterministic, offline Latin face (Amiri covers Arabic only). No runtime
+download; embedded as a data URI at render time.

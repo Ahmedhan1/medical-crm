@@ -172,7 +172,7 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-3 | Triage & extensible observations | **DONE** (0106) |
 | CP-4 | Clinical documentation & template engine | TODO |
 | CP-5 | Diagnosis / terminology abstraction | PARTIAL — coded diagnosis exists (0101); terminology service not built |
-| CP-6 | Procedures, sessions, protocols | TODO |
+| CP-6 | Procedures | **DONE** (0111, immutable completed facts) |
 | CP-7 | Prescription platform | PARTIAL — issue/cancel/immutability exist (0103); refills, substitution, supersede not built |
 | CP-8 | Allergy & safety engine | **DONE** (0107) |
 | CP-9 | Document management (DocumentReference) | **DONE** (0108, metadata layer; bytes = CCR-008) |
@@ -312,6 +312,42 @@ contract in this repository is SCREAMING_SNAKE (`APPOINTMENT_SCHEDULED`), and
 Agent 3's automation engine matches `automation_rule.event_type` against it as a
 plain string. Renaming would silently break every existing rule, so the existing
 convention is kept. Raised here rather than changed unilaterally.
+
+## Parallel Clinical Expansion Batch (procedures, care plans, FHIR, hardening)
+
+Delivered on `agent2/clinical-batch-episodes` from integration `48a456b`.
+
+- **Treatment episodes (audit + reach).** The episode-of-care lifecycle already
+  exists (0102: start / response / end; active/completed/discontinued, timeline +
+  360 integrated). This batch extends its REACH: `procedure.episode_id` and
+  `care_plan.episode_id` now tie procedures and care plans into an episode,
+  validated across merge lineage. No rewrite of the stable episode module.
+- **Procedures (0111).** FHIR Procedure-aligned, doctor-owned. A completed
+  procedure is an IMMUTABLE clinical fact — a row trigger locks its content and
+  permits only `completed → entered_in_error` (audit-safe void); DELETE blocked.
+  Terminology (code+system) passed through, never invented. Timeline + workspace
+  + 360.
+- **Care plans (0112).** CarePlan + goals + interventions with explicit,
+  deterministic statuses; progress is always an explicit status change, never
+  inferred. Authoring is doctor-owned (`care_plan:write`); recording progress is
+  open to nurses (`care_plan:progress`). Episode-linked; timeline + 360.
+- **Referral hardening (0113).** SLA/expiry DETECTION: a read-model classifying
+  open referrals (within_sla/approaching/breached) and an idempotent sweep that
+  publishes `REFERRAL_SLA_BREACHED` at most once per referral. It NEVER
+  auto-transitions status — expiry stays an explicit human decision; the
+  reviewed lifecycle allow-list is unchanged and safe.
+- **Follow-up completion/resolution.** The close path now emits
+  `FOLLOW_UP_COMPLETED` / `FOLLOW_UP_CANCELLED` (alongside the backward-compatible
+  `FOLLOW_UP_CLOSED`) so Agent 3 gets an unambiguous resolution signal. Detection
+  stays read-only and idempotent; it mutates no clinical fact.
+- **FHIR mapping foundation.** Pure, dependency-free `modules/clinical/fhir`
+  mappers (Patient, Encounter, Observation, AllergyIntolerance, MedicationRequest,
+  Condition, ServiceRequest, Procedure, CarePlan) — an INTERNAL contract, no
+  product FHIR endpoint, no migration, unit-tested. Codes passed through verbatim.
+
+Automation boundary preserved: Clinical Core publishes facts/events; it imports
+no automation/messaging/AI/pharma module and sends nothing. PHI stays in the
+record — event payloads carry ids, status and controlled vocab only.
 
 ## Next tasks
 CP-6 (procedures/sessions/protocols) or CP-12 (packages), then CP-14 (clinical

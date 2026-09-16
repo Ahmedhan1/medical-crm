@@ -1,5 +1,6 @@
 import { DataClass, type DataClass as DataClassType } from '../classification.js';
 import { RiskClass } from './risk.js';
+import { READONLY_DATA_TOOLS } from './readonly-tools.js';
 
 /**
  * AI Tool Registry (E4).
@@ -160,6 +161,7 @@ function seedBuiltins(): void {
   registry.clear();
   for (const t of BUILTIN_EXECUTABLE) registry.set(t.id, t);
   for (const t of BUILTIN_READONLY_UNIMPLEMENTED) registry.set(t.id, t);
+  for (const t of READONLY_DATA_TOOLS) registry.set(t.id, t); // E5 bounded read-only data tools
   for (const id of PROHIBITED_CLINICAL_TOOL_IDS) registry.set(id, prohibited(id));
 }
 seedBuiltins();

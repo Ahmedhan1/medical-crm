@@ -4,7 +4,9 @@ import { ValidationError } from '../../domain/errors.js';
 import {
   createReferral,
   getReferral,
+  getReferralSlaDetection,
   listReferrals,
+  runReferralSlaSweep,
   transitionReferral,
 } from '../../modules/clinical/referrals.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
@@ -28,6 +30,16 @@ export async function referralRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/referrals', async (req, reply) => {
     return reply.send({ referrals: await listReferrals(principalOf(req), req.query) });
+  });
+
+  // SLA / expiry detection: a read-only worklist classifying open referrals.
+  app.get('/referrals/sla', async (req, reply) => {
+    return reply.send(await getReferralSlaDetection(principalOf(req), req.query));
+  });
+
+  // Idempotent SLA sweep: publishes REFERRAL_SLA_BREACHED; never auto-expires.
+  app.post('/referrals/sla/sweep', async (req, reply) => {
+    return reply.send(await runReferralSlaSweep(principalOf(req)));
   });
 
   app.get('/referrals/:id', async (req, reply) => {

@@ -48,12 +48,15 @@ export function atLeastAsSensitive(a: DataClass, b: DataClass): boolean {
  * classification is intrinsic to the capability, not guessed from the text. New
  * capabilities must declare their input class here rather than defaulting.
  */
-export type AiCapability = 'intake_extraction' | 'summary' | 'transcription';
+export type AiCapability = 'intake_extraction' | 'summary' | 'transcription' | 'receptionist';
 
 const CAPABILITY_INPUT_CLASS: Record<AiCapability, DataClass> = {
   intake_extraction: DataClass.PHI, // free-text symptoms/history about a patient
   summary: DataClass.PHI, // longitudinal patient history
   transcription: DataClass.PHI, // clinical voice note
+  // A patient/staff message to the administrative receptionist may contain PHI,
+  // so it is classified PHI and governed by the same gateway + tenant policy.
+  receptionist: DataClass.PHI,
 };
 
 export function classifyCapabilityInput(capability: AiCapability): DataClass {

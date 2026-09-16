@@ -1,11 +1,13 @@
 import { getPool, withTransaction } from '../../db/pool.js';
-import { NotFoundError } from '../../domain/errors.js';
+import { NotFoundError, ValidationError } from '../../domain/errors.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { Permission } from '../governance/permissions.js';
 import { authorizeAiRequest } from './gateway.js';
 import type { SourceRecord } from './ai.types.js';
 import { insertDraft, type AIDraft } from './drafts.js';
-import { recordGeneration } from './observability.js';
+import { recordGeneration, recordGenerationPool } from './observability.js';
+import { validateAiOutput } from './schema/output-schemas.js';
+import { SCHEMA_VERSIONS, PROMPT_VERSIONS } from './schema/versions.js';
 
 /**
  * AI longitudinal summaries (blueprint §13, §27; task A005).
@@ -75,6 +77,31 @@ export async function generatePatientSummary(
   const result = await provider.summarize({ sources, kind: 'summary' });
   const latencyMs = Date.now() - started;
 
+  // Structured-output gate: reject a malformed/unsafe summary — never persist it.
+  const validation = validateAiOutput('summary', result);
+  if (!validation.ok) {
+    await recordGenerationPool({
+      clinicId: principal.clinicId,
+      kind: 'summary',
+      provider: provider.id,
+      model: provider.model,
+      status: 'failed',
+      inputChars: sources.reduce((n, s) => n + s.text.length, 0),
+      latencyMs,
+      errorCode: 'invalid_ai_output',
+      failureStage: 'validate',
+      validationStatus: 'invalid',
+      schemaVersion: validation.schemaVersion,
+      promptVersion: PROMPT_VERSIONS.summary,
+      createdBy: principal.userId,
+      dataClass: auth.classification,
+      policyDecision: auth.decision,
+      providerTier: auth.providerTier,
+      requestId: auth.requestId,
+    });
+    throw new ValidationError('AI produced an invalid summary output', { issues: validation.issues });
+  }
+
   return withTransaction(async (client) => {
     const draft = await insertDraft(client, {
       clinicId: principal.clinicId,
@@ -94,6 +121,10 @@ export async function generatePatientSummary(
       provider: provider.id,
       model: provider.model,
       status: 'succeeded',
+      validationStatus: 'valid',
+      schemaVersion: SCHEMA_VERSIONS.summary,
+      promptVersion: PROMPT_VERSIONS.summary,
+      attempt: 1,
       inputChars: sources.reduce((n, s) => n + s.text.length, 0),
       outputChars: result.summary.length,
       sourceCount: sources.length,

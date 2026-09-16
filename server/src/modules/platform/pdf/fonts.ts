@@ -22,19 +22,32 @@ const ASSETS = join(here, '..', '..', '..', '..', 'assets', 'fonts');
 
 let cachedFace: string | null = null;
 
-/** An `@font-face` CSS block with the Amiri woff2 embedded as a data URI. */
+/**
+ * `@font-face` blocks with BOTH bundled faces embedded as data URIs, so PDF
+ * rendering is deterministic and offline regardless of the host's installed
+ * fonts: Amiri (Arabic) + DejaVu Sans (Latin, since the Amiri subset carries no
+ * Latin glyphs). Cached after first read.
+ */
 export function arabicFontFaceCss(): string {
   if (cachedFace) return cachedFace;
-  const b64 = readFileSync(join(ASSETS, 'Amiri-Arabic.woff2')).toString('base64');
+  const amiri = readFileSync(join(ASSETS, 'Amiri-Arabic.woff2')).toString('base64');
+  const dejavu = readFileSync(join(ASSETS, 'DejaVuSans.ttf')).toString('base64');
   cachedFace = `@font-face{
   font-family:'Amiri';
-  font-style:normal;
-  font-weight:400;
-  font-display:block;
-  src:url(data:font/woff2;base64,${b64}) format('woff2');
+  font-style:normal;font-weight:400;font-display:block;
+  src:url(data:font/woff2;base64,${amiri}) format('woff2');
+}
+@font-face{
+  font-family:'MedcoreLatin';
+  font-style:normal;font-weight:400;font-display:block;
+  src:url(data:font/ttf;base64,${dejavu}) format('truetype');
 }`;
   return cachedFace;
 }
 
-/** The font stack documents put Arabic-capable Amiri first, Latin fallback after. */
-export const DOCUMENT_FONT_STACK = `'Amiri','DejaVu Sans','Liberation Sans',sans-serif`;
+/**
+ * Document font stack: Arabic resolves to the bundled Amiri, Latin to the
+ * bundled DejaVu (MedcoreLatin); the generic `sans-serif` is only a last resort.
+ * Both bundled faces make Latin AND Arabic deterministic across boxes.
+ */
+export const DOCUMENT_FONT_STACK = `'Amiri','MedcoreLatin',sans-serif`;

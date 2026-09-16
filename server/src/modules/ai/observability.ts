@@ -26,6 +26,13 @@ export interface GenerationRecordInput {
   policyDecision?: string | null;
   providerTier?: string | null;
   requestId?: string | null;
+  // Failure/retry + structured-output telemetry (E5; labels/versions only, no PHI).
+  attempt?: number | null;
+  retryable?: boolean | null;
+  failureStage?: 'transcribe' | 'generate' | 'validate' | null;
+  validationStatus?: 'valid' | 'invalid' | 'skipped' | null;
+  schemaVersion?: string | null;
+  promptVersion?: string | null;
 }
 
 export async function recordGeneration(
@@ -36,8 +43,9 @@ export async function recordGeneration(
     `INSERT INTO ai_generation
        (clinic_id, draft_id, kind, provider, model, status, input_chars, output_chars,
         source_count, latency_ms, error_code, created_by,
-        data_class, policy_decision, provider_tier, request_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        data_class, policy_decision, provider_tier, request_id,
+        attempt, retryable, failure_stage, validation_status, schema_version, prompt_version)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
     [
       input.clinicId,
       input.draftId ?? null,
@@ -55,6 +63,12 @@ export async function recordGeneration(
       input.policyDecision ?? null,
       input.providerTier ?? null,
       input.requestId ?? null,
+      input.attempt ?? null,
+      input.retryable ?? null,
+      input.failureStage ?? null,
+      input.validationStatus ?? null,
+      input.schemaVersion ?? null,
+      input.promptVersion ?? null,
     ],
   );
 }

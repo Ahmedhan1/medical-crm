@@ -395,6 +395,33 @@ regulatory submission, any clinical write, or any AI that classifies autonomousl
   live outside Postgres, so the DB backup does not yet cover them — the file
   store must ship with its own backup coverage before documents are used for
   primary storage in production.
+- **Backup-gap audit (Agent 1 / Integration I-5):** verified — **no document
+  bytes exist anywhere today.** `document_reference` (0108) stores metadata only;
+  `storage_key` is an opaque, externally-produced pointer and no platform
+  file-store has been implemented. There is therefore nothing for the backup
+  engine to miss right now, and implementing blob backup would be speculative
+  (no store to snapshot) — so it is **DEFERRED** (per the batch rule "implement
+  only if it can be done safely"). **Clean integration path when the file-store
+  lands:** (1) the store writes tenant-partitioned, encrypted-at-rest blobs under
+  a single configured root; (2) each blob is content-addressed by its
+  `checksum_sha256` (already a column) so backup and verify are integrity-checked;
+  (3) `createBackup` gains a step that snapshots that root **atomically with**
+  (immediately after) the pg_dump, recording the blob-set checksum in
+  `backup_run`; (4) `verifyBackup`/`restoreBackup` extend to the blob set; (5) the
+  DB dump is the source of truth for which `storage_key`s must exist, so restore
+  can detect missing/orphaned blobs. This keeps the storage service out of the
+  auth path and adds no cross-workstream coupling. Tracked for the file-storage
+  phase; no code this batch.
+
+### CCR review — Clinical Expansion Batch (Procedures/CarePlans/FHIR/Referral SLA/Follow-up)
+- Reviewed CCR-001 (medication-master ref), CCR-004 (governed aggregate read,
+  fail-closed), CCR-007 (drug↔allergen coding). **No new CCR required and none
+  bypassed.** The FHIR MedicationRequest/AllergyIntolerance/Condition/Procedure
+  mappers pass any coded reference (medicationRef, substanceRef, diagnosis/
+  procedure code+system) through VERBATIM and emit text-only when no code
+  exists — they invent no drug/allergen codes and never read the Drug Master.
+  CCR-004's fail-closed pharma/intelligence read path is untouched (this batch
+  adds no clinical→pharma export). CCR-001/007 remain PROPOSED/deferred.
 
 ### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
 - Status: PROPOSED
