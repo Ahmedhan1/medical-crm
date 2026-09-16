@@ -171,6 +171,13 @@ None.
   `docs/workstreams/clinical-core.md`; it needs no shared-file change.
 
 ## Known Issues / Discrepancies
+- **One unreproduced test failure.** A single `npm test` run (immediately after
+  C006 landed) reported `1 failed | 127 passed`; the summary was truncated
+  before I captured which test. Eight consecutive full runs since have been
+  green (128/128), so I could not reproduce or diagnose it. Recording it rather
+  than assuming it was environmental — if it recurs, the suspects are the
+  30s hook/test timeout under load and the two explicit pool connections held
+  by the queue concurrency test against a `max: 10` pool.
 - **PDF text is Latin-1 only.** The renderer uses the base-14 Helvetica faces
   with WinAnsi encoding and embeds no font, so characters outside Latin-1 —
   Arabic patient names in particular, which matters for the Egypt deployment —
