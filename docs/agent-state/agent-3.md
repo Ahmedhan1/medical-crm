@@ -1,18 +1,51 @@
 # Agent 3 — AI / Automation / WhatsApp — State
 
 ## Current Status
-Base: `integration/medcore-v1` (rebased onto `97f1680` — includes P2 backup engine;
-C001–C007, A001–A005, P001–P006, I001, platform-P1/P2 all integrated). Agent-3
-expansion increments built on top:
-- **E2** — Scheduling & Time Engine + engine hardening + comms-quality (Phases 1, 3, 38).
-- **E3** — AI Safety & Governance Layer, the front of the AI chain (Phases 3, 4, 5, 16).
-- **E4** — AI Action Security Kernel, the fail-closed AI→action boundary.
+Base: `integration/medcore-v1` @ `48a456b` (I-4 consolidated baseline; my E2/E3/E4 are
+already integrated there). Agent-3 expansion increments:
+- **E2** — Scheduling & Time Engine + engine hardening + comms-quality.
+- **E3** — AI Safety & Governance Layer (classification, PHI/cloud policy, provider gateway).
+- **E4** — AI Action Security Kernel (fail-closed AI→action boundary).
+- **E5** — Parallel AI & Automation expansion batch (this increment).
 
-A001–A005 remain DONE (A004 review-first portion; clinical auto-promotion DEFERRED
-per CCR-003). See the increment reports below.
+A001–A005 remain DONE. Verification (in `server/`): `npm run typecheck` clean ·
+`npm run build` clean · migrations `0001…0204, 0300…0306, 0900, 0901` apply from empty.
 
-Verification (in `server/`): `npm run typecheck` clean · `npm run build` clean ·
-migrations `0001…0203, 0300…0304, 0900, 0901` apply in order.
+## Increment E5 — Parallel AI & Automation batch (migration 0204)
+Six items; three independent pure-logic slices were built in isolated worktree
+sub-agents (typecheck-only, no shared DB) and consolidated here; the coupled/
+shared-wiring pieces were built inline. No Agent 1/2/4 code touched; no new deps.
+
+1. **Structured AI output** (`modules/ai/schema/**`, agent-authored): versioned,
+   strict zod schemas + `validateAiOutput`; validation issues are PHI-safe (no
+   input values echoed). Wired into `intake.ts`/`summaries.ts`: a malformed/unsafe
+   output is REJECTED (never becomes a draft; review-first preserved) and recorded
+   as `validation_status='invalid'`; valid outputs record schema/prompt versions.
+2. **AI evaluation & governance** (`modules/ai/eval/**` + `eval.service.ts`):
+   deterministic, DE-IDENTIFIED fixtures + pure scoring (precision/recall,
+   hallucinated-citation detection) + a local-provider runner; results persisted
+   to the append-only `ai_eval_run` ledger (ids + numbers only, no PHI).
+3. **AI observability**: `ai_generation` gains `attempt`, `retryable`,
+   `failure_stage`, `validation_status`, `schema_version`, `prompt_version`
+   (labels/versions only). No prompts/outputs/variables/secrets/PHI in logs.
+4. **Bounded read-only AI** (`modules/ai/kernel/readonly-tools.ts`): real handlers
+   for `clinic.info.read` (non-PHI foundation), `automation.runs.read`,
+   `messaging.status.read` (Agent-3-owned aggregates) — all clinic-scoped, no
+   mutation, executed ONLY through `executeAiAction` (Action Guard + classification
+   + tenant policy). PHI clinical reads remain authorization-only (need a CCR).
+5. **AI Receptionist Foundation** (`modules/ai/receptionist/**`): deterministic
+   administrative intent classifier + FAQ/routing; CLINICAL-FIRST — any clinical
+   signal escalates to human staff and NEVER receives an answer. Non-mutating
+   (proposes only), governed by the E3 gateway, message text never stored.
+6. **Automation simulation** (`modules/automation/simulate.ts`, agent-authored):
+   pure `simulateRule(rule, event)` dry-run — trigger + conditions + planned
+   actions with reasons; sends nothing, mutates nothing. Route
+   `POST /automations/:id/simulate`.
+
+**Safety preserved:** E4 Action Guard unchanged; AI cannot diagnose/prescribe/
+mutate clinical facts or bypass human confirmation; AI identities hold no human
+permission; consent + quiet-hours + idempotency/retry/dead-letter untouched (full
+suite green). No Pharma access; CCR-003/004/010 untouched.
 
 ## Increment E4 — AI Action Security Kernel
 A central, FAIL-CLOSED authorization boundary so any FUTURE AI-initiated action

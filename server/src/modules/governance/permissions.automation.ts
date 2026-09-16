@@ -33,6 +33,10 @@ export const AutomationPermission = {
   // scopes, a separate vocabulary that never appears in this catalog.
   AI_IDENTITY_MANAGE: 'ai:identity-manage', // create/disable AI identities, grant scopes
   AI_ACTION_CONFIRM: 'ai:action-confirm', // a human confirms a pending AI action
+
+  // E5 batch.
+  AI_RECEPTIONIST_USE: 'ai:receptionist', // use the administrative AI receptionist
+  AI_EVAL_RUN: 'ai:eval-run', // run the AI evaluation suite
 } as const;
 
 export const automationPermissions: WorkstreamPermissions = {
@@ -50,14 +54,18 @@ export const automationPermissions: WorkstreamPermissions = {
     [AutomationPermission.AI_POLICY_MANAGE]: 'View and set the clinic AI policy (cloud/PHI routing)',
     [AutomationPermission.AI_IDENTITY_MANAGE]: 'Create, disable and scope AI execution identities',
     [AutomationPermission.AI_ACTION_CONFIRM]: 'Confirm a pending AI action requiring human approval',
+    [AutomationPermission.AI_RECEPTIONIST_USE]: 'Use the administrative AI receptionist (non-clinical)',
+    [AutomationPermission.AI_EVAL_RUN]: 'Run the AI evaluation suite over synthetic fixtures',
   },
   roleGrants: {
-    // Front desk: sends reminders, captures consent, starts AI intake drafts.
+    // Front desk: sends reminders, captures consent, starts AI intake drafts,
+    // and uses the administrative receptionist.
     [RoleKey.RECEPTION]: [
       AutomationPermission.MESSAGING_SEND,
       AutomationPermission.MESSAGING_READ,
       AutomationPermission.CONSENT_MANAGE,
       AutomationPermission.AI_DRAFT_CREATE,
+      AutomationPermission.AI_RECEPTIONIST_USE,
     ],
     // Nursing/intake: creates and reviews drafts, generates summaries.
     [RoleKey.NURSE]: [

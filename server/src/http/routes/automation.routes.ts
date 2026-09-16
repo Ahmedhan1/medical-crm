@@ -71,10 +71,28 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
     const action = await automation.cancelScheduledAction(principalOf(req), id);
     return reply.send(action);
   });
+
+  // Dry-run: simulate a rule against a hypothetical event. No side effects.
+  app.post('/automations/:id/simulate', async (req, reply) => {
+    const { id } = parseId(req.params);
+    const parsed = SimulateBody.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Invalid simulation event', parsed.error.flatten());
+    const simulation = await automation.simulateRuleForEvent(principalOf(req), id, parsed.data.event);
+    return reply.send(simulation);
+  });
 }
 
 const ScheduledQuery = z.object({
   status: z.enum(['pending', 'executing', 'done', 'failed', 'cancelled', 'expired']).optional(),
+});
+
+const SimulateBody = z.object({
+  event: z.object({
+    type: z.string().min(1).max(100),
+    subjectType: z.string().max(50).optional(),
+    subjectId: z.string().max(100).optional(),
+    payload: z.record(z.unknown()).optional(),
+  }),
 });
 
 function parseId(params: unknown): { id: string } {

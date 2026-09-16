@@ -6,6 +6,8 @@ import { extractIntakeToDraft } from '../../modules/ai/intake.js';
 import { generatePatientSummary } from '../../modules/ai/summaries.js';
 import { getDraftForReview, listDrafts, confirmDraft, rejectDraft } from '../../modules/ai/drafts.js';
 import { readTenantAiPolicy, setTenantAiPolicy } from '../../modules/ai/policy.js';
+import { handleReceptionistMessage } from '../../modules/ai/receptionist/receptionist.js';
+import { runAndRecordEval, listEvalRuns } from '../../modules/ai/eval/eval.service.js';
 import { requirePermission } from '../../modules/governance/rbac.js';
 import { Permission } from '../../modules/governance/permissions.js';
 import { createIdentity, listIdentities, setIdentityStatus } from '../../modules/ai/kernel/identity.js';
@@ -53,6 +55,8 @@ const IntakeBody = z.object({
 });
 
 const ReviewBody = z.object({ note: z.string().max(2000).optional() });
+
+const ReceptionistBody = z.object({ text: z.string().min(1).max(4000) });
 
 const ListQuery = z.object({
   status: z.enum(['pending', 'confirmed', 'rejected']).optional(),
@@ -204,6 +208,25 @@ export async function aiRoutes(app: FastifyInstance): Promise<void> {
     const note = ReviewBody.safeParse(req.body ?? {});
     const draft = await rejectDraft(principalOf(req), id, note.success ? note.data.note : undefined);
     return reply.send(draft);
+  });
+
+  // --- AI Receptionist Foundation (E5): administrative only; escalates clinical ---
+  app.post('/ai/receptionist', async (req, reply) => {
+    const parsed = ReceptionistBody.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Invalid receptionist request', parsed.error.flatten());
+    const response = await handleReceptionistMessage(principalOf(req), parsed.data);
+    return reply.send(response);
+  });
+
+  // --- AI Evaluation (E5): run deterministic PHI-free eval suite; view ledger ---
+  app.post('/ai/eval/run', async (req, reply) => {
+    const result = await runAndRecordEval(principalOf(req));
+    return reply.code(201).send(result);
+  });
+
+  app.get('/ai/eval/runs', async (req, reply) => {
+    const runs = await listEvalRuns(principalOf(req));
+    return reply.send({ runs });
   });
 }
 
