@@ -5,32 +5,14 @@ import { auditTx } from '../governance/audit.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { Permission } from '../governance/permissions.js';
 import { getPatientById } from '../identity/patients.repo.js';
+import {
+  ACTIVE_STATUSES,
+  mapEncounter,
+  type Encounter,
+  type EncounterRow,
+} from '../clinical/encounter.repo.js';
 
-export interface Encounter {
-  id: string;
-  clinicId: string;
-  patientId: string;
-  status: 'checked_in' | 'intake' | 'ready' | 'in_progress' | 'completed' | 'cancelled';
-  checkedInAt: string;
-}
-
-interface EncounterRow {
-  id: string;
-  clinic_id: string;
-  patient_id: string;
-  status: Encounter['status'];
-  checked_in_at: string;
-}
-
-function mapEncounter(r: EncounterRow): Encounter {
-  return {
-    id: r.id,
-    clinicId: r.clinic_id,
-    patientId: r.patient_id,
-    status: r.status,
-    checkedInAt: r.checked_in_at,
-  };
-}
+export type { Encounter } from '../clinical/encounter.repo.js';
 
 /**
  * Check a patient in — opens an encounter in `checked_in` status and emits
@@ -93,9 +75,9 @@ export async function getQueue(principal: Principal): Promise<QueueEntry[]> {
        FROM encounter e
        JOIN patient p ON p.id = e.patient_id
       WHERE e.clinic_id = $1
-        AND e.status IN ('checked_in','intake','ready','in_progress')
+        AND e.status = ANY($2::text[])
       ORDER BY e.checked_in_at ASC`,
-    [principal.clinicId],
+    [principal.clinicId, ACTIVE_STATUSES],
   );
   return rows.map((r) => ({ ...mapEncounter(r), patientName: r.full_name, mrn: r.mrn }));
 }

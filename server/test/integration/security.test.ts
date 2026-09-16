@@ -1,5 +1,7 @@
+import { Writable } from 'node:stream';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { patientRoutes } from '../../src/http/routes/patients.routes.js';
 import { buildServer } from '../../src/http/server.js';
 import { getPool } from '../../src/db/pool.js';
 import { makeClinic, makeUser, resetDb } from '../helpers/db.js';
@@ -112,5 +114,66 @@ describe('governance boundaries (§45, §53)', () => {
   it('the audit log is append-only (tamper-evident)', async () => {
     await expect(getPool().query('DELETE FROM audit_log')).rejects.toThrow(/append-only/);
     await expect(getPool().query('DELETE FROM event')).rejects.toThrow(/append-only/);
+  });
+});
+
+describe('PHI containment in logs and audit (§9)', () => {
+  it('audits a patient search without storing the search term', async () => {
+    const { clinicId } = await makeClinic();
+    const reception = await makeUser(clinicId, 'reception', RoleKey.RECEPTION);
+    const auth = { authorization: `Bearer ${reception.token}` };
+
+    await app.inject({
+      method: 'POST',
+      url: '/patients',
+      headers: auth,
+      payload: { fullName: 'Ahmed Hassan', sex: 'male' },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/patients/search?q=Ahmed',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().results).toHaveLength(1);
+
+    const { rows } = await getPool().query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM audit_log WHERE action = 'patient.search'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.metadata.results).toBe(1);
+    expect(rows[0]!.metadata.queryLength).toBe(5);
+    // The term itself identifies a patient and must never be persisted.
+    expect(JSON.stringify(rows[0]!.metadata)).not.toMatch(/ahmed/i);
+  });
+
+  it('never writes a searched patient name into the request log', async () => {
+    // Fastify's info-level request log records the full URL, query string and
+    // all. The search route is registered at 'warn' precisely so a name typed
+    // into the search box cannot reach application logs. Assert it against real
+    // captured log output rather than trusting the route option.
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(String(chunk));
+        cb();
+      },
+    });
+
+    const logged = Fastify({ logger: { level: 'info', stream } });
+    await logged.register(patientRoutes);
+    await logged.ready();
+
+    // Auth is irrelevant here: the request log is written either way.
+    await logged.inject({ method: 'GET', url: '/patients/search?q=Ahmed%20Hassan' });
+    // A control route in the same module must still be logged, so this test
+    // fails if request logging is simply off.
+    await logged.inject({ method: 'GET', url: '/patients/00000000-0000-0000-0000-000000000000' });
+    await logged.close();
+
+    const output = lines.join('');
+    expect(output).toContain('/patients/00000000-0000-0000-0000-000000000000');
+    expect(output).not.toMatch(/Ahmed/i);
+    expect(output).not.toContain('/patients/search');
   });
 });

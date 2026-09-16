@@ -49,7 +49,7 @@ touched · **API** expected endpoints · **DB** expected schema changes ·
 
 ## Clinical Core — Agent 2 (C0xx)
 
-### C001 — Clinical intake + vitals *(TODO)*
+### C001 — Clinical intake + vitals *(DONE)*
 - **Obj:** Structured intake (chief complaint, history) + vitals capture on an
   encounter; encounter status advances `checked_in → intake → ready`.
 - **Deps:** existing encounter/patient. **Files:** `modules/clinical/intake.*`,
@@ -60,9 +60,9 @@ touched · **API** expected endpoints · **DB** expected schema changes ·
 - **DB:** `intake`, `vital` tables (clinic_id, encounter_id, …).
 - **Tests:** validation (vital ranges), authz (nurse/reception), event emitted,
   status-transition guards.
-- **Status:** TODO · **Owner:** Agent 2
+- **Status:** DONE · **Owner:** Agent 2
 
-### C002 — Doctor workspace + encounter clinical fields *(TODO)*
+### C002 — Doctor workspace + encounter clinical fields *(DONE)*
 - **Obj:** Complaint, examination, assessment, diagnosis, treatment plan,
   clinical note on an encounter; status → `in_progress`/`completed`.
 - **Deps:** C001. **Files:** `modules/clinical/encounter.*`, migration 0101.
@@ -70,31 +70,52 @@ touched · **API** expected endpoints · **DB** expected schema changes ·
   `POST /encounters/:id/complete`.
 - **DB:** `clinical_note`, `diagnosis`, `assessment`, `treatment_plan`.
 - **Tests:** only DOCTOR can complete; audit on diagnosis change; append-only note history.
-- **Status:** TODO · **Owner:** Agent 2
+- **Status:** DONE · **Owner:** Agent 2
 
-### C003 — Save & Next (queue advance) *(TODO)*
+### C003 — Save & Next (queue advance) *(DONE)*
 - **Obj:** Complete current encounter and atomically surface the next `ready`
   patient; keyboard-first flow (blueprint §14).
 - **Deps:** C002. **API:** `POST /encounters/:id/complete-and-next`.
 - **Tests:** concurrency (two doctors don't get same next patient), ordering.
-- **Status:** TODO · **Owner:** Agent 2
+- **Status:** DONE · **Owner:** Agent 2
 
-### C004 — Patient timeline *(TODO)*
+### C004 — Patient timeline *(DONE)*
 - **Obj:** Chronological encounters/observations/treatments per patient (§4.3).
 - **Deps:** C002. **API:** `GET /patients/:id/timeline`.
 - **Tests:** clinic scope, pagination, empty state.
-- **Status:** TODO · **Owner:** Agent 2
+- **Status:** DONE · **Owner:** Agent 2
 
-### C005 — Treatment response episodes *(TODO)*
+### C005 — Treatment response episodes *(DONE)*
 - **Obj:** Treatment episode with start/stop/response/discontinuation (§15).
 - **Deps:** C002. **DB:** `treatment_episode`. **Tests:** longitudinal query, authz.
-- **Status:** TODO · **Owner:** Agent 2
+- **Status:** DONE · **Owner:** Agent 2
 
-### C006 — Report engine (patient/encounter, PDF) *(TODO)*
+### C006 — Report engine (patient/encounter, PDF) *(DONE)*
 - **Obj:** Reusable report engine; patient + encounter reports to PDF (§31).
 - **Deps:** C002. **API:** `GET /reports/encounter/:id.pdf`.
 - **Tests:** authz, deterministic content, no PHI leakage in filenames/logs.
-- **Status:** TODO · **Owner:** Agent 2
+- **Status:** DONE · **Owner:** Agent 2
+
+### C007 — Prescriptions + follow-ups *(DONE)*
+> Added by Agent 2. Prescriptions are named in the Clinical Core mission
+> (`docs/workstreams/clinical-core.md`) and in the Patient → … → Treatment →
+> Prescription → Follow-up workflow, but had no task id. Recorded here so the
+> work is visible at integration; Agent 1 to confirm the id at I001. See
+> `docs/agent-state/agent-2.md`.
+- **Obj:** Issue/cancel prescriptions against an open consultation; schedule
+  follow-ups and expose the reception recall worklist.
+- **Deps:** C002. **Files:** `modules/clinical/{prescriptions,followups}.service.ts`,
+  `http/routes/prescriptions.routes.ts`, migration 0103.
+- **API:** `POST/GET /encounters/:id/prescriptions`, `GET /prescriptions/:id`,
+  `POST /prescriptions/:id/cancel`, `GET /patients/:id/prescriptions`,
+  `POST /encounters/:id/follow-ups`, `GET /patients/:id/follow-ups`,
+  `GET /follow-ups`, `POST /follow-ups/:id/close`.
+- **DB:** `prescription` (immutable once issued), `prescription_item`
+  (append-only), `follow_up`.
+- **Tests:** immutability at the DB level, atomic multi-line issue, cancel with
+  reason, doctor-only prescribing, reception may close but never schedule a
+  follow-up, no medication names in audit/events.
+- **Status:** DONE · **Owner:** Agent 2
 
 ---
 

@@ -140,5 +140,20 @@ export async function findPatients(
     throw new ValidationError('Search query must be at least 2 characters');
   }
   const capped = Math.min(Math.max(limit, 1), 50);
-  return searchPatients(principal.clinicId, q, capped);
+  const results = await searchPatients(principal.clinicId, q, capped);
+
+  // Searching the patient index is a governance-relevant access: record who
+  // searched and how much came back. The search TERM is itself patient-
+  // identifying, so it is never stored — only its length, which is enough to
+  // distinguish a targeted lookup from a broad trawl.
+  await audit({
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: 'patient.search',
+    outcome: 'success',
+    targetType: 'patient',
+    metadata: { queryLength: q.length, results: results.length },
+  });
+
+  return results;
 }
