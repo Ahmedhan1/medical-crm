@@ -175,7 +175,7 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-6 | Procedures, sessions, protocols | TODO |
 | CP-7 | Prescription platform | PARTIAL — issue/cancel/immutability exist (0103); refills, substitution, supersede not built |
 | CP-8 | Allergy & safety engine | **DONE** (0107) |
-| CP-9 | Document management (DocumentReference) | TODO |
+| CP-9 | Document management (DocumentReference) | **DONE** (0108, metadata layer; bytes = CCR-008) |
 | CP-10 | Referral & care coordination | TODO |
 | CP-11 | Follow-up & longitudinal care | PARTIAL — follow-ups + recall worklist exist (0103); overdue detection not built |
 | CP-12 | Packages & treatment plans | TODO |
@@ -188,6 +188,21 @@ program's own numbering; status is measured against the **code**, not this file.
 | CP-19 | Multi-tenant hierarchy (Location/Department/Room) | PARTIAL — `clinical_resource` is a bookable thing, not an org hierarchy (foundation-owned) |
 | CP-20 | Local-first verification | TODO (no clinical path requires egress today) |
 | CP-21 | FHIR-ready mapping | TODO (Agent 1 roadmap Phase 6) |
+
+### Document model (CP-9)
+`document_reference` (0108) is FHIR DocumentReference-shaped and stores
+**metadata only** — the bytes are never in the database. `storage_key` is an
+opaque pointer resolved by platform infrastructure (CCR-008); integrity columns
+(`size_bytes`, `checksum_sha256`) let a resolver verify what it fetched. Keeping
+content out of the DB keeps it out of logs, clinical-DB backups and every query.
+- **Versioning** by supersession: a new version links to the old, which is kept
+  (`superseded`), never edited or deleted. A mistake is voided
+  (`entered_in_error`), not removed.
+- **Access policy**: a `restricted` document needs `document:read:restricted`;
+  to a caller without it the document is filtered from lists and not-found on a
+  direct read, so its existence does not leak. The title (which can name a
+  condition) is redacted on the timeline for restricted documents.
+- Documents link to patient / encounter / episode and follow merge lineage.
 
 ### Safety model (CP-8)
 Allergies are now a structured record (`allergy`, 0107), distinct from the
@@ -251,5 +266,5 @@ plain string. Renaming would silently break every existing rule, so the existing
 convention is kept. Raised here rather than changed unilaterally.
 
 ## Next tasks
-CP-8 (allergy & safety engine) — the highest open clinical risk — then CP-9
-(documents) / CP-10 (referrals). See `docs/agent-state/agent-2.md`.
+CP-10 (referral & care coordination), then CP-16 (Patient 360 read model over
+everything built so far). See `docs/agent-state/agent-2.md`.

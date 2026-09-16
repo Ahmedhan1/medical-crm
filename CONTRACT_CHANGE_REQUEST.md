@@ -144,6 +144,36 @@ inside your own feature module; adding a new table in your migration range.
   reach pharma today, by construction. Owner for the deferred build: Agent 1 +
   Agent 2.
 
+### CCR-008 — Document byte storage (local-first blob strategy)
+- Status: PROPOSED
+- Requested by: Agent 2 (Clinical Platform)
+- Date: 2026-09-16
+- Affects: Agent 1 (platform / local-first infrastructure), Agent 2 (documents)
+- Contract file(s): none. This asks the platform owner to choose a storage
+  backend; the clinical layer is already built against an opaque `storage_key`.
+- Change: CP-9 stores document METADATA only (`document_reference`, 0108). The
+  bytes are NOT in the database — `storage_key` is an opaque pointer. A platform
+  storage service is needed to (a) accept an upload, write the bytes to a
+  local-first backend (filesystem/object store on the MEDCORE box), return a
+  key + size + SHA-256, and (b) stream the bytes back on an authorized read.
+  Proposed shape: `putObject(clinicId, bytes) -> {key,size,sha256}` and
+  `getObject(clinicId, key) -> stream`, both tenant-scoped, with the clinical
+  layer remaining the authority on WHO may read a given document.
+- Reason: storing blobs in Postgres bloats the clinical DB, its backups and its
+  replication, and byte storage is a local-first infrastructure decision (Agent
+  1 roadmap Phase 3), not a clinical one. Keeping content out of the DB also
+  keeps it out of logs and every clinical query by construction.
+- Security: the storage service holds encrypted-at-rest bytes; it must never be
+  the authorization point — a read is authorized by Clinical Core
+  (`GET /documents/:id`, confidentiality-gated) which then resolves the key.
+  The integrity columns (`size_bytes`, `checksum_sha256`) let the resolver
+  verify what it fetched.
+- Backward compatibility: additive. Until the service exists, documents can be
+  registered against externally-produced keys (already supported and tested).
+- Tests: `test/integration/documents.test.ts` covers metadata, versioning,
+  access policy and isolation; byte round-trip tests arrive with the service.
+- Decision (Agent 1): _pending_
+
 ### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
 - Status: PROPOSED
 - Requested by: Agent 2 (Clinical Platform)

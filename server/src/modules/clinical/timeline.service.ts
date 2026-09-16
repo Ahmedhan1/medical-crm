@@ -99,6 +99,16 @@ const TIMELINE_SOURCES: readonly string[] = [
             'dueOn', fu.due_on, 'status', fu.status))
      FROM follow_up fu
     WHERE fu.clinic_id = $1 AND fu.patient_id = ANY($2::uuid[])`,
+
+  // Documents. The title can name a condition, so it is shown only for a
+  // normal-confidentiality document; a restricted one appears as a typed marker
+  // so the timeline is complete without leaking what the document is about.
+  `SELECT dr.id::text, 'document', dr.created_at, dr.encounter_id,
+          CASE WHEN dr.confidentiality = 'normal' THEN dr.title ELSE NULL END,
+          jsonb_build_object('docType', dr.doc_type, 'confidentiality', dr.confidentiality)
+     FROM document_reference dr
+    WHERE dr.clinic_id = $1 AND dr.patient_id = ANY($2::uuid[])
+      AND dr.status <> 'entered_in_error'`,
 ];
 
 export interface TimelineEntry {
