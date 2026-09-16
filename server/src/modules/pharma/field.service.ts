@@ -10,6 +10,7 @@ import { getHcpById, listHcpSpecialties, listInterests } from '../hcp/hcp.repo.j
 import * as content from './content.repo.js';
 import { isUsable } from './content.service.js';
 import * as repo from './field.repo.js';
+import * as medaffairs from './medaffairs.repo.js';
 import { today } from './dates.js';
 import { assertFreeTextClean } from './guards.js';
 import { subordinateUserIds } from './hierarchy.js';
@@ -114,23 +115,7 @@ export const CallReportSchema = z.object({
     .default([]),
 });
 
-export const ScientificRequestSchema = z.object({
-  hcpId: z.string().uuid(),
-  visitId: z.string().uuid().optional(),
-  medicationId: z.string().uuid().optional(),
-  requestType: z
-    .enum(['clinical_data', 'safety_info', 'dosing', 'publication', 'formulation', 'other'])
-    .default('other'),
-  question: TEXT(2000),
-  urgency: z.enum(['routine', 'high']).default('routine'),
-  dueDate: DATE.optional(),
-});
 
-export const AnswerRequestSchema = z.object({
-  decision: z.enum(['answer', 'reject', 'close']),
-  answerSummary: z.string().trim().max(4000).optional(),
-  answerContentId: z.string().uuid().optional(),
-});
 
 function parse<T extends z.ZodTypeAny>(schema: T, raw: unknown, what: string): z.infer<T> {
   const parsed = schema.safeParse(raw);
@@ -420,9 +405,13 @@ export async function preVisitBriefing(principal: Principal, visitId: string) {
           territoriesForHcp(principal.clinicId, hcpId),
           repo.listCallReportsForHcp(principal.clinicId, hcpId, 3),
           repo.listOpenObjectionsForHcp(principal.clinicId, hcpId, 10),
-          repo.listScientificRequests(principal.clinicId, {
+          medaffairs.listScientificRequests(principal.clinicId, {
             hcpId,
             status: 'open',
+            assignedTo: null,
+            inquiryCategory: null,
+            priority: null,
+            breachedOnly: false,
             territoryIds: null,
             limit: 10,
           }),
@@ -665,141 +654,6 @@ export async function getCallReport(principal: Principal, visitId: string) {
   const report = await repo.getCallReportByVisit(principal.clinicId, visitId);
   if (!report) throw new NotFoundError('Call report');
   return report;
-}
-
-// --- Scientific requests ----------------------------------------------------
-
-export async function createScientificRequest(principal: Principal, raw: unknown) {
-  requirePermission(principal, Permission.SCIENTIFIC_REQUEST_WRITE);
-  const input = parse(ScientificRequestSchema, raw, 'scientific request');
-  assertFreeTextClean({ question: input.question });
-  await assertHcpInScope(principal, input.hcpId);
-
-  return withTransaction(async (client) => {
-    const hcp = await getHcpById(principal.clinicId, input.hcpId, client);
-    if (!hcp) throw new NotFoundError('HCP');
-    let callReportId: string | null = null;
-    if (input.visitId) {
-      const visit = await repo.getVisitById(principal.clinicId, input.visitId, client);
-      if (!visit) throw new NotFoundError('Visit');
-      const report = await repo.getCallReportByVisit(principal.clinicId, input.visitId);
-      callReportId = report?.id ?? null;
-    }
-
-    const request = await repo.insertScientificRequest(client, {
-      clinicId: principal.clinicId,
-      hcpId: input.hcpId,
-      visitId: input.visitId ?? null,
-      callReportId,
-      medicationId: input.medicationId ?? null,
-      requestedBy: principal.userId,
-      requestType: input.requestType,
-      question: input.question,
-      urgency: input.urgency,
-      dueDate: input.dueDate ?? null,
-    });
-
-    await emitEvent(client, {
-      clinicId: principal.clinicId,
-      type: EventType.SCIENTIFIC_REQUEST_CREATED,
-      subjectType: 'scientific_request',
-      subjectId: request.id,
-      actorId: principal.userId,
-      payload: {
-        hcpId: input.hcpId,
-        requestType: input.requestType,
-        urgency: input.urgency,
-        medicationId: input.medicationId ?? null,
-      },
-    });
-    await auditTx(client, {
-      clinicId: principal.clinicId,
-      actorId: principal.userId,
-      action: 'scientificrequest.create',
-      targetType: 'scientific_request',
-      targetId: request.id,
-      metadata: { hcpId: input.hcpId, requestType: input.requestType },
-    });
-    return request;
-  });
-}
-
-export async function listScientificRequests(
-  principal: Principal,
-  params: { hcpId?: string; status?: string; limit?: number },
-) {
-  requirePermission(principal, Permission.SCIENTIFIC_REQUEST_READ);
-  const scope = await territoryScopeFor(principal);
-  if (scope !== null && scope.length === 0) return [];
-  return repo.listScientificRequests(principal.clinicId, {
-    hcpId: params.hcpId ?? null,
-    status: params.status ?? null,
-    territoryIds: scope,
-    limit: Math.min(Math.max(params.limit ?? 50, 1), 200),
-  });
-}
-
-/**
- * Answer a scientific request. Medical affairs only (`scientificrequest:fulfill`)
- * — the representative who raised the question cannot answer it, and an answer
- * must cite approved content or a written summary.
- */
-export async function answerScientificRequest(
-  principal: Principal,
-  requestId: string,
-  raw: unknown,
-) {
-  requirePermission(principal, Permission.SCIENTIFIC_REQUEST_FULFILL);
-  const input = parse(AnswerRequestSchema, raw, 'answer');
-  if (input.decision === 'answer' && !input.answerSummary && !input.answerContentId) {
-    throw new ValidationError('An answer must provide answerSummary or cite answerContentId');
-  }
-  assertFreeTextClean({ answerSummary: input.answerSummary ?? null });
-
-  return withTransaction(async (client) => {
-    const request = await repo.getScientificRequest(principal.clinicId, requestId, client);
-    if (!request) throw new NotFoundError('Scientific request');
-    if (request.status === 'answered' || request.status === 'closed') {
-      throw new ConflictError(`This request is already ${request.status}`);
-    }
-
-    if (input.answerContentId) {
-      const cited = await content.getContentById(principal.clinicId, input.answerContentId, client);
-      if (!cited) throw new NotFoundError('Cited content');
-      if (!isUsable(cited, today())) {
-        throw new ConflictError(
-          'Cited content is not approved or is outside its validity window; a scientific answer must cite usable approved content',
-        );
-      }
-    }
-
-    const status =
-      input.decision === 'answer' ? 'answered' : input.decision === 'reject' ? 'rejected' : 'closed';
-    const after = await repo.answerScientificRequest(client, principal.clinicId, requestId, {
-      status,
-      answerSummary: input.answerSummary ?? null,
-      answerContentId: input.answerContentId ?? null,
-      answeredBy: principal.userId,
-    });
-
-    await emitEvent(client, {
-      clinicId: principal.clinicId,
-      type: EventType.SCIENTIFIC_REQUEST_ANSWERED,
-      subjectType: 'scientific_request',
-      subjectId: requestId,
-      actorId: principal.userId,
-      payload: { status, citedContentId: input.answerContentId ?? null },
-    });
-    await auditTx(client, {
-      clinicId: principal.clinicId,
-      actorId: principal.userId,
-      action: 'scientificrequest.answer',
-      targetType: 'scientific_request',
-      targetId: requestId,
-      metadata: { status },
-    });
-    return after;
-  });
 }
 
 // --- Follow-up actions ------------------------------------------------------

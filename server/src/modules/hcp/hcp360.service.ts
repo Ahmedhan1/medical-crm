@@ -4,6 +4,7 @@ import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import * as content from '../pharma/content.repo.js';
 import * as field from '../pharma/field.repo.js';
+import * as medaffairs from '../pharma/medaffairs.repo.js';
 import { territoriesForHcp } from '../pharma/territory.repo.js';
 import { assertHcpInScope } from '../pharma/visibility.js';
 import * as repo from './hcp.repo.js';
@@ -70,9 +71,13 @@ export async function hcp360(principal: Principal, hcpId: string) {
     }),
     field.listCallReportsForHcp(principal.clinicId, hcpId, 10),
     field.listOpenObjectionsForHcp(principal.clinicId, hcpId, 20),
-    field.listScientificRequests(principal.clinicId, {
+    medaffairs.listScientificRequests(principal.clinicId, {
       hcpId,
       status: null,
+      assignedTo: null,
+      inquiryCategory: null,
+      priority: null,
+      breachedOnly: false,
       territoryIds: null,
       limit: 20,
     }),
@@ -111,7 +116,7 @@ export async function hcp360(principal: Principal, hcpId: string) {
       scientificRequests,
       followUps,
       contentEngagement: engagement,
-      representatives: [...new Set(visits.map((v) => v.repUserId))],
+      representatives: [...new Set(visits.map((v: { repUserId: string }) => v.repUserId))],
     },
     masterDataHistory: revisions,
     dataBoundary:

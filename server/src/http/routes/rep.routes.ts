@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ValidationError } from '../../domain/errors.js';
 import * as field from '../../modules/pharma/field.service.js';
 import * as fieldforce from '../../modules/pharma/fieldforce.service.js';
+import * as medaffairs from '../../modules/pharma/medaffairs.service.js';
 import * as territory from '../../modules/pharma/territory.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
 
@@ -146,27 +147,40 @@ export async function repRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(await field.getCallReport(principalOf(req), id));
   });
 
-  // --- Scientific requests --------------------------------------------------
+  // --- Scientific requests (medical affairs) --------------------------------
   app.post('/scientific-requests', async (req, reply) => {
-    const created = await field.createScientificRequest(principalOf(req), req.body);
+    const created = await medaffairs.createScientificRequest(principalOf(req), req.body);
     return reply.code(201).send(created);
   });
 
   app.get('/scientific-requests', async (req, reply) => {
-    const query = params(
-      z.object({
-        hcpId: z.string().uuid().optional(),
-        status: z.enum(['open', 'in_review', 'answered', 'closed', 'rejected']).optional(),
-        limit: z.coerce.number().int().optional(),
-      }),
-      req.query,
-      'Invalid query',
-    );
-    return reply.send({ results: await field.listScientificRequests(principalOf(req), query) });
+    return reply.send({
+      results: await medaffairs.listScientificRequests(principalOf(req), req.query),
+    });
+  });
+
+  /** The medical-affairs workload: counts only, never enquiry text. */
+  app.get('/scientific-requests/queue', async (req, reply) => {
+    return reply.send(await medaffairs.medicalInformationQueue(principalOf(req)));
+  });
+
+  app.get('/scientific-requests/:id', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await medaffairs.getScientificRequestDetail(principalOf(req), id));
+  });
+
+  app.post('/scientific-requests/:id/triage', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await medaffairs.triageScientificRequest(principalOf(req), id, req.body));
   });
 
   app.post('/scientific-requests/:id/answer', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
-    return reply.send(await field.answerScientificRequest(principalOf(req), id, req.body));
+    return reply.send(await medaffairs.answerScientificRequest(principalOf(req), id, req.body));
+  });
+
+  app.post('/scientific-requests/:id/escalate', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await medaffairs.escalateScientificRequest(principalOf(req), id, req.body));
   });
 }

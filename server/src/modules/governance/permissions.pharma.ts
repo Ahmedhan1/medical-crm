@@ -163,6 +163,14 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.HCO_READ,
       PharmaPermission.MEDICATION_READ,
       PharmaPermission.SCIENTIFIC_REQUEST_READ,
+      // 0310 gave a request a `source_channel`: a medical-information line, an
+      // email or a congress question arrives at medical affairs directly, with
+      // no representative to raise it. Without this grant those channels were
+      // unreachable — the schema offered them and nobody could use them.
+      // Separation of duties does NOT rest on withholding this: it is enforced
+      // by `assertAnswerable`, which refuses to let anyone answer the question
+      // they themselves raised, whatever permissions they hold.
+      PharmaPermission.SCIENTIFIC_REQUEST_WRITE,
       PharmaPermission.SCIENTIFIC_REQUEST_FULFILL,
       PharmaPermission.CONTENT_READ,
       PharmaPermission.CONTENT_WRITE,
