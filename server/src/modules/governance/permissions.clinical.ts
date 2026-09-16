@@ -16,7 +16,12 @@ export const ClinicalPermission = {
   QR_RESOLVE: 'qr:resolve',
   ENCOUNTER_CHECKIN: 'encounter:checkin',
   ENCOUNTER_READ: 'encounter:read',
+  ENCOUNTER_STATUS: 'encounter:status',
   QUEUE_READ: 'queue:read',
+  INTAKE_RECORD: 'intake:record',
+  INTAKE_READ: 'intake:read',
+  VITALS_RECORD: 'vitals:record',
+  VITALS_READ: 'vitals:read',
 } as const;
 
 export const clinicalPermissions: WorkstreamPermissions = {
@@ -29,7 +34,12 @@ export const clinicalPermissions: WorkstreamPermissions = {
     [ClinicalPermission.QR_RESOLVE]: 'Resolve a QR token to a patient',
     [ClinicalPermission.ENCOUNTER_CHECKIN]: 'Check a patient in (start an encounter)',
     [ClinicalPermission.ENCOUNTER_READ]: 'View encounters',
+    [ClinicalPermission.ENCOUNTER_STATUS]: 'Advance an encounter through the visit workflow',
     [ClinicalPermission.QUEUE_READ]: 'View the reception/clinical queue',
+    [ClinicalPermission.INTAKE_RECORD]: 'Record or revise clinical intake (complaint + history)',
+    [ClinicalPermission.INTAKE_READ]: 'View clinical intake',
+    [ClinicalPermission.VITALS_RECORD]: 'Record a set of vital signs',
+    [ClinicalPermission.VITALS_READ]: 'View recorded vital signs',
   },
   roleGrants: {
     [RoleKey.RECEPTION]: [
@@ -40,6 +50,7 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.QR_RESOLVE,
       ClinicalPermission.ENCOUNTER_CHECKIN,
       ClinicalPermission.ENCOUNTER_READ,
+      ClinicalPermission.ENCOUNTER_STATUS,
       ClinicalPermission.QUEUE_READ,
     ],
     [RoleKey.NURSE]: [
@@ -47,13 +58,23 @@ export const clinicalPermissions: WorkstreamPermissions = {
       ClinicalPermission.PATIENT_SEARCH,
       ClinicalPermission.QR_RESOLVE,
       ClinicalPermission.ENCOUNTER_READ,
+      ClinicalPermission.ENCOUNTER_STATUS,
       ClinicalPermission.QUEUE_READ,
+      ClinicalPermission.INTAKE_RECORD,
+      ClinicalPermission.INTAKE_READ,
+      ClinicalPermission.VITALS_RECORD,
+      ClinicalPermission.VITALS_READ,
     ],
     [RoleKey.DOCTOR]: [
       ClinicalPermission.PATIENT_READ,
       ClinicalPermission.PATIENT_SEARCH,
       ClinicalPermission.ENCOUNTER_READ,
+      ClinicalPermission.ENCOUNTER_STATUS,
       ClinicalPermission.QUEUE_READ,
+      ClinicalPermission.INTAKE_RECORD,
+      ClinicalPermission.INTAKE_READ,
+      ClinicalPermission.VITALS_RECORD,
+      ClinicalPermission.VITALS_READ,
     ],
   },
 };

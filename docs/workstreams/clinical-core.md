@@ -41,9 +41,36 @@ doctor speed (blueprint §11–15, §31).
 
 ## Cross-agent dependencies
 - Agent 3's AI intake (A004) will write DRAFTS that a human confirms into your
-  intake tables (C001). Define the intake write contract; expect a
-  CONTRACT_CHANGE_REQUEST from Agent 3 to consume it. AI never writes clinical
-  data directly.
+  intake tables (C001). AI never writes clinical data directly.
+
+### Published: intake write contract (for A004)
+`POST /encounters/:id/intake` is the ONLY write path into the `intake` table.
+It is called by a **human** principal holding `intake:record`; there is no
+machine principal, so an AI agent cannot invoke it unattended.
+
+To land a confirmed AI draft, the reviewing human's client submits the normal
+body plus:
+
+```jsonc
+{
+  "chiefComplaint": "…",        // required, the draft's extracted value
+  "source": "ai_assisted",      // provenance
+  "sourceRef": "<opaque id>",   // e.g. the ai_draft id — string, NOT a foreign key
+  "confirmed": true             // explicit human review acknowledgement
+}
+```
+
+Guarantees Agent 3 can rely on:
+- `source_ref` is an opaque string. The clinical schema holds **no foreign key**
+  to Agent 3's tables, so neither workstream constrains the other's migrations.
+- `confirmed_by` is set to the authenticated reviewer. A database CHECK rejects
+  any `ai_assisted` row without one, so an unconfirmed draft can never become
+  authoritative clinical data.
+- The response is `{ intake, encounterStatus }`; `intake.id` is stable across
+  revisions so a draft can be reconciled to the record it produced.
+
+This needs no shared-file change, so **no CONTRACT_CHANGE_REQUEST is required**
+to consume it. File one only if A004 needs a different write shape.
 
 ## Next tasks
 C001 intake+vitals → C002 doctor workspace → C003 Save&Next → C004 timeline →
