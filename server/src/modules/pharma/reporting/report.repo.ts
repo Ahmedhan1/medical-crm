@@ -173,9 +173,10 @@ export async function contentUsage(
  * Published intelligence signals.
  *
  * Three governance properties are enforced here, in SQL:
- *  1. Only signals that were actually PUBLISHED are eligible (`published_at IS
- *     NOT NULL`). When the signal lifecycle lands this becomes the effective
- *     lifecycle status; until then `published_at` is the honest proxy.
+ *  1. Only signals whose EFFECTIVE lifecycle status is `published` are eligible
+ *     (0311). Effective, not stored: a claim whose shelf life has passed must
+ *     drop out of exports the moment it lapses, not when a sweep next runs.
+ *     A draft, a rejected claim and a withdrawn one are all equally ineligible.
  *  2. `cohort_band` is selected, never `cohort_size`. The exact size stays in
  *     the table for the operator's audit and is the raw material of a
  *     differencing attack, so it must not reach an export.
@@ -211,7 +212,7 @@ export async function intelligenceSignals(
             confidence, source, method
        FROM aggregated_signal
       WHERE clinic_id = $1
-        AND published_at IS NOT NULL
+        AND pharma_effective_signal_status(lifecycle_status, expires_at) = 'published'
         AND ($2::uuid[] IS NULL
              OR scope_type <> 'territory'
              OR scope_id = ANY(SELECT unnest($2)::text))

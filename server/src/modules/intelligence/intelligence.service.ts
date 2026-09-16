@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { getPool, withTransaction } from '../../db/pool.js';
-import { AppError, ValidationError } from '../../domain/errors.js';
+import { AppError, ForbiddenError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import { emitEvent, EventType } from '../../domain/events.js';
 import { audit, auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
-import { requirePermission, type Principal } from '../governance/rbac.js';
+import { hasPermission, requirePermission, type Principal } from '../governance/rbac.js';
 import { JurisdictionSchema } from '../pharma/provenance.js';
 import { territoryScopeFor } from '../pharma/visibility.js';
 import { applyDisclosureControl } from './disclosure.js';
@@ -14,6 +14,16 @@ import {
   type FirewallRequest,
 } from './firewall.js';
 import { decideQuery, type QuerySlice } from './query-governance.js';
+import {
+  assertNotSelfApproval,
+  assertTransition as assertSignalTransition,
+  isApprovalDecision,
+  SIGNAL_LIFECYCLE_STATES,
+  SignalDecision,
+  SignalLifecycle,
+  signalExpiryFrom,
+  targetStateFor,
+} from './signal-lifecycle.js';
 import * as repo from './signals.repo.js';
 import { getSource, listSources } from './sources.js';
 
@@ -416,8 +426,26 @@ export interface ListSignalsParams {
   jurisdiction?: string;
   from?: string;
   to?: string;
+  /**
+   * Governance principals only. Restricted to the effective states they are
+   * allowed to see; a consumer's request for anything but `published` is
+   * refused rather than silently narrowed, so nobody mistakes an empty list for
+   * an absence of drafts.
+   */
+  lifecycleStatus?: string;
   limit?: number;
 }
+
+/**
+ * The states each kind of principal may read.
+ *
+ * A CONSUMER (`intelligence:signal-read`) sees exactly `published` — that is
+ * what "published" means. A GOVERNANCE principal (`intelligence:publish`) also
+ * sees the states that exist for them to act on. Nobody, at any level, reads
+ * through this path into anything but an aggregate.
+ */
+const CONSUMER_VISIBLE: readonly SignalLifecycle[] = [SignalLifecycle.PUBLISHED];
+const GOVERNANCE_VISIBLE: readonly SignalLifecycle[] = SIGNAL_LIFECYCLE_STATES;
 
 /**
  * Read published signals. Every returned row carries its governance envelope
@@ -431,6 +459,21 @@ export async function listSignals(principal: Principal, params: ListSignalsParam
   // A representative sees signals for their own territories only; a manager
   // sees the clinic. Territory-scoped signals carry the territory id as scope.
   const scope = await territoryScopeFor(principal);
+
+  const governance = hasPermission(principal, Permission.INTELLIGENCE_PUBLISH);
+  const allowedStates = governance ? GOVERNANCE_VISIBLE : CONSUMER_VISIBLE;
+  let statuses = allowedStates;
+  if (params.lifecycleStatus) {
+    if (!allowedStates.includes(params.lifecycleStatus as SignalLifecycle)) {
+      // Refused, not narrowed: a consumer asking for drafts must be told no,
+      // not handed an empty list they could read as "there are none".
+      throw new ForbiddenError(
+        `You may only read signals in state(s): ${allowedStates.join(', ')}`,
+      );
+    }
+    statuses = [params.lifecycleStatus as SignalLifecycle];
+  }
+
   const signals = await repo.listSignals(principal.clinicId, {
     signalType: params.signalType ?? null,
     scopeType: params.scopeType ?? null,
@@ -438,6 +481,7 @@ export async function listSignals(principal: Principal, params: ListSignalsParam
     jurisdiction: params.jurisdiction ?? null,
     from: params.from ?? null,
     to: params.to ?? null,
+    lifecycleStatuses: statuses,
     limit: Math.min(Math.max(params.limit ?? 100, 1), 500),
   });
   const visible =
@@ -489,4 +533,138 @@ export async function queryBudget(principal: Principal, policyKey = DEFAULT_POLI
 export async function listRuns(principal: Principal, limit = 20) {
   requirePermission(principal, Permission.INTELLIGENCE_PUBLISH);
   return repo.listRuns(principal.clinicId, Math.min(Math.max(limit, 1), 100));
+}
+
+// --- the governed signal lifecycle (migration 0311) --------------------------
+
+export const SignalDecisionSchema = z.object({
+  decision: z.enum(['submit_review', 'approve', 'reject', 'publish', 'withdraw']),
+  /** Required for `reject` and `withdraw`; an unexplained retraction is not reviewable. */
+  reason: z.string().trim().min(4).max(2000).optional(),
+  /**
+   * Shelf life of a published claim, in days. Bounded: an aggregate over a
+   * period decays, and the lifecycle does not allow an unbounded window to be
+   * implied — only a shorter one to be chosen.
+   */
+  validForDays: z.number().int().min(1).max(365).optional(),
+});
+
+/**
+ * Move a signal through its lifecycle.
+ *
+ * All five decisions sit behind `intelligence:publish` — the permission that
+ * already means "accountable for what this workstream asserts". Separation of
+ * duties is NOT expressed as a second permission but as an identity rule: the
+ * principal whose run produced a signal may not be the one who approves it,
+ * enforced here and again by `signal_no_self_approval` in the schema, so a
+ * direct write cannot get around it.
+ *
+ * Nothing here touches the firewall. The pipeline decides whether a number is
+ * SAFE to publish; this decides whether the claim is TRUE ENOUGH to publish.
+ * A signal that the firewall suppressed never becomes a draft in the first
+ * place, so no decision on this path can resurrect one.
+ */
+export async function decideSignal(principal: Principal, signalId: string, raw: unknown) {
+  requirePermission(principal, Permission.INTELLIGENCE_PUBLISH);
+  const parsed = SignalDecisionSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid signal decision', parsed.error.flatten());
+  }
+  const input = parsed.data;
+  const decision = input.decision as SignalDecision;
+  const to = targetStateFor(decision);
+
+  return withTransaction(async (client) => {
+    const signal = await repo.getSignalForUpdate(client, principal.clinicId, signalId);
+    if (!signal) throw new NotFoundError('Signal');
+
+    // Decide against the EFFECTIVE status: a lapsed claim is `expired` even if
+    // no sweep has run, so it cannot be published a second time by racing one.
+    const from = signal.effectiveStatus;
+    assertSignalTransition(from, to, input.reason ?? null);
+    if (isApprovalDecision(decision)) {
+      assertNotSelfApproval(signal.generatedBy, principal.userId);
+    }
+
+    const now = new Date().toISOString();
+    const next = await repo.applySignalDecision(client, principal.clinicId, signalId, {
+      lifecycleStatus: to,
+      reviewedBy: to === SignalLifecycle.DRAFT ? null : (signal.reviewedBy ?? null),
+      reviewedAt: to === SignalLifecycle.DRAFT ? null : (signal.reviewedAt ?? null),
+      reviewNote: to === SignalLifecycle.REJECTED ? (input.reason ?? null) : signal.reviewNote,
+      // An approval is attributed or it is not an approval. Re-entering review
+      // clears it, so a revised claim cannot inherit the old acceptance.
+      approvedBy: to === SignalLifecycle.IN_REVIEW ? null : (to === SignalLifecycle.APPROVED ? principal.userId : signal.approvedBy),
+      approvedAt: to === SignalLifecycle.IN_REVIEW ? null : (to === SignalLifecycle.APPROVED ? now : signal.approvedAt),
+      publishedBy: to === SignalLifecycle.PUBLISHED ? principal.userId : signal.publishedBy,
+      publishedAt: to === SignalLifecycle.PUBLISHED ? now : signal.publishedAt,
+      withdrawnBy: to === SignalLifecycle.WITHDRAWN ? principal.userId : null,
+      withdrawnAt: to === SignalLifecycle.WITHDRAWN ? now : null,
+      withdrawalReason: to === SignalLifecycle.WITHDRAWN ? (input.reason ?? null) : null,
+      expiresAt:
+        to === SignalLifecycle.PUBLISHED ? signalExpiryFrom(input.validForDays) : null,
+    });
+
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED,
+      subjectType: 'aggregated_signal',
+      subjectId: signalId,
+      actorId: principal.userId,
+      // Shape only: the signal's VALUE never travels in an event payload.
+      payload: { from, to, decision, expiresAt: next.expiresAt },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'intelligence.signal.decision',
+      targetType: 'aggregated_signal',
+      targetId: signalId,
+      metadata: { from, to, decision },
+    });
+    return next;
+  });
+}
+
+/**
+ * Persist the lapse of signals whose shelf life has passed.
+ *
+ * Reads already DERIVE expiry, so this only makes the stored value agree with
+ * what consumers are already shown. Nothing depends on it having run — which is
+ * the point: a missed background job cannot leave a stale claim on display.
+ */
+export async function sweepSignalExpiry(principal: Principal, limit = 500) {
+  requirePermission(principal, Permission.INTELLIGENCE_PUBLISH);
+  const bounded = Math.min(Math.max(limit, 1), 1000);
+
+  const expired = await withTransaction(async (client) => {
+    const due = await repo.expiredSignals(client, principal.clinicId, bounded);
+    return repo.markSignalsExpired(client, principal.clinicId, due);
+  });
+
+  await audit({
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: 'intelligence.signal.sweep',
+    targetType: 'aggregated_signal',
+    metadata: { expired },
+  });
+  return { expired };
+}
+
+/** One signal, if this principal is allowed to see it in its current state. */
+export async function getSignal(principal: Principal, signalId: string) {
+  requirePermission(principal, Permission.INTELLIGENCE_SIGNAL_READ);
+  const signal = await repo.getSignalById(principal.clinicId, signalId);
+  if (!signal) throw new NotFoundError('Signal');
+  if (
+    signal.effectiveStatus !== SignalLifecycle.PUBLISHED &&
+    !hasPermission(principal, Permission.INTELLIGENCE_PUBLISH)
+  ) {
+    // Not-found rather than forbidden: to a consumer, an unpublished signal
+    // does not exist, and saying "forbidden" would confirm that one is being
+    // prepared for this exact scope and period.
+    throw new NotFoundError('Signal');
+  }
+  return signal;
 }

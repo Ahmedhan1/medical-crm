@@ -1,5 +1,6 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
 import { toDateString } from '../pharma/dates.js';
+import type { SignalLifecycle } from './signal-lifecycle.js';
 import { cohortBand as bandFor, type PublishedSignal } from './disclosure.js';
 import type { FirewallPolicy } from './firewall.js';
 
@@ -37,7 +38,26 @@ export interface StoredSignal {
   policyStatus: string;
   deidentified: boolean;
   generatedAt: string;
-  publishedAt: string;
+  /** NULL until the signal is actually published (0311). */
+  publishedAt: string | null;
+  // --- 0311: the governed lifecycle ----------------------------------------
+  lifecycleStatus: SignalLifecycle;
+  /**
+   * `lifecycleStatus` with expiry applied. Computed in SQL by
+   * `pharma_effective_signal_status`, so a lapsed signal reads as `expired`
+   * whether or not the sweep has ever run.
+   */
+  effectiveStatus: SignalLifecycle;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  publishedBy: string | null;
+  withdrawnBy: string | null;
+  withdrawnAt: string | null;
+  withdrawalReason: string | null;
+  expiresAt: string | null;
 }
 
 interface SignalRow {
@@ -67,7 +87,20 @@ interface SignalRow {
   policy_status: string;
   deidentified: boolean;
   generated_at: string;
-  published_at: string;
+  published_at: string | null;
+  generated_by: string | null;
+  lifecycle_status: SignalLifecycle;
+  effective_status: SignalLifecycle;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  published_by: string | null;
+  withdrawn_by: string | null;
+  withdrawn_at: string | null;
+  withdrawal_reason: string | null;
+  expires_at: string | null;
 }
 
 function mapSignal(row: SignalRow): StoredSignal {
@@ -100,8 +133,32 @@ function mapSignal(row: SignalRow): StoredSignal {
     deidentified: row.deidentified,
     generatedAt: row.generated_at,
     publishedAt: row.published_at,
+    lifecycleStatus: row.lifecycle_status,
+    effectiveStatus: row.effective_status ?? row.lifecycle_status,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    reviewNote: row.review_note,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    publishedBy: row.published_by,
+    withdrawnBy: row.withdrawn_by,
+    withdrawnAt: row.withdrawn_at,
+    withdrawalReason: row.withdrawal_reason,
+    expiresAt: row.expires_at,
   };
 }
+
+/**
+ * Every signal read goes through this list rather than `SELECT *`, so the
+ * derived lifecycle status is computed consistently and cannot be forgotten by
+ * a new query. `s` is the required alias for `aggregated_signal`.
+ */
+const SELECT_SIGNAL_COLUMNS = `s.*,
+         pharma_effective_signal_status(s.lifecycle_status, s.expires_at) AS effective_status`;
+
+/** The same expression for a WHERE clause, so filters agree with reads. */
+const EFFECTIVE_SIGNAL_STATUS =
+  'pharma_effective_signal_status(s.lifecycle_status, s.expires_at)';
 
 // --- Policy -----------------------------------------------------------------
 
@@ -348,8 +405,25 @@ export async function upsertSignal(
                      provenance = EXCLUDED.provenance,
                      method = EXCLUDED.method,
                      generated_at = now(),
-                     published_at = now()
-     RETURNING *`,
+                     generated_by = EXCLUDED.generated_by,
+                     -- A RE-COMPUTED signal returns to draft and loses its
+                     -- review: the number changed, so the previous approval no
+                     -- longer covers the claim. This is the same rule as
+                     -- "verification never survives a material change" on the
+                     -- HCP/HCO masters, applied to an aggregate.
+                     lifecycle_status = 'draft',
+                     published_at = NULL,
+                     published_by = NULL,
+                     reviewed_by = NULL,
+                     reviewed_at = NULL,
+                     review_note = NULL,
+                     approved_by = NULL,
+                     approved_at = NULL,
+                     withdrawn_by = NULL,
+                     withdrawn_at = NULL,
+                     withdrawal_reason = NULL,
+                     expires_at = NULL
+     RETURNING *, pharma_effective_signal_status(lifecycle_status, expires_at) AS effective_status`,
     [
       clinicId,
       runId,
@@ -494,6 +568,13 @@ export interface SignalFilter {
   jurisdiction: string | null;
   from: string | null;
   to: string | null;
+  /**
+   * EFFECTIVE lifecycle states this caller may see. A consumer is restricted to
+   * `['published']` by the service; a governance principal may pass a wider set.
+   * Never null: "no restriction" has to be asked for explicitly, so a new
+   * caller cannot get the whole table by forgetting a parameter.
+   */
+  lifecycleStatuses: readonly SignalLifecycle[];
   limit: number;
 }
 
@@ -502,16 +583,18 @@ export async function listSignals(
   filter: SignalFilter,
 ): Promise<StoredSignal[]> {
   const { rows } = await getPool().query<SignalRow>(
-    `SELECT * FROM aggregated_signal
-      WHERE clinic_id = $1
-        AND ($2::text IS NULL OR signal_type = $2)
-        AND ($3::text IS NULL OR scope_type = $3)
-        AND ($4::text IS NULL OR scope_id = $4)
-        AND ($5::text IS NULL OR jurisdiction = $5)
-        AND ($6::date IS NULL OR period_end >= $6)
-        AND ($7::date IS NULL OR period_start <= $7)
-      ORDER BY period_start DESC, signal_type, value DESC
-      LIMIT $8`,
+    `SELECT ${SELECT_SIGNAL_COLUMNS}
+       FROM aggregated_signal s
+      WHERE s.clinic_id = $1
+        AND ($2::text IS NULL OR s.signal_type = $2)
+        AND ($3::text IS NULL OR s.scope_type = $3)
+        AND ($4::text IS NULL OR s.scope_id = $4)
+        AND ($5::text IS NULL OR s.jurisdiction = $5)
+        AND ($6::date IS NULL OR s.period_end >= $6)
+        AND ($7::date IS NULL OR s.period_start <= $7)
+        AND ${EFFECTIVE_SIGNAL_STATUS} = ANY($8)
+      ORDER BY s.period_start DESC, s.signal_type, s.value DESC
+      LIMIT $9`,
     [
       clinicId,
       filter.signalType,
@@ -520,8 +603,142 @@ export async function listSignals(
       filter.jurisdiction,
       filter.from,
       filter.to,
+      [...filter.lifecycleStatuses],
       filter.limit,
     ],
   );
   return rows.map(mapSignal);
+}
+
+// --- the governed lifecycle (migration 0311) ---------------------------------
+
+export async function getSignalById(
+  clinicId: string,
+  id: string,
+  runner: Runner = getPool(),
+): Promise<StoredSignal | null> {
+  const { rows } = await runner.query<SignalRow>(
+    `SELECT ${SELECT_SIGNAL_COLUMNS} FROM aggregated_signal s
+      WHERE s.id = $1 AND s.clinic_id = $2`,
+    [id, clinicId],
+  );
+  return rows[0] ? mapSignal(rows[0]) : null;
+}
+
+/** Row-locking read: two reviewers deciding at once must serialise. */
+export async function getSignalForUpdate(
+  client: PoolClient,
+  clinicId: string,
+  id: string,
+): Promise<(StoredSignal & { generatedBy: string | null }) | null> {
+  const { rows } = await client.query<SignalRow>(
+    `SELECT ${SELECT_SIGNAL_COLUMNS} FROM aggregated_signal s
+      WHERE s.id = $1 AND s.clinic_id = $2
+      FOR UPDATE`,
+    [id, clinicId],
+  );
+  if (!rows[0]) return null;
+  return { ...mapSignal(rows[0]), generatedBy: rows[0].generated_by };
+}
+
+/**
+ * Apply a lifecycle decision.
+ *
+ * One statement per decision would spread the state machine across the
+ * repository; instead the SERVICE decides the target state and the evidence,
+ * and this writes exactly what it was given. The CHECK constraints in 0311 are
+ * the backstop — a decision the service would have refused is still refused
+ * here by the database.
+ */
+export async function applySignalDecision(
+  client: PoolClient,
+  clinicId: string,
+  id: string,
+  next: {
+    lifecycleStatus: SignalLifecycle;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+    reviewNote: string | null;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    publishedBy: string | null;
+    publishedAt: string | null;
+    withdrawnBy: string | null;
+    withdrawnAt: string | null;
+    withdrawalReason: string | null;
+    expiresAt: string | null;
+  },
+): Promise<StoredSignal> {
+  const { rows } = await client.query<SignalRow>(
+    `UPDATE aggregated_signal
+        SET lifecycle_status = $3,
+            reviewed_by = $4,
+            reviewed_at = $5,
+            review_note = $6,
+            approved_by = $7,
+            approved_at = $8,
+            published_by = $9,
+            published_at = $10,
+            withdrawn_by = $11,
+            withdrawn_at = $12,
+            withdrawal_reason = $13,
+            expires_at = $14
+      WHERE id = $1 AND clinic_id = $2
+      RETURNING *, pharma_effective_signal_status(lifecycle_status, expires_at) AS effective_status`,
+    [
+      id,
+      clinicId,
+      next.lifecycleStatus,
+      next.reviewedBy,
+      next.reviewedAt,
+      next.reviewNote,
+      next.approvedBy,
+      next.approvedAt,
+      next.publishedBy,
+      next.publishedAt,
+      next.withdrawnBy,
+      next.withdrawnAt,
+      next.withdrawalReason,
+      next.expiresAt,
+    ],
+  );
+  return mapSignal(rows[0]!);
+}
+
+/**
+ * Published signals whose shelf life has passed but which still say
+ * `published`. Reads the stored columns (not the STABLE function) so the
+ * partial index from 0311 is usable.
+ */
+export async function expiredSignals(
+  client: PoolClient,
+  clinicId: string,
+  limit: number,
+): Promise<string[]> {
+  const { rows } = await client.query<{ id: string }>(
+    `SELECT id FROM aggregated_signal
+      WHERE clinic_id = $1
+        AND lifecycle_status = 'published'
+        AND expires_at IS NOT NULL
+        AND expires_at < now()
+      ORDER BY expires_at
+      LIMIT $2
+      FOR UPDATE`,
+    [clinicId, limit],
+  );
+  return rows.map((r) => r.id);
+}
+
+export async function markSignalsExpired(
+  client: PoolClient,
+  clinicId: string,
+  ids: string[],
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { rowCount } = await client.query(
+    `UPDATE aggregated_signal SET lifecycle_status = 'expired'
+      WHERE clinic_id = $1 AND id = ANY($2)`,
+    [clinicId, ids],
+  );
+  return rowCount ?? 0;
 }

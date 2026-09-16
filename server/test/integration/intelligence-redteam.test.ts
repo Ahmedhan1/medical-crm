@@ -22,6 +22,8 @@ import { ABSOLUTE_MIN_COHORT } from '../../src/modules/intelligence/firewall.js'
 let app: FastifyInstance;
 let clinicId: string;
 let manager: TestUser;
+/** A SECOND governance principal: a signal may not be approved by whoever generated it. */
+let signalReviewer: TestUser;
 let steward: TestUser;
 let rep: TestUser;
 let north: { id: string };
@@ -85,7 +87,35 @@ async function seedCohort(count: number, type: string, territoryId: string, tag 
   }
 }
 
-function run(overrides: Record<string, unknown> = {}) {
+/**
+ * A firewall run now produces DRAFTS (migration 0311): nothing is published by
+ * being computed. These suites are about the firewall and disclosure control,
+ * so they drive every draft the run produced through review, approval and
+ * publication — by a SECOND principal, because a signal may not be approved by
+ * whoever generated it.
+ */
+async function publishAllSignals(): Promise<void> {
+  const drafts = await app.inject({
+    method: 'GET',
+    url: '/intelligence/signals?lifecycleStatus=draft',
+    headers: auth(manager),
+  });
+  for (const signal of drafts.json().signals as Array<{ id: string }>) {
+    for (const decision of ['submit_review', 'approve', 'publish']) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/intelligence/signals/${signal.id}/decision`,
+        headers: auth(signalReviewer),
+        payload: { decision },
+      });
+      if (res.statusCode >= 400) {
+        throw new Error(`decision ${decision} -> ${res.statusCode} ${res.body}`);
+      }
+    }
+  }
+}
+
+function runRaw(overrides: Record<string, unknown> = {}) {
   return app.inject({
     method: 'POST',
     url: '/intelligence/runs',
@@ -103,6 +133,13 @@ function run(overrides: Record<string, unknown> = {}) {
   });
 }
 
+/** Run the pipeline, then publish whatever it drafted. */
+async function run(overrides: Record<string, unknown> = {}) {
+  const res = await runRaw(overrides);
+  if (res.statusCode < 400) await publishAllSignals();
+  return res;
+}
+
 beforeEach(async () => {
   await resetDb();
   app = buildServer();
@@ -112,6 +149,7 @@ beforeEach(async () => {
   // set up: only the steward may create HCPs, only the manager may target and
   // publish, only the rep may report a visit.
   manager = await makeUser(clinicId, 'mgr', RoleKey.PHARMA_MANAGER);
+  signalReviewer = await makeUser(clinicId, 'signal-reviewer', RoleKey.PHARMA_MANAGER);
   steward = await makeUser(clinicId, 'stw', RoleKey.PHARMA_DATA_STEWARD);
   rep = await makeUser(clinicId, 'rep', RoleKey.PHARMA_REP);
   north = await territory('CAI-N', 'Cairo North');

@@ -27,6 +27,10 @@ const SignalQuery = z.object({
   jurisdiction: z.string().trim().max(6).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /** Governance principals only; a consumer asking for anything else is refused. */
+  lifecycleStatus: z
+    .enum(['draft', 'in_review', 'approved', 'published', 'rejected', 'withdrawn', 'expired'])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 
@@ -80,5 +84,34 @@ export async function intelligenceRoutes(app: FastifyInstance): Promise<void> {
         'Aggregated, de-identified, threshold-gated signals only. Cohorts below the policy ' +
         'minimum are not returned and their absence is not reported per cohort.',
     });
+  });
+
+  // --- the governed signal lifecycle (0311) ---------------------------------
+  /** Declared before `/signals/:id` so the literal segment is not swallowed. */
+  app.post('/intelligence/signals/expiry-sweep', async (req, reply) => {
+    const body = params(
+      z.object({ limit: z.number().int().min(1).max(1000).optional() }),
+      req.body ?? {},
+      'Invalid sweep request',
+    );
+    return reply.send(await intelligence.sweepSignalExpiry(principalOf(req), body.limit));
+  });
+
+  app.get('/intelligence/signals/:id', async (req, reply) => {
+    const { id } = params(
+      z.object({ id: z.string().uuid() }),
+      req.params,
+      'Invalid id',
+    );
+    return reply.send(await intelligence.getSignal(principalOf(req), id));
+  });
+
+  app.post('/intelligence/signals/:id/decision', async (req, reply) => {
+    const { id } = params(
+      z.object({ id: z.string().uuid() }),
+      req.params,
+      'Invalid id',
+    );
+    return reply.send(await intelligence.decideSignal(principalOf(req), id, req.body));
   });
 }

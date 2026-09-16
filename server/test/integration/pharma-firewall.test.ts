@@ -17,6 +17,8 @@ import { ABSOLUTE_MIN_COHORT } from '../../src/modules/intelligence/firewall.js'
 let app: FastifyInstance;
 let clinicId: string;
 let manager: TestUser;
+/** A SECOND governance principal: a signal may not be approved by whoever generated it. */
+let signalReviewer: TestUser;
 let rep: TestUser;
 let territory: { id: string };
 
@@ -66,7 +68,35 @@ async function seedObjectionCohort(count: number, objectionType = 'safety') {
   }
 }
 
-function runToday(overrides: Record<string, unknown> = {}) {
+/**
+ * A firewall run now produces DRAFTS (migration 0311): nothing is published by
+ * being computed. These suites are about the firewall and disclosure control,
+ * so they drive every draft the run produced through review, approval and
+ * publication — by a SECOND principal, because a signal may not be approved by
+ * whoever generated it.
+ */
+async function publishAllSignals(): Promise<void> {
+  const drafts = await app.inject({
+    method: 'GET',
+    url: '/intelligence/signals?lifecycleStatus=draft',
+    headers: auth(manager),
+  });
+  for (const signal of drafts.json().signals as Array<{ id: string }>) {
+    for (const decision of ['submit_review', 'approve', 'publish']) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/intelligence/signals/${signal.id}/decision`,
+        headers: auth(signalReviewer),
+        payload: { decision },
+      });
+      if (res.statusCode >= 400) {
+        throw new Error(`decision ${decision} -> ${res.statusCode} ${res.body}`);
+      }
+    }
+  }
+}
+
+function runTodayRaw(overrides: Record<string, unknown> = {}) {
   const today = new Date().toISOString().slice(0, 10);
   return app.inject({
     method: 'POST',
@@ -85,12 +115,20 @@ function runToday(overrides: Record<string, unknown> = {}) {
   });
 }
 
+/** Run the pipeline, then publish whatever it drafted. */
+async function runToday(overrides: Record<string, unknown> = {}) {
+  const res = await runTodayRaw(overrides);
+  if (res.statusCode < 400) await publishAllSignals();
+  return res;
+}
+
 beforeEach(async () => {
   await resetDb();
   app = buildServer();
   await app.ready();
   ({ clinicId } = await makeClinic());
   manager = await makeUser(clinicId, 'manager', RoleKey.ADMIN);
+  signalReviewer = await makeUser(clinicId, 'signal-reviewer', RoleKey.PHARMA_MANAGER);
   rep = await makeUser(clinicId, 'rep', RoleKey.PHARMA_REP);
   territory = (
     await app.inject({

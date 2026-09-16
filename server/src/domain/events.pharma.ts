@@ -67,4 +67,9 @@ export const PharmaEventType = {
   INTELLIGENCE_COHORT_SUPPRESSED: 'INTELLIGENCE_COHORT_SUPPRESSED',
   /** A run refused by query governance (budget or narrowing depth) — Phase 29. */
   INTELLIGENCE_QUERY_DENIED: 'INTELLIGENCE_QUERY_DENIED',
+  /**
+   * A signal moved through its governed lifecycle (0311). Payload is SHAPE
+   * only — a signal's value never travels in an event.
+   */
+  INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED: 'INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED',
 } as const;
