@@ -27,6 +27,12 @@ export const AutomationPermission = {
 
   // AI safety & governance — tenant AI policy (cloud/PHI routing controls).
   AI_POLICY_MANAGE: 'ai:policy-manage',
+
+  // AI Action Security Kernel (E4) — human-side management. These govern the
+  // kernel; they are NOT granted to AI. An AI's authority is its ai_identity
+  // scopes, a separate vocabulary that never appears in this catalog.
+  AI_IDENTITY_MANAGE: 'ai:identity-manage', // create/disable AI identities, grant scopes
+  AI_ACTION_CONFIRM: 'ai:action-confirm', // a human confirms a pending AI action
 } as const;
 
 export const automationPermissions: WorkstreamPermissions = {
@@ -42,6 +48,8 @@ export const automationPermissions: WorkstreamPermissions = {
     [AutomationPermission.AI_DRAFT_REVIEW]: 'Review, confirm or reject an AI draft',
     [AutomationPermission.AI_SUMMARY_GENERATE]: 'Generate a longitudinal AI summary draft',
     [AutomationPermission.AI_POLICY_MANAGE]: 'View and set the clinic AI policy (cloud/PHI routing)',
+    [AutomationPermission.AI_IDENTITY_MANAGE]: 'Create, disable and scope AI execution identities',
+    [AutomationPermission.AI_ACTION_CONFIRM]: 'Confirm a pending AI action requiring human approval',
   },
   roleGrants: {
     // Front desk: sends reminders, captures consent, starts AI intake drafts.

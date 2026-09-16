@@ -1,17 +1,52 @@
 # Agent 3 — AI / Automation / WhatsApp — State
 
 ## Current Status
-Base: `integration/medcore-v1` (verified current source of truth: C001–C007,
-A001–A005, P001–P006, I001 hardening, platform-P1 all integrated). Two Agent-3
+Base: `integration/medcore-v1` (rebased onto `97f1680` — includes P2 backup engine;
+C001–C007, A001–A005, P001–P006, I001, platform-P1/P2 all integrated). Agent-3
 expansion increments built on top:
 - **E2** — Scheduling & Time Engine + engine hardening + comms-quality (Phases 1, 3, 38).
 - **E3** — AI Safety & Governance Layer, the front of the AI chain (Phases 3, 4, 5, 16).
+- **E4** — AI Action Security Kernel, the fail-closed AI→action boundary.
 
 A001–A005 remain DONE (A004 review-first portion; clinical auto-promotion DEFERRED
 per CCR-003). See the increment reports below.
 
 Verification (in `server/`): `npm run typecheck` clean · `npm run build` clean ·
-migrations `0001…0202, 0300…0304, 0900` apply in order.
+migrations `0001…0203, 0300…0304, 0900, 0901` apply in order.
+
+## Increment E4 — AI Action Security Kernel
+A central, FAIL-CLOSED authorization boundary so any FUTURE AI-initiated action
+must pass through it. AI is treated as an untrusted actor with an explicitly
+bounded identity — it never inherits a human role or ADMIN. (No autonomous agents
+built; today no AI code invokes an action — the kernel is the gate they will use.)
+
+Chain (all in `modules/ai/kernel/`):
+`AI identity → status → tool → prohibited → enabled → risk ceiling → scope →
+data classification (vs tool + identity ceilings) → tenant AI policy (E3) →
+human confirmation → ALLOW / DENY / REQUIRE_CONFIRMATION`.
+
+- **AI identity** (`identity.ts`, `ai_identity` table): tenant-scoped; authority is
+  only its `scopes` (an AI vocabulary distinct from RBAC) + `riskCeiling` +
+  `dataCeiling`. Fresh identity is near-powerless (read-only, internal, no scopes).
+- **Tool registry** (`tools.ts`): a CODE registry — unknown tool id ⇒ `undefined` ⇒
+  fail closed. Mock/example executable tools (`demo.*`), authorization-only read
+  tools (`patient.search`… handler deferred to owner via CCR), and the **prohibited
+  clinical set** (`clinical.diagnosis.modify`, `clinical.prescription.create`, …)
+  registered as `PROHIBITED` with no handler — structurally denied, and NO clinical
+  mutation code exists in Agent 3.
+- **Risk classes** (`risk.ts`): READ_ONLY < LOW < MEDIUM < HIGH < PROHIBITED;
+  MEDIUM+ requires human confirmation; PROHIBITED never within any ceiling.
+- **Action Guard** (`guard.ts`): `authorizeAiAction` — pure fail-closed decision;
+  consumes the E3 `DataClass`/`policy` model (not a second one); a data-class
+  downgrade cannot slip a PHI tool past a low ceiling (effective class = the more
+  sensitive of declared vs the tool's level).
+- **Human confirmation** (`confirmation.ts`): a stateless HMAC token (server pepper)
+  bound to the exact action + short TTL; only a human (via `ai:action-confirm`) can
+  mint it, the AI cannot forge or self-confirm.
+- **Execution boundary** (`execute.ts`): `executeAiAction` authorizes first and runs
+  the tool handler ONLY on ALLOW; the only path from an AI actor to a handler.
+- **Observability** (`action-log.ts`, `ai_action_log`, append-only): one row per
+  decision — identity/tool/risk/decision/reason only, NEVER tool args or PHI.
 
 ## Increment E3 — AI Safety & Governance Layer (Phases 3, 4, 5, 16)
 Establishes the front of the AI governance chain so **no AI request bypasses it**:
@@ -104,6 +139,9 @@ Establishes the front of the AI governance chain so **no AI request bypasses it*
   (`clinic_id` PK; `allow_cloud`, `cloud_max_class`); `ALTER ai_generation` add
   `data_class`, `policy_decision`, `provider_tier`, `request_id` (append-only via
   ADD COLUMN; existing rows get NULL). All `clinic_id`-scoped; governance passes.
+- Migration **`0203_ai_action_kernel.sql`** (E4): `ai_identity` (tenant-scoped AI
+  identities: status, risk/data ceilings, scopes jsonb) + `ai_action_log`
+  (append-only guard-decision log; no PHI/args). Both `clinic_id`-scoped.
 - All tenant-scoped (`clinic_id`), `timestamptz` timestamps, idempotency enforced
   by unique keys. FKs reference the shared foundation schema (`clinic`, `patient`,
   `app_user`) only; no other workstream's tables are touched.
@@ -121,6 +159,10 @@ Establishes the front of the AI governance chain so **no AI request bypasses it*
   `GET /ai/drafts`, `GET /ai/drafts/:id`,
   `POST /ai/drafts/:id/confirm`, `POST /ai/drafts/:id/reject`.
 - AI governance (E3): `GET /ai/policy`, `POST /ai/policy` (ADMIN only).
+- AI Action Kernel (E4): `POST/GET /ai/identities`, `POST /ai/identities/:id/disable`,
+  `GET /ai/tools`, `POST /ai/actions/authorize`, `POST /ai/actions/confirm`,
+  `POST /ai/actions/execute` (identity/tool/authorize/execute gated by
+  `ai:identity-manage`; confirm gated by `ai:action-confirm`; both ADMIN-only).
 
 ## Events (in `domain/events.automation.ts`)
 - `AI_DRAFT_CREATED`, `AI_DRAFT_CONFIRMED`, `AI_DRAFT_REJECTED`. Emitted from
@@ -130,7 +172,10 @@ Establishes the front of the AI governance chain so **no AI request bypasses it*
 ## Permissions (in `governance/permissions.automation.ts`)
 - `automation:manage`, `automation:read`, `messaging:send`, `messaging:read`,
   `messaging:manage`, `consent:manage`, `ai:draft-create`, `ai:draft-review`,
-  `ai:summary-generate`, `ai:policy-manage` (E3; ADMIN-only, granted to no other role).
+  `ai:summary-generate`, `ai:policy-manage` (E3), `ai:identity-manage` +
+  `ai:action-confirm` (E4). All AI-governance perms are ADMIN-only (granted to no
+  other role). These govern the kernel and are NEVER granted to an AI — an AI's
+  authority is its `ai_identity.scopes`, a separate vocabulary absent from the RBAC catalog.
 - Grants: RECEPTION (send/read/consent/draft-create), NURSE (read/draft-create/
   review/summary), DOCTOR (review/summary/read). ADMIN gets all automatically.
   **PHARMA_REP is granted NONE** (verified) — no patient-linked capability.
@@ -192,14 +237,23 @@ Establishes the front of the AI governance chain so **no AI request bypasses it*
 - On CCR-003 follow-up: server-side confirmed-intake-draft → clinical write.
 
 ## Last Commit
-- `platform(A3-E3): AI safety & governance layer — classification, PHI policy, provider router`
-  on branch `claude/magical-gates-bgfexk` (based on `integration/medcore-v1`).
-- Prior: `platform(A3-E2): scheduling & time engine, engine hardening, comms-quality guards`.
+- `platform(A3-E4): AI Action Security Kernel — identity, tool registry, risk, Action Guard, confirmation`
+  on branch `claude/magical-gates-bgfexk` (rebased onto `integration/medcore-v1` @ 97f1680).
+- Prior: E3 (AI governance layer), E2 (scheduling & time engine).
 
-## Next increment (planned — the rest of the AI safety chain)
-Right half of the chain, in order: **AI tool-permission system + AI agent identity**
-(Phases 7/8), **AI Action Guard** with risk classes (Phase 9; needed once AI
-generates actions), **structured-output schema validation** (Phase 12) and
-**prompt/output governance** (Phases 27/28). Then bounded agents (Reception,
-Scheduling, Documentation…) on top of the guard — never one unrestricted agent.
-The E3 gateway is the mandatory front these plug into.
+## Known limitations (E4)
+- **Structural enforcement is by convention at the module edge.** `executeAiAction`
+  is the only public execution path (tool handlers are closures inside the registry,
+  not exported), but a developer editing `modules/ai/**` could still call a handler
+  directly. A lint/architecture rule to forbid that is a follow-up.
+- Real handlers for the authorization-only read tools (`patient.search`,
+  `appointment.read`, `report.read`) are intentionally absent — they read another
+  workstream's data and must be provided by the owner via a CCR.
+- The E3 tenant AI policy hook (`policy_denied`) never fires today (E3 `decide`
+  returns ALLOW_LOCAL/ALLOW_CLOUD, never DENY); the hook is wired for when it does.
+
+## Next increment (planned — deferred deliberately)
+Structured-output schema validation (Phase 12), prompt/output governance
+(Phases 27/28), then BOUNDED agents (Reception, Scheduling, Documentation…) that
+call `executeAiAction` — never one unrestricted agent. Only after the kernel is
+proven and integrated. Autonomous execution remains OUT until then.

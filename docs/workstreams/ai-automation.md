@@ -193,3 +193,57 @@ Tool-permission system, AI agent identity, AI Action Guard, structured-output
 schema validation, prompt/output governance, bounded agents. These are the RIGHT
 half of the chain and are only needed once AI generates *actions* (today AI only
 produces review-first drafts). They plug into this gateway.
+
+---
+
+## Increment E4 — AI Action Security Kernel
+
+Built on `integration/medcore-v1` (rebased onto P2). Migration `0203_ai_action_kernel.sql`.
+A central, FAIL-CLOSED authorization boundary between an AI actor and any tool/action.
+AI is an untrusted actor with an explicitly bounded identity — never a human role,
+never ADMIN. No autonomous agents are built; this is the gate future agents use.
+
+### Chain (`modules/ai/kernel/`)
+`identity → status → tool → prohibited → enabled → risk ceiling → scope →
+classification (vs tool + identity ceilings) → tenant AI policy (E3) → confirmation
+→ ALLOW / DENY / REQUIRE_CONFIRMATION`
+
+- `risk.ts` — READ_ONLY < LOW < MEDIUM < HIGH < PROHIBITED; MEDIUM+ needs human
+  confirmation; PROHIBITED never within any ceiling.
+- `tools.ts` — a CODE tool registry (unknown id ⇒ fail closed). Mock executable
+  tools; authorization-only read tools (handlers deferred to owners via CCR); the
+  prohibited clinical set registered as PROHIBITED with no handler (structurally
+  denied; no clinical mutation code in Agent 3).
+- `identity.ts` + `ai_identity` — tenant-scoped AI identities; authority is only
+  `scopes` (AI vocabulary, not RBAC) + `riskCeiling` + `dataCeiling`; near-powerless
+  by default.
+- `guard.ts` — `authorizeAiAction`, fail-closed. Reuses the E3 `DataClass`/`policy`
+  model. Data-class downgrade is blocked (effective class = more sensitive of
+  declared vs the tool's level).
+- `confirmation.ts` — stateless HMAC token (server pepper) bound to the exact
+  action + TTL; only a human (`ai:action-confirm`) can mint it; the AI cannot forge.
+- `execute.ts` — `executeAiAction` is THE boundary; runs a handler ONLY on ALLOW.
+- `action-log.ts` + `ai_action_log` (append-only) — decision shape only; never
+  tool args or PHI.
+
+### Separation of concerns
+Provider authorization (E3 gateway) and action authorization (E4 kernel) are
+distinct. An AI capability that reads via a provider AND performs an action passes
+through both. E4 does not call providers; E3 is unchanged.
+
+### Tested (28 new)
+Identity (valid/disabled/unknown/tenant-mismatch), tool registry (resolve/unknown/
+disabled/scope), risk (read-only/low/medium-confirmation/ceiling), classification
+(within/above tool/above identity/PHI/HIGHLY_RESTRICTED/downgrade), clinical safety
+(every prohibited op denied), tenant isolation, confirmation (required/confirmed/
+missing/forged/different-action/expired), fail-closed, PHI-never-in-log,
+append-only, authz (ADMIN-only), and a 16-point RED-TEAM.
+
+### Endpoints
+`POST/GET /ai/identities`, `POST /ai/identities/:id/disable`, `GET /ai/tools`,
+`POST /ai/actions/authorize`, `POST /ai/actions/confirm`, `POST /ai/actions/execute`.
+
+### Deferred (intentionally)
+Structured-output schema validation, prompt/output governance, and BOUNDED agents
+(Reception, Scheduling, Documentation…) that call `executeAiAction`. No autonomous
+execution until the kernel is proven and integrated.
