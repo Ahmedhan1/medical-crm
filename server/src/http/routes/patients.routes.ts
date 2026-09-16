@@ -7,6 +7,7 @@ import {
   registerPatient,
 } from '../../modules/identity/patients.service.js';
 import { issuePatientQr, resolveQr } from '../../modules/qr/qr.service.js';
+import { getPatientTimeline } from '../../modules/clinical/timeline.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
@@ -36,6 +37,14 @@ export async function patientRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) throw new ValidationError('Invalid id');
     const patient = await getPatient(principalOf(req), parsed.data.id);
     return reply.send(patient);
+  });
+
+  // Longitudinal clinical history (§4.3)
+  app.get('/patients/:id/timeline', async (req, reply) => {
+    const parsed = IdParam.safeParse(req.params);
+    if (!parsed.success) throw new ValidationError('Invalid id');
+    const page = await getPatientTimeline(principalOf(req), parsed.data.id, req.query);
+    return reply.send(page);
   });
 
   // QR identity (§10, §43)

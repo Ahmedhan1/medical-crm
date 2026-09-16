@@ -16,8 +16,11 @@ IN PROGRESS. Working the C0xx series on branch `claude/inspiring-cori-tk3ej8`
 - **C003 — Save & Next (queue advance).** Atomic complete-then-claim, plus a
   standalone "take the next patient" entry point.
 
+- **C004 — Patient timeline.** One chronological stream of every clinical
+  record for a patient, keyset-paginated.
+
 ## In Progress
-- C004 — Patient timeline.
+- C005 — Treatment response episodes.
 
 ## Database Changes
 Reserved migration range **0100–0199**.
@@ -57,6 +60,7 @@ Reserved migration range **0100–0199**.
 | POST | `/encounters/:id/complete` | `encounter:complete` | Requires assessment or diagnosis |
 | POST | `/encounters/:id/complete-and-next` | `encounter:complete` + `encounter:clinical:write` | Atomic; returns `{ completed, next }` |
 | POST | `/queue/next` | `encounter:clinical:write` | Claim the next waiting patient |
+| GET | `/patients/:id/timeline` | `timeline:read` | `?limit` (1–100, default 50), `?cursor`; returns `{ entries, nextCursor }` |
 
 No existing endpoint changed shape.
 
@@ -64,12 +68,14 @@ No existing endpoint changed shape.
 Added to `permissions.clinical.ts` (own file — not a contract change):
 `encounter:status`, `intake:record`, `intake:read`, `vitals:record`,
 `vitals:read`, `encounter:clinical:read`, `encounter:clinical:write`,
-`encounter:complete`, `diagnosis:write`, `treatment:write`, `note:write`.
+`encounter:complete`, `diagnosis:write`, `treatment:write`, `note:write`,
+`timeline:read`.
 
 Grants — the operational/clinical authority split:
 - RECEPTION: `encounter:status` only. **No** clinical read or write.
 - NURSE: intake + vitals record/read, `encounter:clinical:read` (read-only).
 - DOCTOR: everything above plus every clinical write and `encounter:complete`.
+- `timeline:read` → NURSE, DOCTOR.
 - ADMIN inherits all automatically.
 
 ## Event Changes
@@ -84,12 +90,14 @@ clinical updates carry the names of the sections touched, never their content.
 
 ## Files Owned / Modified
 - Added: `modules/clinical/{encounter.repo,status.service,intake.repo,intake.service,vitals.repo,vitals.service,encounter.clinical.repo,workspace.service}.ts`,
-  `modules/workflow/queue.service.ts`, `http/routes/{intake,encounters}.routes.ts`,
+  `modules/clinical/timeline.service.ts`, `modules/workflow/queue.service.ts`,
+  `http/routes/{intake,encounters}.routes.ts`,
   `db/migrations/{0100_clinical_intake_vitals,0101_clinical_encounter}.sql`,
-  `test/integration/{intake,workspace,queue}.test.ts`.
+  `test/integration/{intake,workspace,queue,timeline}.test.ts`.
 - Modified (all Agent-2 owned): `permissions.clinical.ts`, `events.clinical.ts`,
-  `http/features/clinical.feature.ts`, `modules/workflow/checkin.service.ts`
-  (now reuses the shared `encounter.repo` types instead of redeclaring them).
+  `http/features/clinical.feature.ts`, `http/routes/{patients,workflow}.routes.ts`,
+  `modules/workflow/checkin.service.ts` (now reuses the shared `encounter.repo`
+  types instead of redeclaring them).
 
 ## Tests
 - `test/integration/intake.test.ts` — 24 tests: intake upsert semantics, status
@@ -105,8 +113,12 @@ clinical updates carry the names of the sections touched, never their content.
   lock uncommitted, proving `FOR UPDATE SKIP LOCKED` never hands one patient to
   two doctors. Also FIFO ordering, empty queue, cross-clinic isolation, and
   rollback (a refused completion leaves the next patient queued).
+- `test/integration/timeline.test.ts` — 8 tests: every record type present,
+  newest-first ordering, full keyset walk asserting no entry is skipped or
+  repeated, page-size bounds, malformed cursor rejection, patient and clinic
+  isolation, RBAC, and a no-PHI audit assertion.
 
-Suite: **86 passing** (30 inherited + 56 new). Typecheck and build clean.
+Suite: **94 passing** (30 inherited + 64 new). Typecheck and build clean.
 
 ## Dependencies Added
 None.
@@ -134,7 +146,7 @@ None.
 None.
 
 ## Next Tasks
-C004 → C005 → C006 (see `TASKS.md`).
+C005 → C006 (see `TASKS.md`).
 
 ## Last Commit
 - (see branch head)
