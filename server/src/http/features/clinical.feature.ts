@@ -6,6 +6,7 @@ import { encounterRoutes } from '../routes/encounters.routes.js';
 import { treatmentRoutes } from '../routes/treatment.routes.js';
 import { reportRoutes } from '../routes/reports.routes.js';
 import { prescriptionRoutes } from '../routes/prescriptions.routes.js';
+import { appointmentRoutes } from '../routes/appointments.routes.js';
 
 /**
  * CLINICAL CORE feature routes — owned by Agent 2.
@@ -21,4 +22,5 @@ export async function clinicalFeature(app: FastifyInstance): Promise<void> {
   await app.register(treatmentRoutes);
   await app.register(reportRoutes);
   await app.register(prescriptionRoutes);
+  await app.register(appointmentRoutes);
 }

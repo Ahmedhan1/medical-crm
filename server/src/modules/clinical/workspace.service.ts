@@ -13,6 +13,7 @@ import {
   type Encounter,
 } from './encounter.repo.js';
 import { applyStatusTx } from './status.service.js';
+import { syncAppointmentFromEncounterTx } from './scheduling.service.js';
 import { getIntakeByEncounter, type Intake } from './intake.repo.js';
 import { listVitalsByEncounter, type Vital } from './vitals.repo.js';
 import { listEncounterPrescriptions, type Prescription } from './prescriptions.service.js';
@@ -211,6 +212,9 @@ export async function attachDoctorTx(
     principal.userId,
   );
 
+  // A linked appointment follows the encounter into consultation.
+  await syncAppointmentFromEncounterTx(client, principal, encounter.id, 'in_consultation');
+
   await emitEvent(client, {
     clinicId: principal.clinicId,
     type: EventType.ENCOUNTER_STARTED,
@@ -278,6 +282,7 @@ export async function completeEncounterTx(
 
   const updated = await applyStatusTx(client, principal, encounter, 'completed');
   await markCompleted(client, principal.clinicId, encounter.id, principal.userId);
+  await syncAppointmentFromEncounterTx(client, principal, encounter.id, 'completed');
 
   await emitEvent(client, {
     clinicId: principal.clinicId,

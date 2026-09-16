@@ -159,5 +159,66 @@ doctor (authority).
   and counts — never complaint text, measured values, medication names or
   clinical narrative. Each of those is asserted by a test.
 
+## Clinical Platform program (post-integration)
+
+The C0xx series delivered the clinic-grade Clinical Core. The Clinical Platform
+program evolves it into a Clinical Operating System. Phases below are the
+program's own numbering; status is measured against the **code**, not this file.
+
+| # | Phase | Status |
+| --- | --- | --- |
+| CP-1 | Patient lifecycle (status, identifiers, contacts, merge) | **DONE** (0104) |
+| CP-2 | Appointment & queue engine | **DONE** (0105) |
+| CP-3 | Triage & extensible observations | NEXT |
+| CP-4 | Clinical documentation & template engine | TODO |
+| CP-5 | Diagnosis / terminology abstraction | PARTIAL — coded diagnosis exists (0101); terminology service not built |
+| CP-6 | Procedures, sessions, protocols | TODO |
+| CP-7 | Prescription platform | PARTIAL — issue/cancel/immutability exist (0103); refills, substitution, supersede not built |
+| CP-8 | Allergy & safety engine | TODO — **highest clinical risk open item**, see below |
+| CP-9 | Document management (DocumentReference) | TODO |
+| CP-10 | Referral & care coordination | TODO |
+| CP-11 | Follow-up & longitudinal care | PARTIAL — follow-ups + recall worklist exist (0103); overdue detection not built |
+| CP-12 | Packages & treatment plans | TODO |
+| CP-13 | Inventory consumption events | TODO (contract only; no second inventory) |
+| CP-14 | Clinical analytics | TODO |
+| CP-15 | Dashboard data contracts | TODO |
+| CP-16 | Patient 360 | TODO (lineage resolution landed in CP-1) |
+| CP-17 | Clinical timeline | PARTIAL — timeline exists, keyset-paginated, lineage-aware; not yet filterable by kind |
+| CP-18 | Specialty configuration engine | STARTED — `appointment_type` and `clinical_resource` are the first config primitives |
+| CP-19 | Multi-tenant hierarchy (Location/Department/Room) | PARTIAL — `clinical_resource` is a bookable thing, not an org hierarchy (foundation-owned) |
+| CP-20 | Local-first verification | TODO (no clinical path requires egress today) |
+| CP-21 | FHIR-ready mapping | TODO (Agent 1 roadmap Phase 6) |
+
+### Known open risk — allergies (CP-8)
+Allergies exist today only as **free text** inside `intake.allergies`. There is
+no structured allergy record and therefore **no prescribing safety check**.
+This is the highest-severity clinical gap in the platform and is the intended
+next major increment after CP-3.
+
+### Scheduling model notes (CP-2)
+- **A room cannot hold two patients at once**, so that is a database EXCLUDE
+  constraint (`ex_appointment_resource`, needs the `btree_gist` extension), not
+  a service check. No code path can book over it.
+- **A practitioner CAN be overbooked**, because clinics do that deliberately.
+  It is a service-level policy: refused by default with the conflicting
+  appointment ids, permitted with an explicit `allowDoubleBooking` by a holder
+  of `appointment:overbook`, and recorded as overbooked in the audit trail.
+- **`in_consultation` and `completed` are not settable from the front desk.**
+  They follow the linked encounter, which is the clinical source of truth for
+  whether a patient was actually seen. One fact, one owner.
+- **Arrival needs `encounter:checkin` as well as `appointment:arrival`,** because
+  it opens a clinical encounter. A nurse can move a patient through the waiting
+  room; opening the visit stays with the front desk.
+- Deferred deliberately, not forgotten: **recurring appointments** (needs a
+  series table plus an expansion/exception policy) and the **waitlist**.
+
+### Event naming — deviation from the program brief
+The brief suggests dotted event names (`appointment.created`). The established
+contract in this repository is SCREAMING_SNAKE (`APPOINTMENT_SCHEDULED`), and
+Agent 3's automation engine matches `automation_rule.event_type` against it as a
+plain string. Renaming would silently break every existing rule, so the existing
+convention is kept. Raised here rather than changed unilaterally.
+
 ## Next tasks
-C001–C007 are DONE. See `TASKS.md` and `docs/agent-state/agent-2.md`.
+CP-3 (triage & extensible observations), then CP-8 (allergy & safety engine).
+See `docs/agent-state/agent-2.md` for the current state.
