@@ -52,6 +52,16 @@ export async function intelligenceRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(outcome);
   });
 
+  /** The caller's own query-budget position (Phase 29 transparency). */
+  app.get('/intelligence/query-budget', async (req, reply) => {
+    const query = params(
+      z.object({ policyKey: z.string().trim().max(60).optional() }),
+      req.query,
+      'Invalid query',
+    );
+    return reply.send(await intelligence.queryBudget(principalOf(req), query.policyKey));
+  });
+
   app.get('/intelligence/runs', async (req, reply) => {
     const query = params(
       z.object({ limit: z.coerce.number().int().optional() }),

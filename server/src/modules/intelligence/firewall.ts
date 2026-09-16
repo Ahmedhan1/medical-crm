@@ -119,7 +119,13 @@ export interface SuppressedCohort {
   signalKey: string;
   scopeId: string;
   cohortSize: number;
-  reason: 'below_min_cohort' | 'policy_precision' | 'policy_signal_type' | 'policy_jurisdiction';
+  reason:
+    | 'below_min_cohort'
+    | 'policy_precision'
+    | 'policy_signal_type'
+    | 'policy_jurisdiction'
+    /** Withheld to protect another suppressed cohort (see `disclosure.ts`). */
+    | 'complementary_suppression';
 }
 
 export interface FirewallResult {

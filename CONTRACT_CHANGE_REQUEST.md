@@ -45,6 +45,38 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-006 — Intelligence signal response: exact cohort size replaced by a band
+- Status: PROPOSED (notification — change is confined to Agent 4's own surface)
+- Requested by: Agent 4
+- Date: 2026-09-16
+- Affects: Agent 4 only today. Filed because `AGENTS.md` §5 lists "a change to an
+  existing endpoint's request/response" as a contract change, and the rule should
+  not be waived by the agent making the change.
+- Contract file(s): none shared. `GET /intelligence/signals` and
+  `POST /intelligence/runs` response bodies (Agent 4 owned).
+- Change: published signals no longer carry `cohortSize` (an exact integer). They
+  carry `cohortBand` (e.g. `"5-9"`) plus `valueRoundingBase`, and `value` is
+  rounded to that base. The exact `cohort_size` remains in the
+  `aggregated_signal` table for the operator's audit trail and for the 0304
+  threshold CHECKs; it is simply no longer returned by the API.
+- Reason: exact counts are the raw material of a differencing attack. Verified
+  against the running system before the change: publishing `cohortSize: 10` for
+  {A,B} and `cohortSize: 8` for {B} recovers a below-threshold cohort of 2 in A,
+  and narrowing the period one day at a time isolates a single subject's
+  contribution. Banding plus rounding removes the arithmetic; the query-governance
+  controls in the same increment remove the repetition.
+- Backward compatibility: **breaking for any consumer reading `cohortSize`**.
+  There is no such consumer today — no other workstream calls the intelligence
+  API, and it has not shipped to a client. Signals written before this change get
+  a band derived on read, so stored history stays readable. Had there been an
+  external consumer, the correct path would have been to add `cohortBand`,
+  deprecate `cohortSize`, and remove it on a version boundary.
+- Tests: `intelligence-redteam.test.ts` asserts no response body contains
+  `cohortSize` and that the exact value is still stored;
+  `query-governance.test.ts` covers banding and rounding directly.
+- Decision (Agent 1): _pending — no action needed unless another workstream
+  intends to consume intelligence signals._
+
 ### CCR-001 — Prescription → medication-master reference
 - Status: **APPROVED** (design); live resolver DEFERRED
 - Requested by: Agent 2

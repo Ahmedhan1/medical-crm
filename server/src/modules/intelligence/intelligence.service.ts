@@ -1,18 +1,19 @@
 import { z } from 'zod';
-import { withTransaction } from '../../db/pool.js';
-import { ValidationError } from '../../domain/errors.js';
+import { getPool, withTransaction } from '../../db/pool.js';
+import { AppError, ValidationError } from '../../domain/errors.js';
 import { emitEvent, EventType } from '../../domain/events.js';
 import { audit, auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { JurisdictionSchema } from '../pharma/provenance.js';
 import { territoryScopeFor } from '../pharma/visibility.js';
+import { applyDisclosureControl } from './disclosure.js';
 import {
   ABSOLUTE_MIN_COHORT,
   runFirewall,
-  type FirewallPolicy,
   type FirewallRequest,
 } from './firewall.js';
+import { decideQuery, type QuerySlice } from './query-governance.js';
 import * as repo from './signals.repo.js';
 import { getSource, listSources } from './sources.js';
 
@@ -36,12 +37,25 @@ import { getSource, listSources } from './sources.js';
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
 /**
+ * A request refused by query governance (budget or narrowing depth).
+ *
+ * 429 rather than 403: the principal holds the permission, and the same request
+ * may succeed once the window rolls forward. The body names the control so an
+ * analyst can tell "you may not" from "not this often, this finely".
+ */
+export class QueryGovernanceError extends AppError {
+  constructor(message: string, details: Record<string, unknown>) {
+    super(429, 'intelligence_query_governance', message, details);
+  }
+}
+
+/**
  * The policy used when an operator has not defined one. Safe by default: the
  * absolute minimum cohort, territory precision, de-identification required.
  */
 export const DEFAULT_POLICY_KEY = 'default';
 
-export function defaultPolicy(jurisdiction: string): FirewallPolicy {
+export function defaultPolicy(jurisdiction: string): repo.GovernancePolicy {
   return {
     key: DEFAULT_POLICY_KEY,
     jurisdiction,
@@ -49,6 +63,13 @@ export function defaultPolicy(jurisdiction: string): FirewallPolicy {
     maxPrecision: 'territory',
     requiresDeidentification: true,
     allowedSignalTypes: [],
+    // Query governance and disclosure control (0305). These mirror the column
+    // defaults, so an operator who never defines a policy is still protected.
+    maxQueriesPerWindow: 30,
+    queryWindowHours: 24,
+    maxNarrowingDepth: 2,
+    valueRoundingBase: 5,
+    complementarySuppression: true,
   };
 }
 
@@ -73,6 +94,12 @@ export const UpsertPolicySchema = z.object({
   minCohortSize: z.number().int().min(ABSOLUTE_MIN_COHORT).max(1000),
   maxPrecision: z.enum(['territory', 'region', 'country']).default('territory'),
   allowedSignalTypes: z.array(z.string().trim().min(2).max(60)).max(50).default([]),
+  // Query governance. The bounds mirror the CHECK constraints in 0305 so the
+  // protection cannot be configured away through the API either.
+  maxQueriesPerWindow: z.number().int().min(1).max(1000).default(30),
+  queryWindowHours: z.number().int().min(1).max(720).default(24),
+  maxNarrowingDepth: z.number().int().min(0).max(10).default(2),
+  valueRoundingBase: z.number().int().min(1).max(100).default(5),
 });
 
 function parse<T extends z.ZodTypeAny>(schema: T, raw: unknown, what: string): z.infer<T> {
@@ -103,6 +130,10 @@ export async function upsertPolicy(principal: Principal, raw: unknown) {
       minCohortSize: input.minCohortSize,
       maxPrecision: input.maxPrecision,
       allowedSignalTypes: input.allowedSignalTypes,
+      maxQueriesPerWindow: input.maxQueriesPerWindow,
+      queryWindowHours: input.queryWindowHours,
+      maxNarrowingDepth: input.maxNarrowingDepth,
+      valueRoundingBase: input.valueRoundingBase,
       createdBy: principal.userId,
     });
     await auditTx(client, {
@@ -161,6 +192,62 @@ export async function runIntelligence(principal: Principal, raw: unknown): Promi
   const scope = await territoryScopeFor(principal);
   const territoryIds = input.territoryIds ?? scope;
 
+  // PHASE 29 — query governance, BEFORE any data is fetched. A refused request
+  // must not touch the source at all: the point is that the answer is never
+  // computed, not that it is computed and withheld.
+  const slice: QuerySlice = {
+    signalType: input.signalType,
+    jurisdiction: input.jurisdiction,
+    scopeKeys: [...(territoryIds ?? [])].sort(),
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+  };
+  const history = await repo.recentAllowedQueries(
+    principal.clinicId,
+    principal.userId,
+    input.signalType,
+    policy.queryWindowHours,
+  );
+  const decision = decideQuery(slice, history, policy);
+
+  if (!decision.allowed) {
+    // Record the refusal before returning it, so a principal probing the
+    // boundary leaves a trail they cannot erase (the log is append-only).
+    await repo.insertQueryLog(getPool(), {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      queryKind: 'run',
+      signalType: input.signalType,
+      jurisdiction: input.jurisdiction,
+      scopeType: input.scopeType,
+      scopeKeys: slice.scopeKeys,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      policyKey: policy.key,
+      outcome: decision.outcome,
+      narrowingDepth: decision.narrowingDepth,
+    });
+    await audit({
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'intelligence.query.denied',
+      outcome: 'denied',
+      targetType: 'intelligence_run',
+      metadata: {
+        signalType: input.signalType,
+        outcome: decision.outcome,
+        narrowingDepth: decision.narrowingDepth,
+      },
+    });
+    throw new QueryGovernanceError(decision.reason, {
+      control: decision.outcome,
+      narrowingDepth: decision.narrowingDepth,
+      maxNarrowingDepth: policy.maxNarrowingDepth,
+      maxQueriesPerWindow: policy.maxQueriesPerWindow,
+      queryWindowHours: policy.queryWindowHours,
+    });
+  }
+
   // This throws for `clinical_governed` until CCR-001 lands; the refusal is
   // recorded as a denied run so the attempt is visible in the audit trail.
   let contributions;
@@ -202,7 +289,12 @@ export async function runIntelligence(principal: Principal, raw: unknown): Promi
       `${input.periodStart}..${input.periodEnd}, de-identified and threshold-gated`,
   };
 
-  const result = runFirewall(contributions, request, policy);
+  const firewalled = runFirewall(contributions, request, policy);
+
+  // PHASE 28 — disclosure control on what survived the threshold: complementary
+  // suppression, cohort banding and value rounding. It can only remove or blur.
+  const result = applyDisclosureControl(firewalled.signals, firewalled.suppressed, policy);
+  const cohortsEvaluated = firewalled.cohortsEvaluated;
 
   return withTransaction(async (client) => {
     const run = await repo.insertRun(client, {
@@ -216,11 +308,28 @@ export async function runIntelligence(principal: Principal, raw: unknown): Promi
       policyKey: policy.key,
       minCohortSize: Math.max(policy.minCohortSize, ABSOLUTE_MIN_COHORT),
       status: 'completed',
-      cohortsEvaluated: result.cohortsEvaluated,
+      cohortsEvaluated,
       cohortsSuppressed: result.suppressed.length,
       signalsPublished: result.signals.length,
       denialReason: null,
       requestedBy: principal.userId,
+    });
+
+    // The allowed query joins the principal's history only once the run has
+    // actually happened, and in the same transaction as the run itself.
+    await repo.insertQueryLog(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      queryKind: 'run',
+      signalType: input.signalType,
+      jurisdiction: input.jurisdiction,
+      scopeType: input.scopeType,
+      scopeKeys: slice.scopeKeys,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      policyKey: policy.key,
+      outcome: 'allowed',
+      narrowingDepth: decision.narrowingDepth,
     });
 
     const stored: repo.StoredSignal[] = [];
@@ -238,7 +347,7 @@ export async function runIntelligence(principal: Principal, raw: unknown): Promi
         payload: {
           signalType: signal.signalType,
           scopeType: signal.scopeType,
-          cohortSize: signal.cohortSize,
+          cohortBand: signal.cohortBand,
           policyKey: signal.policyKey,
         },
       });
@@ -292,7 +401,7 @@ export async function runIntelligence(principal: Principal, raw: unknown): Promi
       sourceKind: input.sourceKind,
       policyKey: policy.key,
       minCohortSize: Math.max(policy.minCohortSize, ABSOLUTE_MIN_COHORT),
-      cohortsEvaluated: result.cohortsEvaluated,
+      cohortsEvaluated,
       cohortsSuppressed: result.suppressed.length,
       signalsPublished: stored.length,
       signals: stored,
@@ -347,6 +456,34 @@ export async function listSignals(principal: Principal, params: ListSignalsParam
     },
   });
   return visible;
+}
+
+/**
+ * The principal's own query-budget position.
+ *
+ * Exposed so an analyst can see why a request will be refused before making it,
+ * rather than discovering the boundary by probing it — probing is exactly the
+ * behaviour the control exists to discourage. It reports only the caller's own
+ * usage, never another principal's.
+ */
+export async function queryBudget(principal: Principal, policyKey = DEFAULT_POLICY_KEY) {
+  requirePermission(principal, Permission.INTELLIGENCE_PUBLISH);
+  const policy =
+    (await repo.getPolicy(principal.clinicId, policyKey)) ?? defaultPolicy('XX');
+  const usage = await repo.queryBudgetUsage(
+    principal.clinicId,
+    principal.userId,
+    policy.queryWindowHours,
+  );
+  return {
+    policyKey: policy.key,
+    windowHours: policy.queryWindowHours,
+    maxQueriesPerWindow: policy.maxQueriesPerWindow,
+    used: usage.used,
+    remaining: Math.max(policy.maxQueriesPerWindow - usage.used, 0),
+    deniedInWindow: usage.denied,
+    maxNarrowingDepth: policy.maxNarrowingDepth,
+  };
 }
 
 export async function listRuns(principal: Principal, limit = 20) {
