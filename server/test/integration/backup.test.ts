@@ -129,6 +129,23 @@ describe('backup → reset → restore → verify (recovery round-trip)', () => 
           WHERE schemaname='public' AND indexname='ix_plat_prescription_patient'`,
       );
       expect(Number(idx.rows[0]!.n)).toBe(1);
+
+      // Every workstream's schema survived the restore (integrated recovery §11):
+      // clinical, automation/AI-governance, and pharma/intelligence tables.
+      for (const table of [
+        'appointment', // clinical scheduling (0105)
+        'allergy', // clinical safety (0107)
+        'ai_generation', // AI governance/observability (0200)
+        'aggregated_signal', // pharma intelligence firewall (0304)
+        'backup_run', // platform ledger (0901)
+      ]) {
+        const t = await scratch.query<{ n: string }>(
+          `SELECT count(*)::text n FROM information_schema.tables
+            WHERE table_schema='public' AND table_name=$1`,
+          [table],
+        );
+        expect(Number(t.rows[0]!.n), `restored DB missing ${table}`).toBe(1);
+      }
     } finally {
       await scratch.end();
     }

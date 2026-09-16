@@ -45,8 +45,8 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
-### CCR-006 — Intelligence signal response: exact cohort size replaced by a band
-- Status: PROPOSED (notification — change is confined to Agent 4's own surface)
+### CCR-009 — Intelligence signal response: exact cohort size replaced by a band
+- Status: **ACKNOWLEDGED / APPROVED** (renumbered from Agent 4's CCR-006 at integration — collided with Agent 2's patient-extension CCR-006)
 - Requested by: Agent 4
 - Date: 2026-09-16
 - Affects: Agent 4 only today. Filed because `AGENTS.md` §5 lists "a change to an
@@ -74,8 +74,12 @@ inside your own feature module; adding a new table in your migration range.
 - Tests: `intelligence-redteam.test.ts` asserts no response body contains
   `cohortSize` and that the exact value is still stored;
   `query-governance.test.ts` covers banding and rounding directly.
-- Decision (Agent 1): _pending — no action needed unless another workstream
-  intends to consume intelligence signals._
+- **Decision (Agent 1 / Integration I-3A):** APPROVED. This strengthens the
+  intelligence firewall's cohort protection (differencing/narrowing defence,
+  directive §6) and is confined to Agent 4's own API surface with no external
+  consumer — no cross-workstream impact. Integrated and covered by
+  `intelligence-redteam.test.ts` (no `cohortSize` in any response; exact value
+  still stored for audit + the 0304 threshold CHECKs). Status → DONE.
 
 ### CCR-001 — Prescription → medication-master reference
 - Status: **APPROVED** (design); live resolver DEFERRED
@@ -175,6 +179,11 @@ inside your own feature module; adding a new table in your migration range.
   not rushed during integration. NOT a production blocker: no clinical data can
   reach pharma today, by construction. Owner for the deferred build: Agent 1 +
   Agent 2.
+  - **Reaffirmed at Integration I-3A:** Agent 4's new query-governance/disclosure
+    work (0305, P28/P29) operates over pharma's OWN field data — it does NOT wire
+    the clinical source. Verified: no pharma/intelligence module references a
+    clinical table (static scan) and `clinical_governed` still returns 501. CCR-004
+    remains fail-closed.
 
 ### CCR-008 — Document byte storage (local-first blob strategy)
 - Status: PROPOSED
@@ -204,7 +213,16 @@ inside your own feature module; adding a new table in your migration range.
   registered against externally-produced keys (already supported and tested).
 - Tests: `test/integration/documents.test.ts` covers metadata, versioning,
   access policy and isolation; byte round-trip tests arrive with the service.
-- Decision (Agent 1): _pending_
+- **Decision (Agent 1 / Integration I-3A):** APPROVED as a platform
+  responsibility; implementation **DEFERRED** to a platform file-storage phase
+  (roadmap Phase 3 / §7 shared services). The proposed tenant-scoped
+  `putObject/getObject` shape is accepted, with Clinical Core remaining the sole
+  authorization authority (the storage service is never the auth point). Current
+  conservative behavior stands: metadata-only + externally-produced `storage_key`.
+  **Backup-scope caveat (recorded in PRODUCTION-READINESS):** document *bytes*
+  live outside Postgres, so the DB backup does not yet cover them — the file
+  store must ship with its own backup coverage before documents are used for
+  primary storage in production.
 
 ### CCR-007 — Coded drug↔allergen cross-reference for prescribing safety
 - Status: PROPOSED
@@ -235,7 +253,15 @@ inside your own feature module; adding a new table in your migration range.
   behaviour (whole-word match, no short-substring false positive, refuted/
   inactive ignored, merged-lineage protection); ref-based matching gains tests
   when the code source exists.
-- Decision (Agent 1): _pending_
+- **Decision (Agent 1 / Integration I-3A):** APPROVED (contract shape);
+  implementation **DEFERRED** per directive §4 — preserve the conservative
+  current behaviour. The name-heuristic safety check remains authoritative today;
+  a `ref` match is treated as definitive only when both refs are present (already
+  the case). The coded cross-reference is NOT wired now because it needs a
+  governed read of the drug master (allergen/ingredient codes only, never a
+  direct table query, mirroring the CCR-004 firewall discipline). No clinical
+  code changes when codes arrive (fully additive). Safety is not weakened in the
+  meantime.
 
 ### CCR-006 — Patient record extension (lifecycle, identifiers, contacts, merge)
 - Status: PROPOSED
@@ -276,7 +302,12 @@ inside your own feature module; adding a new table in your migration range.
   transitions, merge semantics and lineage, identifier uniqueness as a duplicate
   signal, contact primary-demotion, PHI containment in audit metadata, RBAC per
   role, and cross-tenant isolation. Full suite 398 green.
-- Decision (Agent 1): _pending_
+- **Decision (Agent 1 / Integration I-3A):** APPROVED and INTEGRATED (0104,
+  Agent 2 range; no shared file changed). Additive columns are nullable/defaulted
+  so downstream readers (Agent 3 recipients/conditions, Agent 4 de-identification)
+  keep working. The one behavioural change — `birthDate` now serializes date-only
+  (`"1980-04-02"`) instead of a full ISO timestamp — is accepted: it is more
+  correct for a date column and has no shipped consumer. Status → DONE.
 
 ### CCR-005 — Additional pharma role keys (fix ADMIN over-grant)
 - Status: **APPROVED** — implemented at integration

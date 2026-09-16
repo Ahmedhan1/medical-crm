@@ -55,3 +55,28 @@ and validates the numbers on its own hardware.
 | auth security test (rate-limit/lockout) | not yet (Priority 3) |
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |
+
+## Integration baseline I-3A (2026-09-16)
+
+All active agent branches integrated into `integration/medcore-v1`
+(Agent 2 CP-1..CP-9 + Patient 360; Agent 3 E2 scheduling/hardening + E3 AI
+governance; Agent 4 P28/P29 disclosure control + query governance).
+
+- **Migrations:** 21 apply from empty in order (0001 / 0100–0108 / 0200–0202 /
+  0300–0305 / 0900–0901) → **86 tables**. Ranges respected, no duplicates.
+- **Tests:** **583 / 46 files green**; typecheck + build clean.
+- **Integrated recovery:** backup → fresh DB → restore verified that migrations,
+  table count, a clinical row, RBAC catalog, append-only triggers, platform
+  indexes, and representative clinical/AI/pharma tables (`appointment`, `allergy`,
+  `ai_generation`, `aggregated_signal`, `backup_run`) all survive.
+- **Security (verified statically + by tests):** no AI/pharma/intelligence module
+  reads or writes clinical tables; AI writes only `ai_draft`/`ai_generation`/
+  `tenant_ai_policy`; E3 gateway enforces PHI-local fail-closed; CCR-004 clinical
+  source still refuses (501); intelligence now bands cohort size (CCR-009).
+- **Backup-scope caveat (CCR-008):** document *bytes* are stored outside Postgres
+  (metadata-only today), so the DB backup does not yet cover document blobs — the
+  future platform file-store must ship with its own backup before documents are
+  used for primary storage.
+- **Arabic/RTL PDF:** decision recorded (`PDF-ARABIC.md`); implementation is the
+  next increment, gated on engine-footprint ratification + human visual sign-off.
+  Still **Not Ready**.

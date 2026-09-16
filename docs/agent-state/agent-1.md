@@ -9,8 +9,25 @@ Does NOT build Agent 2–4 domain features.
 
 ## Current status
 **Foundation (F001) done; integration (I001) done; platform Phase 1 done;
-platform Phase 2 (Backup & Restore) done** on `integration/medcore-v1`. Full
-suite green; migrations apply from empty incl. the platform range.
+platform Phase 2 (Backup & Restore) done; Integration Gate I-3A done** on
+`integration/medcore-v1`. Full suite green; migrations apply from empty.
+
+## Integration Gate I-3A (2026-09-16)
+Re-integrated all active agent branches (they had advanced past I001):
+- Agent 2 (`inspiring-cori` → e42c4aa): CP-1..CP-9 patient lifecycle, scheduling,
+  observation engine, allergy+safety, document references, Patient 360 (0104–0108).
+- Agent 3 (`magical-gates` → 75b51c6): E2 scheduling/time engine + engine
+  hardening + comms-quality guards; E3 AI governance gateway (classify → tenant
+  policy → route → provider), PHI-local fail-closed (0201–0202).
+- Agent 4 (`jolly-carson` → 2225465): P28/P29 disclosure control + query
+  governance for the intelligence layer (0305).
+All three merged **conflict-free** (parallel-safe seams held again). Migrations
+0001→0901 (21 files) apply from empty → 86 tables; **583 tests / 46 files green**;
+typecheck + build clean. Security audits (AI/clinical/pharma bypass, PHI-in-logs)
+clean; integrated backup→restore recovery verified across all domains.
+CCR decisions recorded: 006/007/009 (APPROVED; 007 impl deferred conservative),
+008 (platform file-storage, deferred), 004 reaffirmed fail-closed. Arabic PDF
+engine/font decision recorded (`PDF-ARABIC.md`).
 
 ## Platform Phase 2 — Backup & Restore (Priority 1)
 Objectively the highest-priority incomplete risk (local-first with no recovery).
