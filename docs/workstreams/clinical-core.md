@@ -169,7 +169,7 @@ program's own numbering; status is measured against the **code**, not this file.
 | --- | --- | --- |
 | CP-1 | Patient lifecycle (status, identifiers, contacts, merge) | **DONE** (0104) |
 | CP-2 | Appointment & queue engine | **DONE** (0105) |
-| CP-3 | Triage & extensible observations | NEXT |
+| CP-3 | Triage & extensible observations | **DONE** (0106) |
 | CP-4 | Clinical documentation & template engine | TODO |
 | CP-5 | Diagnosis / terminology abstraction | PARTIAL — coded diagnosis exists (0101); terminology service not built |
 | CP-6 | Procedures, sessions, protocols | TODO |
@@ -194,6 +194,22 @@ Allergies exist today only as **free text** inside `intake.allergies`. There is
 no structured allergy record and therefore **no prescribing safety check**.
 This is the highest-severity clinical gap in the platform and is the intended
 next major increment after CP-3.
+
+### Observation engine notes (CP-3)
+- **`observation` does not replace `vital`.** The universal vital set keeps its
+  fast, CHECK-constrained, generated-BMI path (`vital`, 0100), which reports and
+  the timeline already read. `observation` is the OPEN extension for everything
+  specialty-specific — a PASI score, an ejection fraction, a gait note — driven
+  by an `observation_definition` catalog. Rewriting stable vitals into a generic
+  table would be a regression, not a cleanup (rule 31).
+- **Reference ranges are DATA.** A definition carries min/max (validation) and
+  reference_low/high (flagging); the abnormal flag is computed at record time
+  from the definition and stored, so it reflects the range then in force. This
+  is the one thing the vitals path hard-codes, now configurable per clinic.
+- **Definitions are config, not code (Phase 18).** A new specialty measurement
+  is an ADMIN-created row; clinicians read the catalog and record against it.
+- Value coercion and bounds are enforced by value type, so a clinic-defined
+  observation is validated exactly like a built-in one, with no code change.
 
 ### Scheduling model notes (CP-2)
 - **A room cannot hold two patients at once**, so that is a database EXCLUDE
@@ -220,5 +236,5 @@ plain string. Renaming would silently break every existing rule, so the existing
 convention is kept. Raised here rather than changed unilaterally.
 
 ## Next tasks
-CP-3 (triage & extensible observations), then CP-8 (allergy & safety engine).
-See `docs/agent-state/agent-2.md` for the current state.
+CP-8 (allergy & safety engine) — the highest open clinical risk — then CP-9
+(documents) / CP-10 (referrals). See `docs/agent-state/agent-2.md`.

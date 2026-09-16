@@ -39,6 +39,15 @@ const TIMELINE_SOURCES: readonly string[] = [
      FROM vital v
     WHERE v.clinic_id = $1 AND v.patient_id = ANY($2::uuid[])`,
 
+  `SELECT o.id::text, 'observation', o.performed_at, o.encounter_id, d.name,
+          jsonb_strip_nulls(jsonb_build_object(
+            'key', d.key, 'unit', o.unit, 'abnormal', o.is_abnormal,
+            'valueNumber', o.value_number, 'valueText', o.value_text,
+            'valueBoolean', o.value_boolean, 'valueCode', o.value_code))
+     FROM observation o
+     JOIN observation_definition d ON d.id = o.definition_id
+    WHERE o.clinic_id = $1 AND o.patient_id = ANY($2::uuid[])`,
+
   `SELECT a.id::text, 'assessment', a.updated_at, a.encounter_id, a.summary,
           jsonb_strip_nulls(jsonb_build_object('severity', a.severity))
      FROM assessment a

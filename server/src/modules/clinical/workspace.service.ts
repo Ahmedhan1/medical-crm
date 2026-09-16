@@ -16,6 +16,7 @@ import { applyStatusTx } from './status.service.js';
 import { syncAppointmentFromEncounterTx } from './scheduling.service.js';
 import { getIntakeByEncounter, type Intake } from './intake.repo.js';
 import { listVitalsByEncounter, type Vital } from './vitals.repo.js';
+import { listEncounterObservations, type Observation } from './observations.service.js';
 import { listEncounterPrescriptions, type Prescription } from './prescriptions.service.js';
 import { listFollowUpsByEncounter, type FollowUp } from './followups.service.js';
 import {
@@ -631,6 +632,7 @@ export interface EncounterWorkspace {
   patient: { id: string; mrn: string; fullName: string; sex: string; birthDate: string | null };
   intake?: Intake | null;
   vitals?: Vital[];
+  observations?: Observation[];
   clinical?: EncounterClinical | null;
   assessment?: Assessment | null;
   diagnoses?: Diagnosis[];
@@ -673,6 +675,9 @@ export async function getWorkspace(
   }
   if (hasPermission(principal, Permission.VITALS_READ)) {
     workspace.vitals = await listVitalsByEncounter(principal.clinicId, encounter.id);
+  }
+  if (hasPermission(principal, Permission.OBSERVATION_READ)) {
+    workspace.observations = await listEncounterObservations(principal, encounter.id);
   }
   if (hasPermission(principal, Permission.PRESCRIPTION_READ)) {
     workspace.prescriptions = await listEncounterPrescriptions(principal.clinicId, encounter.id);
