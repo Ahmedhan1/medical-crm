@@ -98,12 +98,12 @@ principal cannot lock themselves out with rejected probes.
 
 | File | Tests | Covers |
 | --- | --- | --- |
-| `test/unit/hcp-verification.test.ts` | 15 | transition graph (no state reaches `verified` directly), material-change rule, expiry arithmetic |
-| `test/integration/hcp-hardening.test.ts` | 19 | professional category, credentials, full lifecycle, derived expiry, sweep idempotency, attribute provenance, DB refusals |
+| `test/unit/hcp-verification.test.ts` | 11 | transition graph (no state reaches `verified` directly), material-change rule, expiry arithmetic |
+| `test/integration/hcp-hardening.test.ts` | 23 | professional category, credentials, full lifecycle, derived expiry, sweep idempotency, attribute provenance, DB refusals |
 | `test/integration/hcp-master.test.ts` | 23 (+3) | updated to the governed lifecycle; adds material vs non-material edit and reason-required cases |
 | `test/integration/intelligence-redteam.test.ts` | 21 (+4) | adds safety negatives pinning the deliberate absence of any adverse-event or clinical path |
 | `test/unit/query-governance.test.ts` | 22 | narrowing containment, depth, budget/narrowing decisions, banding, rounding, complementary suppression |
-| `test/integration/pharma-firewall.test.ts` | 67 | the four firewall layers, banded contract, threshold immutability |
+| `test/integration/pharma-firewall.test.ts` | 69 | the four firewall layers, banded contract, threshold immutability |
 
 ## Breaking change in this increment
 `POST /hcps` now **requires** `professionalCategory`. Defaulting it to

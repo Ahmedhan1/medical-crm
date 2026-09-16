@@ -345,10 +345,10 @@ Two local conventions worth keeping:
 | `test/integration/drug-master.test.ts` | 17 | licensing discipline, jurisdiction, regulatory identity, imports |
 | `test/integration/pharma-field.test.ts` | 20 | territory scope, visits, briefing, call reports, scientific requests |
 | `test/integration/pharma-content.test.ts` | 21 | approval lifecycle, expiry gating, engagement, segments, campaigns |
-| `test/integration/pharma-firewall.test.ts` | 67 | the four firewall layers, the blocked clinical source, end-to-end signals, threshold immutability |
+| `test/integration/pharma-firewall.test.ts` | 69 | the four firewall layers, the blocked clinical source, end-to-end signals, threshold immutability |
 | `test/unit/query-governance.test.ts` | 22 | narrowing detection, budget decisions, banding, rounding, complementary suppression |
-| `test/unit/hcp-verification.test.ts` | 15 | the transition graph, material-change rule, expiry arithmetic |
-| `test/integration/hcp-hardening.test.ts` | 19 | professional category, credentials, the full lifecycle, derived expiry, the sweep, attribute provenance |
+| `test/unit/hcp-verification.test.ts` | 11 | the transition graph, material-change rule, expiry arithmetic |
+| `test/integration/hcp-hardening.test.ts` | 23 | professional category, credentials, the full lifecycle, derived expiry, the sweep, attribute provenance |
 | `test/integration/intelligence-redteam.test.ts` | 17 | differencing, narrowing chains, budget exhaustion, controls that cannot be configured away |
 
 ## 7. Territory scope and clinic-wide principals
