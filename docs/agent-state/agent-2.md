@@ -14,19 +14,14 @@ requires but `TASKS.md` had no id for. Ready for I001 integration.
   lifecycle (claim / audited handover / complete), complaint, examination,
   assessment, diagnoses, treatment plan, append-only clinical notes, and the
   permission-shaped workspace read with previous visits.
-
 - **C003 — Save & Next (queue advance).** Atomic complete-then-claim, plus a
   standalone "take the next patient" entry point.
-
 - **C004 — Patient timeline.** One chronological stream of every clinical
   record for a patient, keyset-paginated.
-
 - **C005 — Treatment response episodes.** Longitudinal treatment episodes with
   an append-only response series, completion and discontinuation.
-
 - **C006 — Report engine.** Neutral document model plus a dependency-free
   PDF 1.4 renderer; encounter and patient summary reports.
-
 - **C007 — Prescriptions and follow-ups.** Immutable issued prescriptions with
   append-only lines, cancellation, follow-up scheduling and the reception recall
   worklist. Added by Agent 2; see Discrepancies.
