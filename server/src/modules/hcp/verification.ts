@@ -1,11 +1,19 @@
 import { ConflictError, ValidationError } from '../../domain/errors.js';
 
 /**
- * PHASE 6 — the HCP verification lifecycle.
+ * PHASE 6 — the master-data verification lifecycle.
  *
  * Verification is a claim with a shelf life, not a permanent label. This module
  * is the whole of the rule set, as pure functions, so every transition is
  * testable without a database and no caller can invent a path between states.
+ *
+ * ONE lifecycle governs every verified master record — HCP, HCO and the
+ * organisation's locations and departments. The states, the transition graph
+ * and the evidence rules are identical for all of them; only the set of
+ * MATERIAL attributes differs per entity, and that is passed in rather than
+ * duplicated (see `isMaterialChange`). A second lifecycle would be a second
+ * answer to "is this record trustworthy", which is exactly what master-data
+ * governance exists to prevent.
  *
  *   unverified ──► pending_review ──► verified ──► expired ──► pending_review
  *        │               │    │           │
@@ -146,8 +154,48 @@ export const MATERIAL_ATTRIBUTES: ReadonlySet<string> = new Set([
   'effectiveTo',
 ]);
 
-export function isMaterialChange(changedAttributes: readonly string[]): boolean {
-  return changedAttributes.some((attribute) => MATERIAL_ATTRIBUTES.has(attribute));
+/**
+ * The same rule for an ORGANISATION record.
+ *
+ * A reviewer verifying an HCO attested to which organisation this is, what kind
+ * it is, who owns it, whether it is operating, where it is and under which
+ * jurisdiction. Editing one of those means the previous review no longer covers
+ * the record.
+ *
+ * Deliberately EXCLUDED, for the same reasons as the HCP set: the provenance
+ * and confidence fields themselves (re-citing a source for unchanged facts is
+ * not a material change) and purely descriptive address detail — `postalCode`
+ * is included because it is the part of an address that identifies the site,
+ * while a corrected `addressLine` typo is not a new claim about who this is.
+ */
+export const HCO_MATERIAL_ATTRIBUTES: ReadonlySet<string> = new Set([
+  'name',
+  'hcoType',
+  'ownershipType',
+  'operatingStatus',
+  'parentHcoId',
+  'country',
+  'region',
+  'city',
+  'postalCode',
+  'jurisdiction',
+  'effectiveFrom',
+  'effectiveTo',
+]);
+
+/**
+ * Does this set of changed attributes invalidate a completed verification?
+ *
+ * The attribute set is a parameter so the ONE lifecycle serves every governed
+ * master record — HCP, HCO and the organisation's locations and departments —
+ * rather than each growing its own copy of the rule. Defaults to the HCP set so
+ * existing callers are unchanged.
+ */
+export function isMaterialChange(
+  changedAttributes: readonly string[],
+  material: ReadonlySet<string> = MATERIAL_ATTRIBUTES,
+): boolean {
+  return changedAttributes.some((attribute) => material.has(attribute));
 }
 
 /**

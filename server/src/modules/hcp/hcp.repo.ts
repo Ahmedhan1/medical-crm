@@ -9,7 +9,6 @@ import type {
   HcpIdentifier,
   HcpSpecialtyLink,
   HcpRevision,
-  Hco,
   PracticeLocation,
   ProfessionalInterest,
   Specialty,
@@ -41,7 +40,7 @@ const EFFECTIVE_VERIFICATION =
 
 // --- row shapes -------------------------------------------------------------
 
-interface ProvenanceRow {
+export interface ProvenanceRow {
   source: string;
   source_version: string | null;
   source_ref: string | null;
@@ -51,12 +50,12 @@ interface ProvenanceRow {
   last_verified_at: string | null;
 }
 
-function toNumber(value: string | number | null): number | null {
+export function toNumber(value: string | number | null): number | null {
   if (value === null) return null;
   return typeof value === 'number' ? value : Number(value);
 }
 
-function mapProvenance(row: ProvenanceRow): Provenance {
+export function mapProvenance(row: ProvenanceRow): Provenance {
   return {
     source: row.source,
     sourceVersion: row.source_version,
@@ -127,111 +126,6 @@ export function mapHcp(row: HcpRow): Hcp {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-interface HcoRow extends ProvenanceRow {
-  id: string;
-  clinic_id: string;
-  name: string;
-  hco_type: Hco['hcoType'];
-  parent_hco_id: string | null;
-  country: string;
-  region: string | null;
-  city: string | null;
-  address_line: string | null;
-  postal_code: string | null;
-  record_version: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-function mapHco(row: HcoRow): Hco {
-  return {
-    id: row.id,
-    clinicId: row.clinic_id,
-    name: row.name,
-    hcoType: row.hco_type,
-    parentHcoId: row.parent_hco_id,
-    country: row.country,
-    region: row.region,
-    city: row.city,
-    addressLine: row.address_line,
-    postalCode: row.postal_code,
-    provenance: mapProvenance(row),
-    recordVersion: row.record_version,
-    isActive: row.is_active,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-// --- HCO --------------------------------------------------------------------
-
-export interface InsertHcoInput {
-  clinicId: string;
-  name: string;
-  hcoType: Hco['hcoType'];
-  parentHcoId: string | null;
-  country: string;
-  region: string | null;
-  city: string | null;
-  addressLine: string | null;
-  postalCode: string | null;
-  source: string;
-  sourceVersion: string | null;
-  sourceRef: string | null;
-  jurisdiction: string;
-  confidence: number | null;
-  createdBy: string;
-}
-
-export async function insertHco(runner: Runner, input: InsertHcoInput): Promise<Hco> {
-  const { rows } = await runner.query<HcoRow>(
-    `INSERT INTO hco
-       (clinic_id, name, hco_type, parent_hco_id, country, region, city, address_line,
-        postal_code, source, source_version, source_ref, jurisdiction, confidence, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-     RETURNING *`,
-    [
-      input.clinicId,
-      input.name,
-      input.hcoType,
-      input.parentHcoId,
-      input.country,
-      input.region,
-      input.city,
-      input.addressLine,
-      input.postalCode,
-      input.source,
-      input.sourceVersion,
-      input.sourceRef,
-      input.jurisdiction,
-      input.confidence,
-      input.createdBy,
-    ],
-  );
-  return mapHco(rows[0]!);
-}
-
-export async function getHcoById(clinicId: string, id: string): Promise<Hco | null> {
-  const { rows } = await getPool().query<HcoRow>(
-    `SELECT * FROM hco WHERE id = $1 AND clinic_id = $2`,
-    [id, clinicId],
-  );
-  return rows[0] ? mapHco(rows[0]) : null;
-}
-
-export async function listHcos(clinicId: string, q: string | null, limit: number): Promise<Hco[]> {
-  const { rows } = await getPool().query<HcoRow>(
-    `SELECT * FROM hco
-      WHERE clinic_id = $1
-        AND ($2::text IS NULL OR lower(name) LIKE '%' || lower($2) || '%')
-      ORDER BY name
-      LIMIT $3`,
-    [clinicId, q, limit],
-  );
-  return rows.map(mapHco);
 }
 
 // --- Specialty taxonomy -----------------------------------------------------
