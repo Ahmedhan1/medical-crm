@@ -57,6 +57,29 @@ and validates the numbers on its own hardware.
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |
 
+## Consolidated baseline I-4 (2026-09-16) — current source of truth
+
+Tag `baseline-i4`. All four workstreams consolidated on `integration/medcore-v1`.
+Adds since I-3A: Agent 2 referrals + follow-up detection (0109–0110); Agent 3
+**E4 AI Action Security Kernel** (0203, cherry-picked — E2/E3 already integrated);
+Agent 4 HCP master hardening + verification lifecycle (0306).
+
+- **Migrations:** 25 apply from empty in order (0001 / 0100–0110 / 0200–0203 /
+  0300–0306 / 0900–0901) → **91 tables**. Ranges respected, no duplicates.
+- **Tests:** **698 / 53 files green**; typecheck + build clean.
+- **Integrated recovery (§6):** `backup.test.ts` green against the 91-table
+  schema — backup → fresh DB → restore preserves migrations, table count, a
+  clinical row, RBAC catalog, append-only triggers, platform indexes, and
+  cross-domain tables.
+- **Security (verified this gate):** AI actions run only through the E4
+  `executeAiAction` guard (authorize→[confirm]→execute; deny/confirm never
+  execute; args never logged); AI tool/provider access has no bypass; no AI or
+  pharma module reads/writes clinical tables; PHARMA_REP isolation + query
+  governance + cohort banding intact; CCR-004 clinical source and CCR-010
+  adverse-event handoff both remain fail-closed / not implemented.
+- **CCRs:** CCR-010 (adverse-event handoff) recorded design-only; CCR-007
+  (drug↔allergen) reaffirmed deferred/conservative.
+
 ## Integration baseline I-3A (2026-09-16)
 
 All active agent branches integrated into `integration/medcore-v1`

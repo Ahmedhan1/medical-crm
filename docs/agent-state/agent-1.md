@@ -8,9 +8,30 @@ interoperability, dependency governance, release engineering, and integration/QA
 Does NOT build Agent 2–4 domain features.
 
 ## Current status
-**Foundation (F001) done; integration (I001) done; platform Phase 1 done;
-platform Phase 2 (Backup & Restore) done; Integration Gate I-3A done** on
-`integration/medcore-v1`. Full suite green; migrations apply from empty.
+**Consolidated baseline I-4 established** on `integration/medcore-v1` (tag
+`baseline-i4`). F001, I001, platform P1/P2/P3, and integration gates I-3A + I-4
+all done. Full suite green (698 tests / 53 files); 25 migrations apply from empty
+→ 91 tables; typecheck + build clean; integrated backup→restore verified.
+
+## Integration Gate I-4 (2026-09-16) — consolidation
+Re-audited all agent branches (they had advanced; Agent 3 had force-pushed a
+rebase). Integrated the latest valid work, preserving every ownership boundary:
+- **Agent 2** (`811db4f`): merged — P10 referrals (0109) + P11 follow-up
+  detection (0110).
+- **Agent 3** (`670e514`): E2/E3 were rebased to new SHAs but byte-identical to
+  what I-3A already integrated (verified empty diff), so I **cherry-picked only
+  the new E4** — AI Action Security Kernel (0203): identity → tool registry →
+  permission → classification → risk → policy → confirmation → execute, with a
+  single enforced execution boundary (`executeAiAction`); human-only
+  `ai:identity-manage`/`ai:action-confirm` (never granted to AI).
+- **Agent 4** (`238db90`): merged — P5–P7 HCP master hardening + verification
+  lifecycle (0306).
+- CCR ledger: resolved another id collision — Agent 4's new "Adverse Event
+  Handoff" (their CCR-007) → **CCR-010**, kept **design/proposed only, NOT
+  implemented** (directive §3; fail-closed port). CCR-007 (drug↔allergen) stays
+  deferred/conservative.
+Security audits (AI provider/tool bypass, AI/pharma→clinical writes, PHI-in-logs,
+cross-workstream imports) all clean; pharma firewall + CCR-004 fail-closed intact.
 
 ## Integration Gate I-3A (2026-09-16)
 Re-integrated all active agent branches (they had advanced past I001):
