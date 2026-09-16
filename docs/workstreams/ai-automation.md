@@ -97,3 +97,56 @@ Implement `MessagingProvider` / `AIProvider`, then `registerProvider(...)` /
 
 ### Endpoints
 See `docs/agent-state/agent-3.md` for the full list.
+
+---
+
+## Increment E2 — Scheduling & Time Engine (program Phases 1, 3, 38)
+
+Built on `integration/medcore-v1`. Migration `0201_scheduling.sql`.
+
+### Phase 1 — Engine hardening
+- `automation_rule.priority` (lower runs first; deterministic ordering when
+  several rules match one event) and `automation_rule.version` (bumped on a
+  definition change — conditions/actions — not on rename/enable-toggle).
+  `findEnabledEventRules` orders by `(priority, created_at)`.
+- **F-09 review outcome:** the global `automation_offset` is intentional and
+  correct. At-most-once execution is guaranteed per (rule, event) by
+  `UNIQUE(rule_id, dedupe_key)` on `automation_run`, so a single global cursor
+  cannot cause a double-run; a per-clinic cursor would add tables and complexity
+  for no correctness gain. Kept global (as the governance allowlist records).
+
+### Phase 3 — Scheduling & time engine (`modules/automation/`)
+- `scheduled.repo.ts` — `scheduled_action` persistence; `claimDue` uses
+  `FOR UPDATE SKIP LOCKED` (concurrency-safe claim), expiry handled in the claim.
+- `scheduler.ts` — `scheduleAction(...)` (idempotent on `dedupe_key`), quiet-hours
+  deferral via `not_before`, `resolveScheduledFor` (delaySeconds | absolute `at`).
+- `scheduler.runner.ts` — `runDueActions(...)` runs due actions through the SAME
+  action registry; retry+backoff, dead-letter at the attempt cap, expired actions
+  dropped (not sent late). Import layering avoids a cycle (schedule side never
+  imports the registry; run side does).
+- New action `schedule_action` — an event rule enqueues a future action, carrying
+  the resolved patient id forward so the future send needs no event. Cannot nest.
+- **Two-layer retry (intentional):** a scheduled send that dispatches is `done`;
+  a transient delivery failure is retried by the messaging layer (`message_log`),
+  never re-run by the scheduler.
+
+### Phase 38 — Communication quality (`modules/messaging/policy.ts`)
+- `messaging_policy` (per clinic, optionally per channel): quiet hours (evaluated
+  in the clinic timezone) + frequency caps (min gap, rolling-24h daily cap).
+- Enforced centrally in the send pipeline AFTER the consent gate: an immediate
+  send in quiet hours / over a cap is suppressed (`quiet_hours`/`min_gap`/
+  `daily_cap`); the scheduler defers scheduled sends past quiet hours.
+- **Consent is always enforced and cannot be bypassed.** No policy ⇒ permissive
+  (existing behaviour unchanged). `bypassPolicy` (quiet-hours/caps only, never
+  consent) is reserved for genuinely urgent messages.
+
+### Tests (26 new)
+Unit: quiet-hours math (tz-aware, midnight-wrap), `resolveScheduledFor`.
+Integration: end-to-end event→schedule→run (delivered once), not-due, scheduling
+idempotency, expiry, action-error dead-letter, two-layer retry separation, cancel,
+quiet-hours deferral; frequency caps (daily/min-gap), quiet-hours suppression,
+consent-independent-of-policy, priority ordering, version bump.
+
+### Endpoints (new)
+`POST /automations/run-scheduled`, `GET /scheduled-actions`,
+`POST /scheduled-actions/:id/cancel`, `POST/GET /messaging-policy`.

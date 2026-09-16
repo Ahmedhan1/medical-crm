@@ -21,6 +21,8 @@ interface RuleRow {
   conditions: Condition[];
   actions: Action[];
   is_enabled: boolean;
+  priority: number;
+  version: number;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +39,8 @@ export function mapRule(r: RuleRow): AutomationRule {
     conditions: r.conditions,
     actions: r.actions,
     isEnabled: r.is_enabled,
+    priority: r.priority,
+    version: r.version,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -87,13 +91,14 @@ export async function insertRule(
     conditions: Condition[];
     actions: Action[];
     isEnabled: boolean;
+    priority?: number;
   },
 ): Promise<AutomationRule> {
   const { rows } = await client.query<RuleRow>(
     `INSERT INTO automation_rule
        (clinic_id, name, description, trigger_type, event_type, schedule_cron,
-        conditions, actions, is_enabled, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        conditions, actions, is_enabled, priority, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING *`,
     [
       clinicId,
@@ -105,6 +110,7 @@ export async function insertRule(
       JSON.stringify(input.conditions),
       JSON.stringify(input.actions),
       input.isEnabled,
+      input.priority ?? 100,
       createdBy,
     ],
   );
@@ -135,7 +141,8 @@ export async function findEnabledEventRules(
   const { rows } = await getPool().query<RuleRow>(
     `SELECT * FROM automation_rule
       WHERE clinic_id = $1 AND is_enabled = true
-        AND trigger_type = 'event' AND event_type = $2`,
+        AND trigger_type = 'event' AND event_type = $2
+      ORDER BY priority ASC, created_at ASC`,
     [clinicId, eventType],
   );
   return rows.map(mapRule);
@@ -151,8 +158,13 @@ export async function updateRule(
     conditions: Condition[];
     actions: Action[];
     isEnabled: boolean;
+    priority: number;
   }>,
 ): Promise<AutomationRule | null> {
+  // Bump version whenever the rule DEFINITION changes (conditions/actions), so a
+  // run is attributable to the definition that produced it. Toggling enablement
+  // or renaming does not change behaviour, so it does not bump the version.
+  const definitionChanged = patch.conditions !== undefined || patch.actions !== undefined;
   const { rows } = await client.query<RuleRow>(
     `UPDATE automation_rule SET
         name        = COALESCE($3, name),
@@ -160,6 +172,8 @@ export async function updateRule(
         conditions = COALESCE($5, conditions),
         actions    = COALESCE($6, actions),
         is_enabled = COALESCE($7, is_enabled),
+        priority   = COALESCE($8, priority),
+        version    = version + CASE WHEN $9 THEN 1 ELSE 0 END,
         updated_at = now()
       WHERE id = $1 AND clinic_id = $2
       RETURNING *`,
@@ -171,6 +185,8 @@ export async function updateRule(
       patch.conditions ? JSON.stringify(patch.conditions) : null,
       patch.actions ? JSON.stringify(patch.actions) : null,
       patch.isEnabled ?? null,
+      patch.priority ?? null,
+      definitionChanged,
     ],
   );
   return rows[0] ? mapRule(rows[0]) : null;
