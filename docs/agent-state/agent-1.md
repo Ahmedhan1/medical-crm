@@ -1,116 +1,75 @@
-# Agent 1 — Foundation / Orchestration — State & Handoff
+# Agent 1 — Platform / Foundation / Governance — State
 
-## Current Status
-**Foundation & multi-agent scaffolding complete (F001 DONE).** The repo is ready
-for Agents 2–4 to work in parallel. Build/typecheck/tests green; migrations and
-seed verified.
+## Role
+Platform Architect, Architecture Governance Lead, Platform Engineering Owner.
+Owns platform architecture, shared contracts, DB/API/event conventions, auth/
+authz/audit architecture, tenant isolation, i18n, observability, backup/recovery,
+interoperability, dependency governance, release engineering, and integration/QA.
+Does NOT build Agent 2–4 domain features.
 
-## Completed
-- Repository audit (verified against code, not just docs): backend-only,
-  Fastify + PostgreSQL, one migration `0001_core`, 30 tests, no frontend.
-- **Parallel-safety refactor** (removes cross-agent merge contention):
-  - Permission catalog split → `permissions.clinical|automation|pharma.ts` with
-    an Agent-1 barrel `permissions.ts` and a leaf `roles.ts` (RoleKey contract).
-    ADMIN auto-gets all permissions; roles assembled from per-workstream grants.
-  - Event catalog split → `events.clinical|automation|pharma.ts` + barrel `events.ts`.
-  - HTTP routes → four stable feature aggregators
-    (`http/features/*.feature.ts`); `server.ts` no longer changes per feature.
-  - `resetDb()` truncates tables dynamically (no shared list to edit).
-- Orchestration docs: `AGENTS.md`, `TASKS.md`, `CONTRACT_CHANGE_REQUEST.md`,
-  `docs/workstreams/*`, `docs/agent-state/*`; updated `IMPLEMENTATION-STATUS.md`.
+## Current status
+**Foundation (F001) done; integration (I001) done; platform Phase 1 in progress**
+on `integration/medcore-v1`. Full suite green; migrations apply from empty incl.
+the new platform range.
 
-## In Progress
-- None (handing off to Agents 2–4).
+## History
+- **F001 — Multi-agent foundation.** Parallel-safe seams (per-workstream
+  permission/event files + barrels, four stable feature aggregators, disjoint
+  migration ranges, dynamic test reset), orchestration docs.
+- **I001 — Integration.** Merged Clinical/AI/Pharma into `integration/medcore-v1`
+  (zero code conflicts). Reconciled the CCR ledger (CCR-001..005). Fixed the
+  request-log PHI leak globally (CCR-002) and the ADMIN over-grant via pharma
+  separation-of-duties roles (CCR-005). Full report: `docs/agent-state/integration.md`.
 
-## Database Changes
-- None beyond `0001_core` (unchanged). Ranges reserved per agent (AGENTS.md §6).
+## Platform Phase 1 (this increment)
+- **`docs/platform/PLATFORM-ROADMAP.md`** — audit findings (F-01..F-12) + 10-phase
+  plan + authoritative platform conventions (migration ranges incl. new platform
+  `0900–0999`, dependency allowlist, tenant/append-only/PHI rules).
+- **Executable architecture governance** — `test/platform/governance.test.ts`:
+  tenant tables carry `clinic_id` (explicit global allowlist); runtime deps within
+  the approved allowlist (`fastify`,`pg`,`qrcode`,`zod`); migrations well-named,
+  uniquely numbered, in reserved ranges; `event`/`audit_log` append-only. Drift
+  now fails CI, not just review.
+- **Performance (F-01)** — `0900_platform_indexes.sql` adds high-value
+  `patient_id` (patient-history reads) and `clinic_id` (tenant filtering) indexes
+  on child tables that lacked a leading index. Additive, `IF NOT EXISTS`, runs
+  after all domain migrations. Low-value actor columns intentionally left
+  unindexed.
+- **Observability** — `GET /health/detailed`: DB reachability + latency, applied-
+  migration count, uptime, node version. PHI-free; no auth (ops probe).
 
-## API Changes
-- None. Public API and error envelope unchanged; only internal wiring moved.
+## Database / migrations
+- 12 migrations apply cleanly from empty in order (0001, 0100–0103, 0200,
+  0300–0304, **0900**) → 69 tables + platform indexes. Ranges reserved per
+  `PLATFORM-ROADMAP.md`.
 
-## Files Owned
-See `AGENTS.md` §4 (Agent 1 section) — foundation + all shared contract files.
+## Files owned / touched this phase
+- Added: `docs/platform/PLATFORM-ROADMAP.md`, `test/platform/governance.test.ts`,
+  `test/integration/observability.test.ts`, `src/db/migrations/0900_platform_indexes.sql`.
+- Edited: `src/http/server.ts` (`/health/detailed`).
 
-## Files Modified (this task)
-- Added: `governance/roles.ts`, `permissions.{clinical,automation,pharma}.ts`,
-  `domain/events.{clinical,automation,pharma}.ts`, `http/features/*.feature.ts`.
-- Edited: `governance/permissions.ts` (now barrel), `domain/events.ts` (now
-  barrel), `http/server.ts` (registers 4 aggregators), `test/helpers/db.ts`.
+## Dependencies added
+- None. Runtime deps unchanged (governance test enforces the allowlist).
 
-## Tests
-- 30/30 passing (unit + integration + security). No tests weakened or skipped.
-- Verified RBAC grants after refactor: ADMIN=8, RECEPTION=8, NURSE=5, DOCTOR=4,
-  PHARMA_REP=0 (boundary intact).
+## Contract changes
+- None this phase. Reserved the platform migration range `0900–0999` (documented
+  in the roadmap + enforced by the governance test).
 
-## Dependencies Added
-- None.
+## Known platform items (deferred, see roadmap)
+- F-03 Arabic PDF (HIGH, Phase 5); F-04 backup/recovery (Phase 4); F-06 design
+  system (Phase 2, after a frontend shell); F-07 i18n primitives (Phase 5);
+  F-08 FHIR mapping (Phase 6); F-09 automation_offset scoping review (Agent 3);
+  F-10 shared pagination; F-11 feature flags; F-12 CI wiring for the gates.
 
-## Contract Changes
-- None. Baseline contracts documented in `CONTRACT_CHANGE_REQUEST.md`.
+## What Agents 2–4 must keep honoring
+- Migration ranges (theirs) + platform `0900–0999` (mine). New tenant tables MUST
+  carry `clinic_id`. New runtime deps require a roadmap decision + allowlist entry
+  (governance test enforces). Cross-workstream changes go through
+  `CONTRACT_CHANGE_REQUEST.md`. No PHI in logs/QR/audit/event payloads.
 
-## Known Issues
-- No frontend yet (API-first). UI is a later task; not blocking backend agents.
-- `agent-2/3/4` branches are not yet created in the remote (Agent 1 can only push
-  its own designated branch). Each agent creates its branch from this one.
+## Next
+Phase 4 (backup/recovery) or Phase 5 (i18n + Arabic PDF) next, each as its own
+tested increment. Wire the governance/security gates into CI (Phase 9/F-12).
 
-## Blockers
-- None for Agent 1.
-
----
-
-# HANDOFF
-
-## What Agent 2 (Clinical Core) should do
-- Read `AGENTS.md` + `docs/workstreams/clinical-core.md`.
-- Branch `agent-2/clinical-core` from this foundation branch.
-- Start C001 (intake+vitals) → C002 (doctor workspace) → C003 (Save&Next) →
-  C004 (timeline) → C005 (treatment episodes) → C006 (reports).
-- Add permissions/events/routes/tables ONLY in your files (`permissions.clinical.ts`,
-  `events.clinical.ts`, `clinical.feature.ts`, migrations 0100–0199).
-- Define the intake write contract Agent 3 (A004) will consume.
-
-## What Agent 3 (AI/Automation) should do
-- Read `AGENTS.md` + `docs/workstreams/ai-automation.md`.
-- Branch `agent-3/ai-automation`.
-- Start A001 (automation core) → A002 (provider abstraction) → A003 (WhatsApp)
-  → A005 (AI summaries). A004 (AI intake) is BLOCKED on C001.
-- Ship a local/no-op default provider (no vendor lock-in). AI output is
-  review-first; the bot never diagnoses/prescribes.
-
-## What Agent 4 (Pharma/Intelligence) should do
-- Read `AGENTS.md` + `docs/workstreams/pharma-intelligence.md`.
-- Branch `agent-4/pharma-intelligence`.
-- Start P001 (HCP master) → P002 (drug master) → P003 (territory+rep) → P004
-  (content hub). P005 (intelligence firewall) is BLOCKED on a governed-read
-  contract from Agent 1.
-- Grant pharma permissions only to pharma roles; never read clinical/patient
-  tables; provenance on every reference field.
-
-## Dependencies between agents
-- A004 (Agent 3) → C001 intake contract (Agent 2).
-- P005 (Agent 4) → governed aggregate-read contract (Agent 1) over the event store.
-- All agents → the shared contracts owned by Agent 1 (see below).
-
-## Files no agent may touch (except Agent 1 via CONTRACT_CHANGE_REQUEST)
-`governance/roles.ts`, `governance/permissions.ts` (barrel),
-`governance/rbac.ts`, `governance/audit.ts`, `domain/errors.ts`,
-`domain/events.ts` (barrel), `db/pool.ts`, `config/env.ts`,
-`http/server.ts`, `http/plugins/auth.ts`, `modules/qr/**`,
-`modules/auth/**`, `seed.ts`, `test/helpers/**`, root build config.
-
-## Contracts to honor
-- API error envelope `{ error: { code, message, details? } }`.
-- `Authorization: Bearer`; every service asserts a permission + scopes by clinic.
-- QR payload `MEDCORE1:<opaque>` — no PHI.
-- Append-only `audit_log` (no PHI in metadata) + `event` (emitted in-transaction).
-- Every tenant table has `clinic_id`; timestamps `timestamptz`.
-- Pharma ⊄ patient data; AI is review-first.
-
-## Next Tasks (Agent 1)
-- Review incoming CONTRACT_CHANGE_REQUESTs (esp. C001 intake contract, P005
-  governed-read).
-- F002 backup/restore, F003 observability, F004 user/role admin.
-- I001 integration + final QA once Agents 2–4 land work.
-
-## Last Commit
-Set on push of F001 to `claude/serene-mendel-u5rxdv` (see git log).
+## Last commit
+Set on push of the platform Phase-1 increment to `integration/medcore-v1`.

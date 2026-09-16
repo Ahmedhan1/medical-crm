@@ -107,7 +107,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     reply.code(404).send({ error: { code: 'not_found', message: 'Route not found' } });
   });
 
-  // Liveness/readiness for the observability dashboard (§38).
+  // Liveness: is the process up? (No dependencies — never 503s on DB.)
   app.get('/health', async (_req, reply) => {
     try {
       await getPool().query('SELECT 1');
@@ -115,6 +115,37 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     } catch {
       return reply.code(503).send({ status: 'degraded', db: 'down' });
     }
+  });
+
+  // Readiness / observability (Phase 1 + §38). PHI-free operational metadata
+  // only: DB reachability + latency, applied-migration count, process uptime.
+  // An administrator can tell whether the box is healthy without support.
+  app.get('/health/detailed', async (_req, reply) => {
+    const startedAt = process.hrtime.bigint();
+    let db: { status: 'up' | 'down'; latencyMs?: number; migrationsApplied?: number } = {
+      status: 'down',
+    };
+    try {
+      const res = await getPool().query<{ n: string }>(
+        'SELECT count(*)::text AS n FROM schema_migrations',
+      );
+      const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      db = {
+        status: 'up',
+        latencyMs: Math.round(latencyMs * 100) / 100,
+        migrationsApplied: Number(res.rows[0]?.n ?? 0),
+      };
+    } catch {
+      db = { status: 'down' };
+    }
+    const ready = db.status === 'up';
+    return reply.code(ready ? 200 : 503).send({
+      status: ready ? 'ok' : 'degraded',
+      time: new Date().toISOString(),
+      uptimeSeconds: Math.round(process.uptime()),
+      node: process.version,
+      checks: { database: db },
+    });
   });
 
   // Workstream feature aggregators. This list is STABLE (Agent 1 owned):
