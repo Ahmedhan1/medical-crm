@@ -57,6 +57,30 @@ and validates the numbers on its own hardware.
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |
 
+## Consolidated baseline I-6 (2026-09-16) — current source of truth
+
+On `integration/medcore-v1`, on the I-5 hardening baseline (`f369d83`). Integrated
+the three verified workstream deliverables (Clinical `9f5a0f6`, AI/automation
+`16a1980`, Pharma reporting/export `9abba3e`+`c3dca78`) by clean cherry-pick.
+
+- **Migrations:** 30 apply from empty in order (0001 / 0100–0113 / 0200–0204 /
+  0300–0306 / **0312** / 0900–0901) → **97 tables**. The pharma range keeps a
+  deliberate **0307–0311 gap** reserved for Agent 4's unverified WIP (HCO master,
+  field force, medical affairs, intelligence lifecycle) — those branches were
+  **NOT merged**.
+- **Tests:** **831 / 65 files green**; typecheck + build clean.
+- **Integrated recovery (§6):** backup → verify (checksum + archive) → restore into
+  a fresh DB round-trips all 97 tables, including the new `procedure`, `care_plan`,
+  `ai_eval_run`, and `pharma_export_log`.
+- **Security (verified this gate):** no AI/pharma/automation module reads or writes
+  clinical tables; no cross-workstream imports; AI writes only AI-owned tables;
+  pharma reporting reads only pharma/intelligence tables; CCR-004 governed clinical
+  read stays fail-closed (501); export enforces per-report permission + territory
+  scope + row caps and writes an append-only receipt (`pharma_export_log`); PHI
+  absent from logs and event payloads; every new table carries `clinic_id`.
+- **CCRs:** no new CCR required, none bypassed, no id collisions (Agent 2 recorded a
+  clinical-batch review note only). CCR-004 fail-closed, CCR-007/CCR-010 unchanged.
+
 ## Consolidated baseline I-4 (2026-09-16) — current source of truth
 
 Tag `baseline-i4`. All four workstreams consolidated on `integration/medcore-v1`.
