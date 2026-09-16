@@ -1,6 +1,31 @@
 # Agent 4 — Pharma / HCP / Drug / Intelligence — State
 
-## Current Status
+## Current Status — BATCH PARTIALLY COMPLETE (read this first)
+Branch `claude/jolly-carson-8t7ufe`, rebased onto baseline `48a456b`.
+
+A six-item parallel expansion batch was attempted with three sub-agents in
+isolated worktrees (separate databases `medcore_a/b/c` so they could not race
+each other's schema resets). **All three sub-agents were terminated mid-task by
+a session rate limit (HTTP 429), not by any defect.**
+
+| Item | State |
+| --- | --- |
+| 1. HCO Master | **WIP, unmerged** on `a4/hco` — migrations 0307/0308 + types, no service/routes/tests |
+| 2. HCO 360 / Locations | **not started** (depended on item 1) |
+| 3. Medical Rep / Field Force | **WIP, unmerged** on `a4/field-ma` — migrations 0309/0310 + lifecycle modules, no service/routes/tests |
+| 4. Medical Affairs | **WIP, unmerged** on `a4/field-ma` (same branch) |
+| 5. Intelligence signal lifecycle | **WIP, unmerged** on `a4/intel-lifecycle` — migration 0311 + lifecycle module, no service/routes/tests |
+| 6. Reporting / Export | **DONE and verified** — on this branch |
+
+Only item 6 is merged. The WIP branches are committed so nothing is lost, and
+are marked `WIP(unverified)` — none of that code has been executed, applied or
+tested. It must not be merged without service/route layers, tests, a
+migration-from-empty run and the full firewall/cohort/territory regression.
+
+Suite: **749 tests green** (698 at baseline). Typecheck, build and
+migration-from-empty clean.
+
+## Previous status
 Working on `claude/jolly-carson-8t7ufe`, merged up to `integration/medcore-v1`
 (`97f1680`, platform P2 backup engine). This increment adds **Phases 5–7 — HCP
 master hardening, the verification lifecycle and attribute provenance** — and
@@ -50,6 +75,7 @@ Reserved range **0300–0399**; 0300–0306 used.
 | --- | --- |
 | `0300`–`0304` | (unchanged, see integration history) |
 | `0305_query_governance` | `intelligence_query_log` (append-only); governance columns on `intelligence_policy`; `cohort_band` + `value_rounding_base` on `aggregated_signal` |
+| `0312_pharma_export_log` | append-only `pharma_export_log` — export receipts (filter shape + counts, never row content) |
 | `0306_hcp_master_hardening` | `hcp_credential`; `professional_category`, `source_date`, `effective_from/to`, `verification_expires_at`, `verification_note` on `hcp`; widened verification vocabulary; `pharma_effective_verification()` |
 
 Constraints carrying governance rather than integrity:

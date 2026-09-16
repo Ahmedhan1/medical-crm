@@ -15,7 +15,7 @@ branch, which carries the working agreement and the shared contracts.
 - `modules/governance/permissions.pharma.ts`
 - `domain/events.pharma.ts`
 - `http/features/pharma.feature.ts` + `http/routes/{hcp,medication,rep,pharma-content,intelligence}.routes.ts`
-- Migrations **0300–0399** (0300–0306 used)
+- Migrations **0300–0399** (0300–0306, 0312 used; 0307–0311 reserved by unmerged WIP branches)
 - Pharma tests, this file, `docs/agent-state/agent-4.md`
 
 ---
@@ -154,6 +154,31 @@ stored in a parallel per-attribute table, so there is exactly one account of wha
 changed and it cannot drift from the history itself. `source_date` (when the
 source asserted a fact) is now distinct from `created_at` (when we recorded it)
 and `last_verified_at` (when we last checked it).
+
+### Governed reporting and export
+An export leaves the system and is rarely re-checked afterwards, so reports are a
+**registry**, not ad-hoc queries. A report exists only if it declares its
+permission, data class, territory scoping, an explicit column allow-list and a
+row cap. The order of operations is the design:
+
+```
+authorize → resolve territory scope → query IN SCOPE → cap
+→ project through the column allow-list → write the audit receipt → return
+```
+
+- Export needs `pharma:export` **in addition to** the report's own read
+  permission. `PHARMA_REP` holds neither, so a rep can read an HCP on screen and
+  is refused the directory export.
+- Territory scope is pushed into SQL. A `null` scope is clinic-wide; an **empty**
+  scope returns nothing rather than being read as "no filter".
+- The column allow-list is applied to the DATA, so a query that starts returning
+  a new column cannot widen an export. `cohortSize` is forbidden registry-wide —
+  aggregate reports carry `cohortBand`.
+- `pharma_export_log` (migration 0312) is append-only and written **before** rows
+  are returned: filter shape and counts, never row content. A refused export
+  writes no receipt.
+- No PDF renderer: Agent 1 owns the platform PDF primitive and Agent 2 the
+  clinical report engine.
 
 ### Provenance on every reference field (§8, §23)
 `source`, `source_version`, `source_ref`, `jurisdiction`, `last_verified_at` and
