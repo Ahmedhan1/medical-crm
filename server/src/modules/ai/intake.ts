@@ -2,7 +2,7 @@ import { withTransaction } from '../../db/pool.js';
 import { ValidationError } from '../../domain/errors.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import { Permission } from '../governance/permissions.js';
-import { getAIProvider } from './providers/registry.js';
+import { authorizeAiRequest } from './gateway.js';
 import { insertDraft, type AIDraft } from './drafts.js';
 import { recordGeneration, recordGenerationPool } from './observability.js';
 
@@ -32,7 +32,15 @@ export async function extractIntakeToDraft(
 ): Promise<AIDraft> {
   requirePermission(principal, Permission.AI_DRAFT_CREATE);
 
-  const provider = getAIProvider();
+  // Every AI request passes the governance gateway first: classify → tenant
+  // policy → provider routing. Intake operates on PHI, so an un-opted-in clinic
+  // (the default) is routed to the local provider — never off-box.
+  const auth = await authorizeAiRequest({
+    clinicId: principal.clinicId,
+    capability: 'intake_extraction',
+    actorId: principal.userId,
+  });
+  const provider = auth.provider;
 
   // Resolve transcript text (transcription is provider-abstracted).
   let text = input.text ?? '';
@@ -47,7 +55,7 @@ export async function extractIntakeToDraft(
   try {
     extraction = await provider.extractIntake({ text });
   } catch (err) {
-    // Best-effort failure observability (no PHI — shape only).
+    // Best-effort failure observability (no PHI — shape only, generic code).
     await recordGenerationPool({
       clinicId: principal.clinicId,
       kind: 'intake',
@@ -58,6 +66,10 @@ export async function extractIntakeToDraft(
       latencyMs: Date.now() - started,
       errorCode: err instanceof Error ? err.name : 'extract_error',
       createdBy: principal.userId,
+      dataClass: auth.classification,
+      policyDecision: auth.decision,
+      providerTier: auth.providerTier,
+      requestId: auth.requestId,
     });
     throw err;
   }
@@ -87,6 +99,10 @@ export async function extractIntakeToDraft(
       sourceCount: extraction.citations.length,
       latencyMs,
       createdBy: principal.userId,
+      dataClass: auth.classification,
+      policyDecision: auth.decision,
+      providerTier: auth.providerTier,
+      requestId: auth.requestId,
     });
     return draft;
   });

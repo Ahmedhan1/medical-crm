@@ -2,16 +2,42 @@
 
 ## Current Status
 Base: `integration/medcore-v1` (verified current source of truth: C001–C007,
-A001–A005, P001–P006, I001 hardening, platform-P1 all integrated; 370 tests green
-on entry). This increment adds the **Scheduling & Time Engine + engine hardening +
-communication-quality guards** (program Phases 1, 3, 38) on top.
+A001–A005, P001–P006, I001 hardening, platform-P1 all integrated). Two Agent-3
+expansion increments built on top:
+- **E2** — Scheduling & Time Engine + engine hardening + comms-quality (Phases 1, 3, 38).
+- **E3** — AI Safety & Governance Layer, the front of the AI chain (Phases 3, 4, 5, 16).
 
 A001–A005 remain DONE (A004 review-first portion; clinical auto-promotion DEFERRED
-per CCR-003). See the increment phase report at the bottom.
+per CCR-003). See the increment reports below.
 
 Verification (in `server/`): `npm run typecheck` clean · `npm run build` clean ·
-26 new tests added (full suite green) · migrations `0001…0201, 0300…0304, 0900`
-apply in order.
+migrations `0001…0202, 0300…0304, 0900` apply in order.
+
+## Increment E3 — AI Safety & Governance Layer (Phases 3, 4, 5, 16)
+Establishes the front of the AI governance chain so **no AI request bypasses it**:
+`capability → classify → tenant policy → routing decision → provider`.
+- **Data classification** (`modules/ai/classification.ts`): `DataClass`
+  (PUBLIC…HIGHLY_RESTRICTED) with severity ordering; AI capabilities that touch
+  patient data are classified PHI by construction (not guessed from text).
+- **PHI policy engine** (`modules/ai/policy.ts`): pure `decide(class, policy)` →
+  `ALLOW_LOCAL | ALLOW_CLOUD | DENY` (+ REDACT/MINIMIZE/REQUIRE_REVIEW reserved).
+  **Fail-closed:** a clinic with no `tenant_ai_policy` row is local-only; PHI
+  reaches a cloud provider only when the clinic explicitly opts in AND raises its
+  cloud ceiling to PHI; HIGHLY_RESTRICTED never leaves the box.
+- **AI gateway** (`modules/ai/gateway.ts`): the single chokepoint
+  (`authorizeAiRequest`). Classifies, applies tenant policy, and returns the
+  provider it is ALLOWED to use — an ALLOW_LOCAL decision never returns a cloud
+  provider even when one is registered (defense-in-depth check + audited DENY).
+- **Provider router** (`providers/registry.ts`): providers declare a `tier`
+  (`local`/`cloud`); the registry holds a local slot (always) and an optional
+  cloud slot. "A cloud model exists" and "this data may go to cloud" are
+  independent decisions.
+- **Wired through:** `intake.ts` and `summaries.ts` now call the gateway instead
+  of the provider directly; both record the classification + decision + tier +
+  request id in `ai_generation` (no PHI, no secrets).
+- **Provider-secret safety:** credentials live inside a provider adapter, never
+  on the `AIProvider` interface surface; tested that a cloud secret never appears
+  in `ai_generation` or `audit_log`.
 
 ## Increment E2 — Scheduling & Time Engine (Phases 1, 3, 38)
 - **P1 hardening:** automation rules now carry `priority` (deterministic execution
@@ -71,10 +97,13 @@ apply in order.
 - Migration **`0200_automation.sql`** (range 0200–0299) adds:
   `communication_consent`, `message_template`, `message_log`, `automation_rule`,
   `automation_run`, `automation_offset`, `ai_draft`, `ai_generation` (append-only).
-- Migration **`0201_scheduling.sql`** (this increment): `ALTER automation_rule`
+- Migration **`0201_scheduling.sql`** (E2): `ALTER automation_rule`
   add `priority`, `version`; `ALTER automation_run` add `rule_version`; new tables
   `scheduled_action` (time engine) and `messaging_policy` (quiet hours + caps).
-  Both new tables are `clinic_id`-scoped (governance tenant-isolation test passes).
+- Migration **`0202_ai_governance.sql`** (E3): new table `tenant_ai_policy`
+  (`clinic_id` PK; `allow_cloud`, `cloud_max_class`); `ALTER ai_generation` add
+  `data_class`, `policy_decision`, `provider_tier`, `request_id` (append-only via
+  ADD COLUMN; existing rows get NULL). All `clinic_id`-scoped; governance passes.
 - All tenant-scoped (`clinic_id`), `timestamptz` timestamps, idempotency enforced
   by unique keys. FKs reference the shared foundation schema (`clinic`, `patient`,
   `app_user`) only; no other workstream's tables are touched.
@@ -91,6 +120,7 @@ apply in order.
 - AI: `POST /ai/intake`, `POST /ai/summaries/patient/:patientId`,
   `GET /ai/drafts`, `GET /ai/drafts/:id`,
   `POST /ai/drafts/:id/confirm`, `POST /ai/drafts/:id/reject`.
+- AI governance (E3): `GET /ai/policy`, `POST /ai/policy` (ADMIN only).
 
 ## Events (in `domain/events.automation.ts`)
 - `AI_DRAFT_CREATED`, `AI_DRAFT_CONFIRMED`, `AI_DRAFT_REJECTED`. Emitted from
@@ -100,7 +130,7 @@ apply in order.
 ## Permissions (in `governance/permissions.automation.ts`)
 - `automation:manage`, `automation:read`, `messaging:send`, `messaging:read`,
   `messaging:manage`, `consent:manage`, `ai:draft-create`, `ai:draft-review`,
-  `ai:summary-generate`.
+  `ai:summary-generate`, `ai:policy-manage` (E3; ADMIN-only, granted to no other role).
 - Grants: RECEPTION (send/read/consent/draft-create), NURSE (read/draft-create/
   review/summary), DOCTOR (review/summary/read). ADMIN gets all automatically.
   **PHARMA_REP is granted NONE** (verified) — no patient-linked capability.
@@ -162,5 +192,14 @@ apply in order.
 - On CCR-003 follow-up: server-side confirmed-intake-draft → clinical write.
 
 ## Last Commit
-- `platform(A3-E2): scheduling & time engine, engine hardening, comms-quality guards`
+- `platform(A3-E3): AI safety & governance layer — classification, PHI policy, provider router`
   on branch `claude/magical-gates-bgfexk` (based on `integration/medcore-v1`).
+- Prior: `platform(A3-E2): scheduling & time engine, engine hardening, comms-quality guards`.
+
+## Next increment (planned — the rest of the AI safety chain)
+Right half of the chain, in order: **AI tool-permission system + AI agent identity**
+(Phases 7/8), **AI Action Guard** with risk classes (Phase 9; needed once AI
+generates actions), **structured-output schema validation** (Phase 12) and
+**prompt/output governance** (Phases 27/28). Then bounded agents (Reception,
+Scheduling, Documentation…) on top of the guard — never one unrestricted agent.
+The E3 gateway is the mandatory front these plug into.

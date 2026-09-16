@@ -150,3 +150,46 @@ consent-independent-of-policy, priority ordering, version bump.
 ### Endpoints (new)
 `POST /automations/run-scheduled`, `GET /scheduled-actions`,
 `POST /scheduled-actions/:id/cancel`, `POST/GET /messaging-policy`.
+
+---
+
+## Increment E3 — AI Safety & Governance Layer (program Phases 3, 4, 5, 16)
+
+Built on `integration/medcore-v1`. Migration `0202_ai_governance.sql`. Establishes
+the FRONT of the AI safety chain so no AI request can bypass it:
+
+```
+capability → classify input → tenant AI policy → routing decision → provider
+```
+
+### Modules (`modules/ai/`)
+- `classification.ts` — `DataClass` (PUBLIC…HIGHLY_RESTRICTED) + severity ordering;
+  `classifyCapabilityInput` marks intake/summary/transcription as PHI by design.
+- `policy.ts` — `decide(class, policy)` → `ALLOW_LOCAL | ALLOW_CLOUD | DENY`
+  (REDACT/MINIMIZE/REQUIRE_REVIEW reserved); `tenant_ai_policy` read/set (admin).
+  **Fail-closed:** no policy row ⇒ local-only; PHI→cloud only on explicit opt-in
+  at a PHI ceiling; HIGHLY_RESTRICTED never leaves the box.
+- `gateway.ts` — `authorizeAiRequest` is the single chokepoint: classify → policy
+  → provider selection. ALLOW_LOCAL never returns a cloud provider even if one is
+  registered (defense-in-depth guard; audited DENY). Emits a `requestId`.
+- `providers/registry.ts` — providers declare `tier` (`local`/`cloud`); a local
+  slot (always present) + an optional cloud slot. Registering a cloud provider
+  does NOT authorize cloud use — policy does.
+- `intake.ts` / `summaries.ts` now call the gateway, not the provider directly,
+  and record `data_class`, `policy_decision`, `provider_tier`, `request_id` in
+  `ai_generation` (no PHI, no secrets).
+
+### Safety properties (tested)
+- PHI routed to the local provider by default **even when a cloud provider is
+  registered** (cloud provider call-count asserted 0).
+- PHI reaches cloud **only** when the clinic opts in at the PHI ceiling.
+- A cloud provider's secret credential never appears in `ai_generation` or
+  `audit_log`.
+- Tenant isolation: one clinic opting into cloud does not route another off-box.
+- `ai:policy-manage` is ADMIN-only; pharma/reception/doctor get 403.
+
+### Not in this increment (next, deferred deliberately)
+Tool-permission system, AI agent identity, AI Action Guard, structured-output
+schema validation, prompt/output governance, bounded agents. These are the RIGHT
+half of the chain and are only needed once AI generates *actions* (today AI only
+produces review-first drafts). They plug into this gateway.

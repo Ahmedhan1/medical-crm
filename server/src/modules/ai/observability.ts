@@ -21,6 +21,11 @@ export interface GenerationRecordInput {
   latencyMs?: number;
   errorCode?: string | null;
   createdBy?: string | null;
+  // Governance decision context (no PHI — labels only).
+  dataClass?: string | null;
+  policyDecision?: string | null;
+  providerTier?: string | null;
+  requestId?: string | null;
 }
 
 export async function recordGeneration(
@@ -30,8 +35,9 @@ export async function recordGeneration(
   await runner.query(
     `INSERT INTO ai_generation
        (clinic_id, draft_id, kind, provider, model, status, input_chars, output_chars,
-        source_count, latency_ms, error_code, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        source_count, latency_ms, error_code, created_by,
+        data_class, policy_decision, provider_tier, request_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
     [
       input.clinicId,
       input.draftId ?? null,
@@ -45,6 +51,10 @@ export async function recordGeneration(
       input.latencyMs ?? null,
       input.errorCode ?? null,
       input.createdBy ?? null,
+      input.dataClass ?? null,
+      input.policyDecision ?? null,
+      input.providerTier ?? null,
+      input.requestId ?? null,
     ],
   );
 }
