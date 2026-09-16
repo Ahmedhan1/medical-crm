@@ -3,9 +3,10 @@ import { ZodError } from 'zod';
 import { isAppError } from '../domain/errors.js';
 import { getPool } from '../db/pool.js';
 import { audit } from '../modules/governance/audit.js';
-import { authRoutes } from './routes/auth.routes.js';
-import { patientRoutes } from './routes/patients.routes.js';
-import { workflowRoutes } from './routes/workflow.routes.js';
+import { foundationFeature } from './features/foundation.feature.js';
+import { clinicalFeature } from './features/clinical.feature.js';
+import { automationFeature } from './features/automation.feature.js';
+import { pharmaFeature } from './features/pharma.feature.js';
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -69,9 +70,12 @@ export function buildServer(): FastifyInstance {
     }
   });
 
-  app.register(authRoutes);
-  app.register(patientRoutes);
-  app.register(workflowRoutes);
+  // Workstream feature aggregators. This list is STABLE (Agent 1 owned):
+  // each agent adds their routes inside their own feature module, never here.
+  app.register(foundationFeature); // Agent 1
+  app.register(clinicalFeature); // Agent 2
+  app.register(automationFeature); // Agent 3
+  app.register(pharmaFeature); // Agent 4
 
   return app;
 }

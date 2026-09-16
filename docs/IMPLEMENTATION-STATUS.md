@@ -1,9 +1,27 @@
 # MEDCORE — Implementation Status
 
-Honest accounting of what the current vertical slice actually does, measured
-against the blueprint's acceptance criteria (§52). Nothing here is a
-placeholder: every endpoint has a backend, schema, validation, authorization,
-error handling, audit where sensitive, and tests.
+Honest accounting of what the codebase actually does, measured against the
+blueprint's acceptance criteria (§52). Nothing here is a placeholder: every
+endpoint has a backend, schema, validation, authorization, error handling,
+audit where sensitive, and tests.
+
+## Multi-agent readiness (current)
+
+The project is organized for parallel work by four agents (see `AGENTS.md`,
+`TASKS.md`). The V1 Clinic Core vertical slice below is built; on top of it the
+foundation was refactored so shared "hot" files no longer cause merge
+contention:
+
+- Permission catalog split into `permissions.{clinical,automation,pharma}.ts`
+  with an Agent-1 barrel (`permissions.ts`) + `roles.ts` contract.
+- Event catalog split into `events.{clinical,automation,pharma}.ts` + barrel.
+- HTTP routes registered via four stable `http/features/*.feature.ts`
+  aggregators; `server.ts` no longer changes per feature.
+- Migration number ranges reserved per agent; `resetDb()` discovers tables
+  dynamically.
+
+All 30 tests remain green after the refactor; public API and error envelope
+unchanged.
 
 ## The vertical slice
 

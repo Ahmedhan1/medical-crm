@@ -15,16 +15,22 @@ export async function migrateFresh(): Promise<void> {
   await runMigrations();
 }
 
-/** Truncate all mutable data between tests but keep the schema + RBAC seed. */
+/**
+ * Truncate all mutable data between tests but keep the schema + RBAC seed.
+ * Tables are discovered dynamically so a workstream adding a table does not have
+ * to edit this shared helper (avoids cross-agent contention). `schema_migrations`
+ * is preserved so the migrated schema is not re-applied.
+ */
 export async function resetDb(): Promise<void> {
   const pool = getPool();
-  await pool.query(`
-    TRUNCATE
-      audit_log, event, qr_token, encounter, session,
-      patient, user_role, app_user, role_permission, role, permission,
-      clinic, organization
-    RESTART IDENTITY CASCADE;
-  `);
+  const { rows } = await pool.query<{ tablename: string }>(
+    `SELECT tablename FROM pg_tables
+      WHERE schemaname = 'public' AND tablename <> 'schema_migrations'`,
+  );
+  if (rows.length > 0) {
+    const list = rows.map((r) => `"${r.tablename}"`).join(', ');
+    await pool.query(`TRUNCATE ${list} RESTART IDENTITY CASCADE;`);
+  }
   await withTransaction((client) => seedAccessControl(client));
 }
 

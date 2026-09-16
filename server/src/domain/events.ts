@@ -1,17 +1,21 @@
 import type { PoolClient } from '../db/pool.js';
+import { ClinicalEventType } from './events.clinical.js';
+import { AutomationEventType } from './events.automation.js';
+import { PharmaEventType } from './events.pharma.js';
 
 /**
- * Canonical event catalog (blueprint §2). Everything important becomes a
- * structured event; automation and analytics subscribe to these rather than
- * polling tables. Keeping the set as a const object gives us a typed union and
- * avoids magic strings scattered through the codebase.
+ * Event catalog BARREL — owned by Agent 1 (Foundation).
+ *
+ * Merges the per-workstream event catalogs into the typed `EventType` union and
+ * provides the transactional emitter. Workstreams add event types in their own
+ * `events.<workstream>.ts` file, never here — so parallel agents never edit the
+ * same file. Everything important becomes a structured event (blueprint §2);
+ * automation and analytics subscribe to these.
  */
 export const EventType = {
-  PATIENT_REGISTERED: 'PATIENT_REGISTERED',
-  PATIENT_CHECKED_IN: 'PATIENT_CHECKED_IN',
-  ENCOUNTER_STATUS_CHANGED: 'ENCOUNTER_STATUS_CHANGED',
-  QR_ISSUED: 'QR_ISSUED',
-  QR_RESOLVED: 'QR_RESOLVED',
+  ...ClinicalEventType,
+  ...AutomationEventType,
+  ...PharmaEventType,
 } as const;
 
 export type EventType = (typeof EventType)[keyof typeof EventType];
@@ -19,7 +23,8 @@ export type EventType = (typeof EventType)[keyof typeof EventType];
 export interface EmitEventInput {
   clinicId: string;
   type: EventType;
-  subjectType: 'patient' | 'encounter' | 'qr_token';
+  /** Domain entity the event is about, e.g. 'patient', 'encounter', 'hcp'. */
+  subjectType: string;
   subjectId: string;
   actorId?: string | null;
   payload?: Record<string, unknown>;

@@ -1,89 +1,71 @@
 /**
- * Permission catalog and default role → permission mapping (Governance engine).
+ * Permission catalog BARREL — owned by Agent 1 (Foundation / Governance).
  *
- * Permissions are fine-grained `resource:action` strings. Roles are bundles of
- * permissions. This module is the single source of truth used both to seed the
- * database and to type-check authorization calls (no magic strings §48).
+ * This file MERGES the per-workstream permission modules into the single
+ * `Permission` catalog and the `ROLE_DEFINITIONS` contract used to seed RBAC and
+ * to type-check authorization. Workstreams add permissions in their own
+ * `permissions.<workstream>.ts` file, NOT here — so parallel agents never edit
+ * the same file. Agent 1 only touches this barrel to wire in a brand-new
+ * workstream module or change role identity (a CONTRACT_CHANGE_REQUEST).
  *
- * NOTE on the pharma boundary (§45): PHARMA_REP is intentionally granted NO
- * patient/clinical permissions. Pharma users can never read patient records;
- * this is enforced by RBAC and covered by a dedicated security test.
+ * Public API is unchanged from the original single-file catalog:
+ *   Permission, PERMISSION_DESCRIPTIONS, RoleKey, ROLE_DEFINITIONS
  */
+import { RoleKey, ROLE_DESCRIPTIONS, type WorkstreamPermissions } from './roles.js';
+import { clinicalPermissions, ClinicalPermission } from './permissions.clinical.js';
+import { automationPermissions, AutomationPermission } from './permissions.automation.js';
+import { pharmaPermissions, PharmaPermission } from './permissions.pharma.js';
+
+export { RoleKey } from './roles.js';
+
+/** All permission constants, merged. Access as `Permission.PATIENT_READ`, etc. */
 export const Permission = {
-  PATIENT_REGISTER: 'patient:register',
-  PATIENT_READ: 'patient:read',
-  PATIENT_SEARCH: 'patient:search',
-  QR_ISSUE: 'qr:issue',
-  QR_RESOLVE: 'qr:resolve',
-  ENCOUNTER_CHECKIN: 'encounter:checkin',
-  ENCOUNTER_READ: 'encounter:read',
-  QUEUE_READ: 'queue:read',
+  ...ClinicalPermission,
+  ...AutomationPermission,
+  ...PharmaPermission,
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];
 
-export const PERMISSION_DESCRIPTIONS: Record<Permission, string> = {
-  [Permission.PATIENT_REGISTER]: 'Register a new patient',
-  [Permission.PATIENT_READ]: 'View a patient record',
-  [Permission.PATIENT_SEARCH]: 'Search patients',
-  [Permission.QR_ISSUE]: 'Issue a patient QR identity token',
-  [Permission.QR_RESOLVE]: 'Resolve a QR token to a patient',
-  [Permission.ENCOUNTER_CHECKIN]: 'Check a patient in (start an encounter)',
-  [Permission.ENCOUNTER_READ]: 'View encounters',
-  [Permission.QUEUE_READ]: 'View the reception/clinical queue',
-};
+const WORKSTREAMS: WorkstreamPermissions[] = [
+  clinicalPermissions,
+  automationPermissions,
+  pharmaPermissions,
+];
 
-export const RoleKey = {
-  ADMIN: 'ADMIN',
-  RECEPTION: 'RECEPTION',
-  NURSE: 'NURSE',
-  DOCTOR: 'DOCTOR',
-  PHARMA_REP: 'PHARMA_REP',
-} as const;
+export const PERMISSION_DESCRIPTIONS: Record<string, string> = Object.assign(
+  {},
+  ...WORKSTREAMS.map((w) => w.descriptions),
+);
 
-export type RoleKey = (typeof RoleKey)[keyof typeof RoleKey];
+const ALL_PERMISSIONS = Object.values(Permission) as Permission[];
 
-const ALL_PERMISSIONS = Object.values(Permission);
+export interface RoleDefinition {
+  description: string;
+  permissions: Permission[];
+}
 
-export const ROLE_DEFINITIONS: Record<RoleKey, { description: string; permissions: Permission[] }> = {
-  [RoleKey.ADMIN]: {
-    description: 'Clinic administrator — full operational access',
-    permissions: [...ALL_PERMISSIONS],
-  },
-  [RoleKey.RECEPTION]: {
-    description: 'Front desk — registration, identification, check-in, queue',
-    permissions: [
-      Permission.PATIENT_REGISTER,
-      Permission.PATIENT_READ,
-      Permission.PATIENT_SEARCH,
-      Permission.QR_ISSUE,
-      Permission.QR_RESOLVE,
-      Permission.ENCOUNTER_CHECKIN,
-      Permission.ENCOUNTER_READ,
-      Permission.QUEUE_READ,
-    ],
-  },
-  [RoleKey.NURSE]: {
-    description: 'Nursing/intake — identification, intake, queue',
-    permissions: [
-      Permission.PATIENT_READ,
-      Permission.PATIENT_SEARCH,
-      Permission.QR_RESOLVE,
-      Permission.ENCOUNTER_READ,
-      Permission.QUEUE_READ,
-    ],
-  },
-  [RoleKey.DOCTOR]: {
-    description: 'Physician — clinical read access and queue',
-    permissions: [
-      Permission.PATIENT_READ,
-      Permission.PATIENT_SEARCH,
-      Permission.ENCOUNTER_READ,
-      Permission.QUEUE_READ,
-    ],
-  },
-  [RoleKey.PHARMA_REP]: {
-    description: 'Pharma field representative — NO patient/clinical access',
-    permissions: [],
-  },
-};
+/**
+ * Role → permission contract, assembled from role descriptions + each
+ * workstream's declared grants. ADMIN always receives every permission.
+ */
+export const ROLE_DEFINITIONS: Record<RoleKey, RoleDefinition> = buildRoleDefinitions();
+
+function buildRoleDefinitions(): Record<RoleKey, RoleDefinition> {
+  const result = {} as Record<RoleKey, RoleDefinition>;
+  for (const roleKey of Object.values(RoleKey)) {
+    const granted = new Set<Permission>();
+    if (roleKey === RoleKey.ADMIN) {
+      for (const p of ALL_PERMISSIONS) granted.add(p);
+    } else {
+      for (const w of WORKSTREAMS) {
+        for (const p of w.roleGrants[roleKey] ?? []) granted.add(p as Permission);
+      }
+    }
+    result[roleKey] = {
+      description: ROLE_DESCRIPTIONS[roleKey],
+      permissions: [...granted],
+    };
+  }
+  return result;
+}
