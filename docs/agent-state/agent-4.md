@@ -185,6 +185,6 @@ section (task statuses), as §Task Board allows.
    period-over-period trend signals derived from stored aggregates.
 
 ## Last Commit
-`57f4325` — P001/P002: HCP master, drug master, pharma field, content and
-intelligence foundations. (Updated on each push; see `git log` for the current
-head of `claude/jolly-carson-8t7ufe`.)
+`8b22c0f` — P003/P004/P005/P006: rep platform, content hub, intelligence
+firewall, tests and docs. Preceded by `57f4325` (P001/P002 schema and master
+data). Branch `claude/jolly-carson-8t7ufe` is pushed and up to date.
