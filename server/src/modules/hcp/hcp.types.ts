@@ -1,23 +1,11 @@
 import type { Provenance, VerificationStatus } from '../pharma/provenance.js';
 
-/** A healthcare organization (hospital, clinic, pharmacy, university…). */
-export interface Hco {
-  id: string;
-  clinicId: string;
-  name: string;
-  hcoType: 'hospital' | 'clinic' | 'pharmacy' | 'university' | 'laboratory' | 'group_practice' | 'ministry' | 'other';
-  parentHcoId: string | null;
-  country: string;
-  region: string | null;
-  city: string | null;
-  addressLine: string | null;
-  postalCode: string | null;
-  provenance: Provenance;
-  recordVersion: number;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+/**
+ * The HCO master lives in `hco.types.ts` (migrations 0307/0308). It is
+ * re-exported here so existing importers keep working and, more importantly, so
+ * there is exactly ONE definition of an organisation in the codebase.
+ */
+export type { Hco, HcoType, OwnershipType, OperatingStatus } from './hco.types.js';
 
 /** The physician / healthcare-professional master record. */
 export interface Hcp {
@@ -89,6 +77,9 @@ export interface HcpAffiliation {
   hcpId: string;
   hcoId: string;
   hcoName: string | null;
+  /** The governed department link (0308), when the affiliation carries one. */
+  hcoDepartmentId?: string | null;
+  /** The pre-0308 free-text department. Legacy; prefer `hcoDepartmentId`. */
   department: string | null;
   roleTitle: string | null;
   affiliationType: 'primary' | 'secondary' | 'academic' | 'consulting' | 'honorary';

@@ -83,3 +83,39 @@ export interface Provenance {
  * unverified field intelligence and verified master data distinguishable.
  */
 export const INITIAL_VERIFICATION_STATUS: VerificationStatus = VerificationStatus.UNVERIFIED;
+
+// --- repository row mapping --------------------------------------------------
+
+/**
+ * The provenance columns as every pharma master table spells them. Shared here
+ * rather than re-declared per repository so `hcp`, `hco`, `hco_location`,
+ * `hco_department` and `medication` cannot drift into describing their
+ * provenance differently.
+ */
+export interface ProvenanceRow {
+  source: string;
+  source_version: string | null;
+  source_ref: string | null;
+  jurisdiction: string;
+  confidence: string | number | null;
+  verification_status: VerificationStatus;
+  last_verified_at: string | null;
+}
+
+/** `pg` returns `numeric` as a string to avoid precision loss; normalise it. */
+export function numericToNumber(value: string | number | null): number | null {
+  if (value === null) return null;
+  return typeof value === 'number' ? value : Number(value);
+}
+
+export function mapProvenance(row: ProvenanceRow): Provenance {
+  return {
+    source: row.source,
+    sourceVersion: row.source_version,
+    sourceRef: row.source_ref,
+    jurisdiction: row.jurisdiction,
+    confidence: numericToNumber(row.confidence),
+    verificationStatus: row.verification_status,
+    lastVerifiedAt: row.last_verified_at,
+  };
+}

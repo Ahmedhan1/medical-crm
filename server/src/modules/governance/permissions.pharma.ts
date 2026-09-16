@@ -27,6 +27,15 @@ export const PharmaPermission = {
   HCP_MERGE: 'hcp:merge',
   HCO_READ: 'hco:read',
   HCO_WRITE: 'hco:write',
+  /**
+   * Promote an organisation record to `verified` — data stewardship, not field
+   * work. Separate from `hco:write` for the same reason `hcp:verify` is separate
+   * from `hcp:write`: attesting that a record is true is a different act from
+   * recording what someone told you.
+   */
+  HCO_VERIFY: 'hco:verify',
+  /** Merge duplicate organisation identities (destructive to identity resolution). */
+  HCO_MERGE: 'hco:merge',
 
   // --- Drug / medication master ---------------------------------------------
   MEDICATION_READ: 'medication:read',
@@ -82,6 +91,8 @@ export const pharmaPermissions: WorkstreamPermissions = {
     [PharmaPermission.HCP_MERGE]: 'Merge duplicate HCP identities',
     [PharmaPermission.HCO_READ]: 'View a healthcare organization (HCO)',
     [PharmaPermission.HCO_WRITE]: 'Create or update a healthcare organization',
+    [PharmaPermission.HCO_VERIFY]: 'Verify a healthcare organization record (data stewardship)',
+    [PharmaPermission.HCO_MERGE]: 'Merge duplicate healthcare organization identities',
     [PharmaPermission.MEDICATION_READ]: 'View the medication/drug master',
     [PharmaPermission.MEDICATION_WRITE]: 'Create, update or import medication master data',
     [PharmaPermission.TERRITORY_READ]: 'View territories and their HCP targets',
@@ -138,6 +149,8 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.HCP_MERGE,
       PharmaPermission.HCO_READ,
       PharmaPermission.HCO_WRITE,
+      PharmaPermission.HCO_VERIFY,
+      PharmaPermission.HCO_MERGE,
       PharmaPermission.MEDICATION_READ,
       PharmaPermission.MEDICATION_WRITE,
     ],

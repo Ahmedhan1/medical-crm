@@ -6,7 +6,8 @@ import { hcp360 } from '../../modules/hcp/hcp360.service.js';
 import { principalOf, requireAuth } from '../plugins/auth.js';
 
 /**
- * HCP / HCO master-data routes (Agent 4).
+ * HCP master-data routes (Agent 4). The organisation side lives in
+ * `hco.routes.ts`.
  *
  * Routes are thin adapters: every authorization decision, territory scope check
  * and validation lives in the service, so it cannot be skipped by adding a new
@@ -55,27 +56,6 @@ function params<T extends z.ZodTypeAny>(schema: T, raw: unknown, message: string
 
 export async function hcpRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', requireAuth);
-
-  // --- HCO ------------------------------------------------------------------
-  app.post('/hcos', async (req, reply) => {
-    const created = await hcp.createHco(principalOf(req), req.body);
-    return reply.code(201).send(created);
-  });
-
-  app.get('/hcos', async (req, reply) => {
-    const query = params(
-      z.object({ q: z.string().trim().min(2).optional(), limit: z.coerce.number().int().optional() }),
-      req.query,
-      'Invalid query',
-    );
-    const results = await hcp.listHcos(principalOf(req), query.q ?? null, query.limit);
-    return reply.send({ results });
-  });
-
-  app.get('/hcos/:id', async (req, reply) => {
-    const { id } = params(IdParam, req.params, 'Invalid id');
-    return reply.send(await hcp.getHco(principalOf(req), id));
-  });
 
   // --- Specialty taxonomy ---------------------------------------------------
   app.post('/specialties', async (req, reply) => {

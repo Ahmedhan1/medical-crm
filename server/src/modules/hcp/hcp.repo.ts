@@ -1,6 +1,11 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
 import { toDateString } from '../pharma/dates.js';
-import type { Provenance, VerificationStatus } from '../pharma/provenance.js';
+import {
+  mapProvenance,
+  numericToNumber,
+  type ProvenanceRow,
+  type VerificationStatus,
+} from '../pharma/provenance.js';
 import type {
   AttributeProvenance,
   Hcp,
@@ -9,7 +14,6 @@ import type {
   HcpIdentifier,
   HcpSpecialtyLink,
   HcpRevision,
-  Hco,
   PracticeLocation,
   ProfessionalInterest,
   Specialty,
@@ -40,33 +44,6 @@ const EFFECTIVE_VERIFICATION =
  */
 
 // --- row shapes -------------------------------------------------------------
-
-interface ProvenanceRow {
-  source: string;
-  source_version: string | null;
-  source_ref: string | null;
-  jurisdiction: string;
-  confidence: string | number | null;
-  verification_status: VerificationStatus;
-  last_verified_at: string | null;
-}
-
-function toNumber(value: string | number | null): number | null {
-  if (value === null) return null;
-  return typeof value === 'number' ? value : Number(value);
-}
-
-function mapProvenance(row: ProvenanceRow): Provenance {
-  return {
-    source: row.source,
-    sourceVersion: row.source_version,
-    sourceRef: row.source_ref,
-    jurisdiction: row.jurisdiction,
-    confidence: toNumber(row.confidence),
-    verificationStatus: row.verification_status,
-    lastVerifiedAt: row.last_verified_at,
-  };
-}
 
 interface HcpRow extends ProvenanceRow {
   id: string;
@@ -127,111 +104,6 @@ export function mapHcp(row: HcpRow): Hcp {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-interface HcoRow extends ProvenanceRow {
-  id: string;
-  clinic_id: string;
-  name: string;
-  hco_type: Hco['hcoType'];
-  parent_hco_id: string | null;
-  country: string;
-  region: string | null;
-  city: string | null;
-  address_line: string | null;
-  postal_code: string | null;
-  record_version: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-function mapHco(row: HcoRow): Hco {
-  return {
-    id: row.id,
-    clinicId: row.clinic_id,
-    name: row.name,
-    hcoType: row.hco_type,
-    parentHcoId: row.parent_hco_id,
-    country: row.country,
-    region: row.region,
-    city: row.city,
-    addressLine: row.address_line,
-    postalCode: row.postal_code,
-    provenance: mapProvenance(row),
-    recordVersion: row.record_version,
-    isActive: row.is_active,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-// --- HCO --------------------------------------------------------------------
-
-export interface InsertHcoInput {
-  clinicId: string;
-  name: string;
-  hcoType: Hco['hcoType'];
-  parentHcoId: string | null;
-  country: string;
-  region: string | null;
-  city: string | null;
-  addressLine: string | null;
-  postalCode: string | null;
-  source: string;
-  sourceVersion: string | null;
-  sourceRef: string | null;
-  jurisdiction: string;
-  confidence: number | null;
-  createdBy: string;
-}
-
-export async function insertHco(runner: Runner, input: InsertHcoInput): Promise<Hco> {
-  const { rows } = await runner.query<HcoRow>(
-    `INSERT INTO hco
-       (clinic_id, name, hco_type, parent_hco_id, country, region, city, address_line,
-        postal_code, source, source_version, source_ref, jurisdiction, confidence, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-     RETURNING *`,
-    [
-      input.clinicId,
-      input.name,
-      input.hcoType,
-      input.parentHcoId,
-      input.country,
-      input.region,
-      input.city,
-      input.addressLine,
-      input.postalCode,
-      input.source,
-      input.sourceVersion,
-      input.sourceRef,
-      input.jurisdiction,
-      input.confidence,
-      input.createdBy,
-    ],
-  );
-  return mapHco(rows[0]!);
-}
-
-export async function getHcoById(clinicId: string, id: string): Promise<Hco | null> {
-  const { rows } = await getPool().query<HcoRow>(
-    `SELECT * FROM hco WHERE id = $1 AND clinic_id = $2`,
-    [id, clinicId],
-  );
-  return rows[0] ? mapHco(rows[0]) : null;
-}
-
-export async function listHcos(clinicId: string, q: string | null, limit: number): Promise<Hco[]> {
-  const { rows } = await getPool().query<HcoRow>(
-    `SELECT * FROM hco
-      WHERE clinic_id = $1
-        AND ($2::text IS NULL OR lower(name) LIKE '%' || lower($2) || '%')
-      ORDER BY name
-      LIMIT $3`,
-    [clinicId, q, limit],
-  );
-  return rows.map(mapHco);
 }
 
 // --- Specialty taxonomy -----------------------------------------------------
@@ -804,7 +676,7 @@ export async function listHcpSpecialties(
     isSubspecialty: r.is_subspecialty,
     isPrimary: r.is_primary,
     source: r.source,
-    confidence: toNumber(r.confidence),
+    confidence: numericToNumber(r.confidence),
   }));
 }
 
@@ -844,7 +716,7 @@ function mapCredential(row: CredentialRow): HcpCredential {
     sourceDate: toDateString(row.source_date),
     verificationStatus: row.verification_status,
     lastVerifiedAt: row.last_verified_at,
-    confidence: toNumber(row.confidence),
+    confidence: numericToNumber(row.confidence),
   };
 }
 
@@ -1045,8 +917,8 @@ export async function insertPracticeLocation(
     region: row.region,
     country: row.country,
     postalCode: row.postal_code,
-    latitude: toNumber(row.latitude),
-    longitude: toNumber(row.longitude),
+    latitude: numericToNumber(row.latitude),
+    longitude: numericToNumber(row.longitude),
     visitingHours: row.visiting_hours,
     isPrimary: row.is_primary,
     territoryId: row.territory_id,
@@ -1093,8 +965,8 @@ export async function listPracticeLocations(
     region: row.region,
     country: row.country,
     postalCode: row.postal_code,
-    latitude: toNumber(row.latitude),
-    longitude: toNumber(row.longitude),
+    latitude: numericToNumber(row.latitude),
+    longitude: numericToNumber(row.longitude),
     visitingHours: row.visiting_hours,
     isPrimary: row.is_primary,
     territoryId: row.territory_id,
@@ -1108,6 +980,8 @@ export interface InsertAffiliationInput {
   clinicId: string;
   hcpId: string;
   hcoId: string;
+  /** The governed department link from 0308; null when only legacy text is known. */
+  hcoDepartmentId: string | null;
   department: string | null;
   roleTitle: string | null;
   affiliationType: HcpAffiliation['affiliationType'];
@@ -1126,6 +1000,7 @@ export async function insertAffiliation(
     id: string;
     hcp_id: string;
     hco_id: string;
+    hco_department_id: string | null;
     department: string | null;
     role_title: string | null;
     affiliation_type: HcpAffiliation['affiliationType'];
@@ -1137,14 +1012,15 @@ export async function insertAffiliation(
     confidence: string | null;
   }>(
     `INSERT INTO hcp_hco_affiliation
-       (clinic_id, hcp_id, hco_id, department, role_title, affiliation_type,
+       (clinic_id, hcp_id, hco_id, hco_department_id, department, role_title, affiliation_type,
         start_date, end_date, source, source_version, confidence)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING *`,
     [
       input.clinicId,
       input.hcpId,
       input.hcoId,
+      input.hcoDepartmentId,
       input.department,
       input.roleTitle,
       input.affiliationType,
@@ -1161,6 +1037,7 @@ export async function insertAffiliation(
     hcpId: row.hcp_id,
     hcoId: row.hco_id,
     hcoName: null,
+    hcoDepartmentId: row.hco_department_id,
     department: row.department,
     roleTitle: row.role_title,
     affiliationType: row.affiliation_type,
@@ -1169,7 +1046,7 @@ export async function insertAffiliation(
     source: row.source,
     verificationStatus: row.verification_status,
     lastVerifiedAt: row.last_verified_at,
-    confidence: toNumber(row.confidence),
+    confidence: numericToNumber(row.confidence),
   };
 }
 
@@ -1182,6 +1059,8 @@ export async function listAffiliations(
     hcp_id: string;
     hco_id: string;
     hco_name: string;
+    hco_department_id: string | null;
+    department_name: string | null;
     department: string | null;
     role_title: string | null;
     affiliation_type: HcpAffiliation['affiliationType'];
@@ -1192,9 +1071,10 @@ export async function listAffiliations(
     last_verified_at: string | null;
     confidence: string | null;
   }>(
-    `SELECT a.*, o.name AS hco_name
+    `SELECT a.*, o.name AS hco_name, d.name AS department_name
        FROM hcp_hco_affiliation a
        JOIN hco o ON o.id = a.hco_id
+       LEFT JOIN hco_department d ON d.id = a.hco_department_id
       WHERE a.clinic_id = $1 AND a.hcp_id = $2
       ORDER BY (a.end_date IS NULL) DESC, a.start_date DESC NULLS LAST`,
     [clinicId, hcpId],
@@ -1204,7 +1084,9 @@ export async function listAffiliations(
     hcpId: row.hcp_id,
     hcoId: row.hco_id,
     hcoName: row.hco_name,
-    department: row.department,
+    hcoDepartmentId: row.hco_department_id,
+    // The governed name when the affiliation is linked, the legacy text otherwise.
+    department: row.department_name ?? row.department,
     roleTitle: row.role_title,
     affiliationType: row.affiliation_type,
     startDate: toDateString(row.start_date),
@@ -1212,7 +1094,7 @@ export async function listAffiliations(
     source: row.source,
     verificationStatus: row.verification_status,
     lastVerifiedAt: row.last_verified_at,
-    confidence: toNumber(row.confidence),
+    confidence: numericToNumber(row.confidence),
   }));
 }
 
@@ -1273,6 +1155,6 @@ export async function listInterests(
     interestType: r.interest_type,
     strength: r.strength,
     source: r.source,
-    confidence: toNumber(r.confidence),
+    confidence: numericToNumber(r.confidence),
   }));
 }

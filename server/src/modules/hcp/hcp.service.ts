@@ -20,7 +20,7 @@ import {
   VerificationState,
 } from './verification.js';
 import * as repo from './hcp.repo.js';
-import type { Hcp, Hco, Specialty } from './hcp.types.js';
+import type { Hcp, Specialty } from './hcp.types.js';
 
 /**
  * HCP / HCO master-data service.
@@ -53,20 +53,6 @@ export const PROFESSIONAL_IDENTIFIER_SYSTEMS: Record<string, string> = {
 };
 
 const NAME = z.string().trim().min(2).max(200);
-
-export const CreateHcoSchema = z.object({
-  name: NAME,
-  hcoType: z
-    .enum(['hospital', 'clinic', 'pharmacy', 'university', 'laboratory', 'group_practice', 'ministry', 'other'])
-    .default('other'),
-  parentHcoId: z.string().uuid().optional(),
-  country: z.string().trim().length(2),
-  region: z.string().trim().max(120).optional(),
-  city: z.string().trim().max(120).optional(),
-  addressLine: z.string().trim().max(300).optional(),
-  postalCode: z.string().trim().max(20).optional(),
-  provenance: ProvenanceSchema,
-});
 
 export const ProfessionalCategorySchema = z.enum([
   'physician',
@@ -124,6 +110,11 @@ export const AddIdentifierSchema = z.object({
 
 export const AddAffiliationSchema = z.object({
   hcoId: z.string().uuid(),
+  /**
+   * The governed department (0308). Preferred over `department`, which is the
+   * pre-0308 free-text value and is kept only so existing records stay readable.
+   */
+  hcoDepartmentId: z.string().uuid().optional(),
   department: z.string().trim().max(120).optional(),
   roleTitle: z.string().trim().max(120).optional(),
   affiliationType: z
@@ -208,71 +199,6 @@ function parse<T extends z.ZodTypeAny>(schema: T, raw: unknown, what: string): z
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new ValidationError(`Invalid ${what}`, parsed.error.flatten());
   return parsed.data;
-}
-
-// --- HCO --------------------------------------------------------------------
-
-export async function createHco(principal: Principal, raw: unknown): Promise<Hco> {
-  requirePermission(principal, Permission.HCO_WRITE);
-  const input = parse(CreateHcoSchema, raw, 'HCO');
-
-  return withTransaction(async (client) => {
-    if (input.parentHcoId) {
-      const { rows } = await client.query(`SELECT 1 FROM hco WHERE id = $1 AND clinic_id = $2`, [
-        input.parentHcoId,
-        principal.clinicId,
-      ]);
-      if (rows.length === 0) throw new NotFoundError('Parent HCO');
-    }
-
-    const hco = await repo.insertHco(client, {
-      clinicId: principal.clinicId,
-      name: input.name,
-      hcoType: input.hcoType,
-      parentHcoId: input.parentHcoId ?? null,
-      country: input.country.toUpperCase(),
-      region: input.region ?? null,
-      city: input.city ?? null,
-      addressLine: input.addressLine ?? null,
-      postalCode: input.postalCode ?? null,
-      source: input.provenance.source,
-      sourceVersion: input.provenance.sourceVersion ?? null,
-      sourceRef: input.provenance.sourceRef ?? null,
-      jurisdiction: input.provenance.jurisdiction,
-      confidence: input.provenance.confidence ?? null,
-      createdBy: principal.userId,
-    });
-
-    await emitEvent(client, {
-      clinicId: principal.clinicId,
-      type: EventType.HCO_CREATED,
-      subjectType: 'hco',
-      subjectId: hco.id,
-      actorId: principal.userId,
-      payload: { hcoType: hco.hcoType, jurisdiction: hco.provenance.jurisdiction },
-    });
-    await auditTx(client, {
-      clinicId: principal.clinicId,
-      actorId: principal.userId,
-      action: 'hco.create',
-      targetType: 'hco',
-      targetId: hco.id,
-      metadata: { source: hco.provenance.source },
-    });
-    return hco;
-  });
-}
-
-export async function listHcos(principal: Principal, q: string | null, limit = 50): Promise<Hco[]> {
-  requirePermission(principal, Permission.HCO_READ);
-  return repo.listHcos(principal.clinicId, q, Math.min(Math.max(limit, 1), 200));
-}
-
-export async function getHco(principal: Principal, id: string): Promise<Hco> {
-  requirePermission(principal, Permission.HCO_READ);
-  const hco = await repo.getHcoById(principal.clinicId, id);
-  if (!hco) throw new NotFoundError('HCO');
-  return hco;
 }
 
 // --- Specialty taxonomy -----------------------------------------------------
@@ -712,11 +638,22 @@ export async function addAffiliation(principal: Principal, hcpId: string, raw: u
     ]);
     if (rows.length === 0) throw new NotFoundError('HCO');
 
+    if (input.hcoDepartmentId) {
+      // The composite FK already refuses a department belonging to a different
+      // organisation; checking here turns a 500 into an honest 404.
+      const { rows: dept } = await client.query(
+        `SELECT 1 FROM hco_department WHERE id = $1 AND hco_id = $2 AND clinic_id = $3`,
+        [input.hcoDepartmentId, input.hcoId, principal.clinicId],
+      );
+      if (dept.length === 0) throw new NotFoundError('HCO department');
+    }
+
     try {
       const affiliation = await repo.insertAffiliation(client, {
         clinicId: principal.clinicId,
         hcpId,
         hcoId: input.hcoId,
+        hcoDepartmentId: input.hcoDepartmentId ?? null,
         department: input.department ?? null,
         roleTitle: input.roleTitle ?? null,
         affiliationType: input.affiliationType,

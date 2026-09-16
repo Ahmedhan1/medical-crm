@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { hcoRoutes } from '../routes/hco.routes.js';
 import { hcpRoutes } from '../routes/hcp.routes.js';
 import { intelligenceRoutes } from '../routes/intelligence.routes.js';
 import { medicationRoutes } from '../routes/medication.routes.js';
@@ -15,6 +16,7 @@ import { repRoutes } from '../routes/rep.routes.js';
  */
 export async function pharmaFeature(app: FastifyInstance): Promise<void> {
   await app.register(hcpRoutes);
+  await app.register(hcoRoutes);
   await app.register(medicationRoutes);
   await app.register(repRoutes);
   await app.register(pharmaContentRoutes);

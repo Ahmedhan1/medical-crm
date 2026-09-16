@@ -15,6 +15,13 @@ export const PharmaEventType = {
   HCP_VERIFICATION_EXPIRED: 'HCP_VERIFICATION_EXPIRED',
   HCP_MERGED: 'HCP_MERGED',
   HCO_CREATED: 'HCO_CREATED',
+  HCO_UPDATED: 'HCO_UPDATED',
+  /** Any verification decision on an organisation, including a refusal. */
+  HCO_VERIFICATION_CHANGED: 'HCO_VERIFICATION_CHANGED',
+  /** Two organisation records resolved to one survivor. */
+  HCO_MERGED: 'HCO_MERGED',
+  HCO_LOCATION_ADDED: 'HCO_LOCATION_ADDED',
+  HCO_DEPARTMENT_ADDED: 'HCO_DEPARTMENT_ADDED',
   HCP_AFFILIATION_CHANGED: 'HCP_AFFILIATION_CHANGED',
 
   // Drug / medication master
