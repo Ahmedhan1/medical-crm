@@ -39,7 +39,30 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
-_(none yet)_
+### CCR-001 — AI intake draft → Clinical Core intake write target
+- Status: PROPOSED
+- Requested by: Agent 3
+- Date: 2026-09-16
+- Affects: Agent 2 (Clinical Core), Agent 3 (AI/Automation)
+- Contract file(s): Agent 2's C001 intake write path (e.g. an
+  `applyConfirmedIntake(principal, encounterId, fields)` service that Agent 3
+  calls only with a human-confirmed `ai_draft` of kind `intake`).
+- Change: Define a governed write contract so that when a reviewer CONFIRMS an
+  AI intake draft (`ai_draft.kind='intake'`, `status='confirmed'`), the confirmed
+  structured fields can be promoted into the clinical `intake` record owned by
+  Clinical Core. Agent 3 will pass the confirmed draft's fields; Agent 2 owns the
+  validation, the actual insert, and the resulting clinical event.
+- Reason: A004 is review-first. Agent 3 must NOT write clinical tables directly
+  (agent boundary + AI-safety rule 11). The draft lifecycle (create → confirm) is
+  built and tested; only the confirmed-draft → clinical-record promotion needs a
+  contract with the owning workstream.
+- Backward compatibility: Purely additive. Until approved+merged, `confirmDraft`
+  stops at marking the draft confirmed and emitting `AI_DRAFT_CONFIRMED`; no
+  clinical data is written, so nothing existing changes.
+- Tests: draft never auto-writes clinical data (existing, green); after the
+  contract lands — confirmed intake promotes exactly once, is audited, respects
+  clinic scope, and a non-confirmed draft can never write.
+- Decision (Agent 1): _pending_
 
 ---
 
