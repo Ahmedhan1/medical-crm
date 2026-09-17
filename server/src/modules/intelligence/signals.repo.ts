@@ -739,25 +739,6 @@ export async function applySignalDecision(
  * `published`. Reads the stored columns (not the STABLE function) so the
  * partial index from 0311 is usable.
  */
-export async function expiredSignals(
-  client: PoolClient,
-  clinicId: string,
-  limit: number,
-): Promise<string[]> {
-  const { rows } = await client.query<{ id: string }>(
-    `SELECT id FROM aggregated_signal
-      WHERE clinic_id = $1
-        AND lifecycle_status = 'published'
-        AND expires_at IS NOT NULL
-        AND expires_at < now()
-      ORDER BY expires_at
-      LIMIT $2
-      FOR UPDATE`,
-    [clinicId, limit],
-  );
-  return rows.map((r) => r.id);
-}
-
 export async function markSignalsExpired(
   client: PoolClient,
   clinicId: string,
