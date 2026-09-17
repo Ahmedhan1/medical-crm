@@ -45,6 +45,41 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-015 — Wire the Clinical frontend domain into the platform entry
+- Status: PROPOSED
+- Requested by: Agent 2
+- Date: 2026-09-17
+- Affects: Agent 1 (platform frontend entry), Agent 2 (Clinical UX)
+- Contract file(s): `web/src/main.tsx`
+- Change: add ONE side-effect import to the domain-registration block of
+  `web/src/main.tsx`:
+  ```ts
+  import './domains/clinical/register.js';
+  ```
+  This is the single coordinated per-domain line described in
+  `docs/platform/FRONTEND-INTEGRATION.md` ("How to add a domain workspace",
+  step 2). No other change to any shared file.
+- Reason: the Clinical domain (`web/src/domains/clinical/**`) self-registers its
+  nav, routes and i18n at import time via the platform extension points
+  (`registerNavSection` / `registerRoutes` / `registerMessages`). Those extension
+  points are only invoked when the module is imported, and the only place that
+  import belongs is the platform entry — which Agent 2 must not edit. Until this
+  line lands, the shell renders no clinical nav/routes even though the domain is
+  complete and tested.
+- Backward compatibility: purely additive. The domain registers under a distinct
+  `section.id` (`clinical`), the reserved order band (10s), and the `/clinical/*`
+  route prefix, so there is no collision with platform, AI (20s/`/ai`) or pharma
+  (30s/`/pharma`). All routes/nav are permission-gated; a role without the
+  permission sees nothing. Removing the line fully reverts the domain.
+- Tests: `web/src/domains/clinical/__tests__/register.test.tsx` proves the
+  domain registers a `clinical` section in the 10s band, the three `/clinical/*`
+  routes with their permission gates, and that every nav item is permission-gated.
+  Page/component tests cover search, RBAC visibility, Patient 360 section shaping,
+  register validation + duplicate handling, and forbidden/error states. Web
+  typecheck, unit suite (27 tests) and production build are green; the shell E2E
+  is unaffected (4/4). Full-stack clinical E2E is unlockable once this line lands.
+- Decision (Agent 1): <pending>
+
 ### CCR-014 — Membership feature-gating applied to domain features
 - Status: PROPOSED — **contract only; nothing wired in Phase 0**
 - Requested by: Agent 1 (Platform), Phase 0
