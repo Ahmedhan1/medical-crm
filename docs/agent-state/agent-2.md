@@ -10,11 +10,25 @@ live in the integrated branch.
 Suite: **534 tests / 40 files green.** Typecheck, build and a from-empty
 migration run (18 migrations) all clean.
 
-### Clinical Completion + Gap Audit (on `agent2/clinical-completion-audit`)
-Full clinical-domain gap audit against baseline `integration/medcore-v1 @ 659b285`.
-Three genuine gaps fixed (additive, nothing rewritten); everything else verified
-already complete/safe. **Suite 834 tests / 65 files green; typecheck, build and a
-from-empty migration (31 migrations, incl. 0114) all clean.**
+### Phase 1 — Clinical Production Finalization (on `agent2/clinical-phase1-final`)
+Production-final audit of the entire Clinical Core against baseline
+`integration/medcore-v1 @ 659b285`. Four genuine P1 defects fixed (below);
+a full fresh audit found no additional P0/P1. Everything else verified
+production-ready and DB-enforced: pessimistic `FOR UPDATE` row locks on every
+state-machine transition (encounter start/complete/Save-&-Next, prescription
+issuance, procedure completion, care-plan/goal updates, referral transitions,
+follow-up completion; appointment room overlap is a gist EXCLUDE constraint,
+active-encounter uniqueness a partial unique index); explicit **audited handover**
+(`encounter.takeover`); immutable issued prescriptions/completed procedures via
+triggers; DOCTOR-only clinical authority with Reception/Nurse and PHARMA_REP
+excluded; parameterized SQL only; capped list limits; clinic/patient FKs
+`ON DELETE RESTRICT` and never hard-deleted; PHI-free events/audit/errors/QR;
+keyset-ordered timeline. **Validation: 835 tests / 65 files green (0 failed,
+0 skipped, sharded); typecheck + build clean; from-empty migration (31, incl.
+0114) clean; backup→verify→restore round-trip green (append-only protections
+survive). Clinical Core: PRODUCTION-READY.**
+
+The four fixes (additive, nothing rewritten):
 - **0114** — append-only DB triggers on `vital` + `observation` (they were
   insert-only in code but had no DB guard). Measurements are now tamper-evident
   like every other immutable clinical table.
@@ -24,6 +38,10 @@ from-empty migration (31 migrations, incl. 0114) all clean.**
 - **Patient 360 `recentVitals`** — VITALS_READ-gated patient-level vitals reader
   wired into the 360 view (the universal vital set was the one longitudinal read
   missing). No new table; composes the existing permission-checked reader.
+- **Treatment-episode merged-patient guard** — `startEpisode` now rejects a
+  `merged` record (409 with `mergedIntoId`) like every sibling clinical-creation
+  path; without it an episode landed on a merged tombstone and was orphaned from
+  the survivor's lineage-unfolded reads and Patient 360.
 
 ## Completed
 
