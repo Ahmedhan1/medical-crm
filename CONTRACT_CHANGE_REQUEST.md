@@ -45,6 +45,37 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-014 — Membership feature-gating applied to domain features
+- Status: PROPOSED — **contract only; nothing wired in Phase 0**
+- Requested by: Agent 1 (Platform), Phase 0
+- Date: 2026-09-17
+- Affects: Agent 1 (platform/membership), Agent 2 (clinical), Agent 3 (AI/
+  automation), Agent 4 (pharma) — any workstream whose feature might be gated.
+- Contract file(s): `server/src/modules/platform/entitlement/*` (the gate
+  mechanism, platform-owned), plus whichever domain route/service a future gate
+  would wrap.
+- Change: the Phase-0 `FeatureGate` (`createFeatureGate`) is a pure, UNWIRED
+  mechanism. If, in the Final phase, a specific commercial capability is to be
+  gated by membership (e.g. `commercial:pharma-intelligence`,
+  `commercial:reporting-export`, `commercial:ai-automation`), the wiring — mapping
+  a domain feature to a `commercial:*` key and consulting the gate before serving
+  it — must be agreed here first.
+- Reason: gating is inherently cross-domain (platform membership deciding whether a
+  clinical/AI/pharma feature is served). Doing it ad hoc inside a domain would
+  couple that domain to the membership layer and risk gating something that must
+  never be gated.
+- Backward compatibility: fully additive and inert today — no code consults the
+  gate, so no behavior changes. A future gate must preserve the hard rule below.
+- **Hard rule (non-negotiable):** `core:*` (clinical-core) features are NEVER
+  gated. Clinical workflows and clinical data must remain fully available when a
+  membership is expired, unverified, or the box is offline. Only `commercial:*`
+  features may be gated, and only fail-closed (off when not entitled), never
+  fail-open. Enforced by `feature-gate.ts` + `entitlement.test.ts`.
+- Tests: any wiring ships with a test proving the gated feature is refused without
+  entitlement AND that clinical core stays enabled in `expired`/`unverified`.
+- Decision (Agent 1 / Phase 0): PROPOSED. The mechanism and its safety rule are in
+  place and tested; no domain wiring is done or approved in Phase 0.
+
 ### CCR-013 — Pharma events on the shared bus: automation binding contract
 <!-- Renumbered at final-gate integration from Agent 4's CCR-011, which collided
      with the existing CCR-011 (recurring expiry-sweep scheduling) already on the

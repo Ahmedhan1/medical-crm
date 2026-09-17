@@ -16,10 +16,12 @@ evidence. "Partial" = implemented + tested but incomplete for full production.
 | Tenant isolation | Ready | every domain table `clinic_id`; governance test; cross-clinic 404 tests | Low | A1 |
 | PHI logging | Ready | global query-string redaction + header redaction + **central error serializer strips pg detail/where/parameters** (F-06 closed); serializer + audit tests | A1 |
 | Observability | Ready (core) | `/health` (liveness), `/health/detailed` (db latency, migration count, pool stats, backup status), `/metrics` (bounded-cardinality, PHI-safe) | tracing/provider-health later | A1 |
-| CI | Ready | `.github/workflows/ci.yml`: typecheck, build, migrate-from-empty, full suite (governance/security/backup/PDF) on Postgres + Playwright image | wire required-checks in repo settings | A1 |
+| CI | Ready | `.github/workflows/ci.yml`: typecheck, build, migrate-from-empty (pg reset, no psql), full suite (governance/security/backup/PDF) on Postgres + Playwright image; required checks documented in `CI-REQUIRED-CHECKS.md` | wire required-checks in repo settings | A1 |
 | PDF / Latin | Ready | Agent 2 base-14 renderer (unchanged, default) | Low | A2 |
 | PDF / Arabic (RTL) | Implemented — pending visual sign-off | Chromium+Amiri(OFL) renderer; 7 tests: glyph ink + Unicode round-trip + no `?` + multi-page; sample sent for human sign-off | flips to Ready on sign-off; adds Chromium to BOX (Phase 11) | A1 |
 | Error contract | Ready | consistent `{error:{code,message,details,request_id}}`; internals never leaked; opaque per-request UUID on every response (`x-request-id`) and in every envelope, logged as `reqId` for traceability | Low | A1 |
+| Security headers | Ready | static PHI-free set on every response — strict CSP (`default-src 'none'`), `X-Frame-Options: DENY`, nosniff, `Referrer-Policy: no-referrer`, COOP/CORP `same-origin`, HSTS; no dependency (Phase 0) | Low | A1 |
+| Membership / BOX foundation | Foundation (contract) | `modules/platform/entitlement`: Ed25519 signed-entitlement verify (fail-closed), offline grace, installation+tenant binding, feature gate that never gates `core:*`; pure logic + 21 tests, unwired | cloud plane, persistence, installer = Final phase; wiring gated by CCR-014 | A1 |
 | Configuration | Ready | zod-validated fail-fast config incl. backup; prod refuses placeholder pepper | Low | A1 |
 | Frontend | Planned | none exists | n/a until Priority 5 | A1 |
 | Design system | Planned | none (no client yet) | n/a until Priority 6 | A1 |

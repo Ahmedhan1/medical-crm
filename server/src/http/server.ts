@@ -55,6 +55,29 @@ export function errorLogSerializer(
   };
 }
 
+/**
+ * Baseline security headers applied to every response (platform hardening).
+ *
+ * MEDCORE's API returns JSON and PDF only — it never serves HTML that needs to
+ * load scripts, styles, frames or images — so the safest possible CSP
+ * (`default-src 'none'`) is correct and cannot break a legitimate response.
+ * `frame-ancestors 'none'` + `X-Frame-Options: DENY` stop clickjacking; nosniff
+ * stops MIME-confusion; a strict Referrer-Policy and the Cross-Origin-* trio keep
+ * responses from leaking cross-site. HSTS is emitted for the eventual HTTPS BOX
+ * deployment (browsers ignore it over plain HTTP, so it is harmless in dev/tests).
+ * All values are static — no PHI, no per-request data.
+ */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-resource-policy': 'same-origin',
+  'x-dns-prefetch-control': 'off',
+  'strict-transport-security': 'max-age=63072000; includeSubDomains',
+});
+
 // Shared pino config: strip query strings, sanitise errors (no pg detail/PHI),
 // and remove credential-bearing headers outright (defense in depth).
 const LOGGER_CONFIG = {
@@ -93,11 +116,14 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     genReqId: () => randomUUID(),
   });
 
-  // Surface the correlation id on every response (success or error) so a client
-  // can reference it. Set on request so it is present even when a later hook or
-  // the error handler ends the response.
+  // Surface the correlation id AND baseline security headers on every response
+  // (success or error). Set on request so they are present even when a later hook
+  // or the error handler ends the response. These are hardening defaults for an
+  // API that returns JSON and PDF (never HTML it needs to script), so a strict
+  // CSP is safe; they are static, carry no PHI, and add no dependency (no helmet).
   app.addHook('onRequest', async (req, reply) => {
     reply.header('x-request-id', req.id);
+    reply.headers(SECURITY_HEADERS);
   });
 
   // Consistent, non-leaky error envelope for the whole API. Every envelope
