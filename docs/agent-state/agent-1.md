@@ -13,6 +13,46 @@ Does NOT build Agent 2–4 domain features.
 all done. Full suite green (698 tests / 53 files); 25 migrations apply from empty
 → 91 tables; typecheck + build clean; integrated backup→restore verified.
 
+## Final Integration + Production-Readiness Gate I-9 (2026-09-17)
+Consolidated the three latest VERIFIED completion branches onto the trusted branch
+(`7c740d9` = 659b285 + I-7 Agent-4 completion + I-8 request_id + CI fix), in order
+Clinical → AI → Pharma, by clean cherry-pick (no code conflicts; one CCR-ledger
+collision resolved):
+- **Agent 2** `7aac579` (clinical-os-audit): production-readiness audit — vital/
+  observation append-only (0114), block treatment-episode creation on a merged
+  patient, scheduling/status/patient360 guards. Clinical-owned only.
+- **Agent 3** `f6877be` (magical-gates closure): message-retry duplicate-send race
+  fix + consent/quiet-hours/cap bypass fix (0205 retry-claim), AI identity scopes
+  now VALIDATED disjoint from human RBAC permissions, eval precision metric.
+  AI/messaging-owned only.
+- **Agent 4** `f5ecfc1` (jolly-carson final closure): drug-master product-level
+  verification wired end-to-end (0315, closes the schema-only gap), free-text
+  governance screening, HCP/HCO/med-affairs/territory closure + escalation red
+  team. Pharma/drug/hcp/intelligence-owned only.
+Rejected/NOT merged: stale WIP branches `a4/hco`, `a4/field-ma`,
+`a4/intel-lifecycle` (superseded by f5ecfc1), `agent2/clinical-completion-audit`
+(subset of clinical-os-audit), older `agent2/clinical-batch-episodes` /
+`inspiring-cori` (already integrated).
+CCR collision resolved: Agent 4's new CCR-011 (pharma-event automation binding)
+collided with the existing CCR-011 (expiry-sweep scheduling) already on the trusted
+branch → renumbered Agent 4's to **CCR-013**; their CCR-012 (DraftKind call_report)
+kept. No code references the numbers.
+Gate result: **40 migrations apply from empty → 107 tables** (0001 / 0100–0114 /
+0200–0205 / 0300–0315 / 0900–0901; no duplicates, no gaps); **1243 tests / 83
+files green, 0 failures, 0 skips**; typecheck + build clean; backup → verify →
+restore round-trips all 107 tables. Full cross-domain audit clean: no workstream
+reads/writes clinical tables; no illegal cross-workstream imports; every new table
+tenant-scoped; new decision/lifecycle tables append-only. Untouchable invariants
+byte-unchanged and re-verified: cohort floor = 5, banding/suppression/query-budget
+(firewall/disclosure/query-governance), CCR-004 fail-closed (501), E4 Action Guard
+(execute), AI gateway + classification. Agent 3's identity change makes "AI never
+holds a human permission" a validated invariant (was convention). Recurring-defect
+audit (lifecycle columns without a service path; verification columns without a
+sweep) closed per domain and integrated with tests. Scheduler/expiry boundary:
+four admin-gated sweeps (HCO/HCP/medication/signal), NO fake scheduler, expiry
+DERIVED at read (fail-safe, no silent auto-transition); Agent 3 wiring stays
+CCR-011 (deferred). No new dependency.
+
 ## Final Integration Gate I-7 (2026-09-17) — Agent 4 completion consolidated
 Integrated Agent 4's **frozen** deliverable `2a2b5bb` onto the I-6 baseline
 `659b285`. Agent 4 had merged the integration branch into their branch and then

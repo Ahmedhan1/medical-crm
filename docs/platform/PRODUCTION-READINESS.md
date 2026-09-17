@@ -57,6 +57,36 @@ and validates the numbers on its own hardware.
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |
 
+## Consolidated baseline I-9 (2026-09-17) — current source of truth
+
+Final integration + production-readiness gate. Three latest VERIFIED completion
+branches consolidated on `integration/medcore-v1` by clean cherry-pick (Clinical
+`7aac579`, AI `f6877be`, Pharma `f5ecfc1`).
+
+- **Migrations:** 40 apply from empty in order (0001 / 0100–0114 / 0200–0205 /
+  0300–0315 / 0900–0901) → **107 tables**. No duplicates, no gaps.
+- **Tests:** **1243 / 83 files green, 0 failures, 0 skips**; typecheck + build clean.
+- **Integrated recovery:** backup → verify (checksum + archive) → restore into a
+  fresh DB round-trips all 107 tables.
+- **New this gate:** vital/observation append-only (0114) + merged-patient guards
+  (Agent 2); message-retry race/bypass fixes + AI-identity-scope validation (0205,
+  Agent 3); drug-master product verification end-to-end + free-text governance
+  screening (0315, Agent 4).
+- **Cross-domain audit:** no workstream reads/writes clinical tables; no illegal
+  cross-workstream imports; new tables tenant-scoped; decision/lifecycle tables
+  append-only; territory authz, export permission + read permission, HCP/HCO/
+  product provenance + verification all enforced.
+- **Invariants (byte-unchanged, re-verified):** cohort floor = 5, banding/
+  suppression/query budgets, CCR-004 fail-closed (501), E4 Action Guard, AI gateway
+  + classification. "AI never holds a human RBAC permission" now a validated
+  invariant.
+- **Scheduler/expiry:** four admin-gated sweeps (HCO/HCP/medication/signal); no
+  fake scheduler; expiry DERIVED at read (fail-safe). Wiring to Agent 3's scheduler
+  stays CCR-011 (deferred, not bypassed).
+- **CCRs:** collision resolved (Agent 4 CCR-011 → CCR-013); CCR-012 added; ledger
+  now 001–013 with no duplicates. CCR-003/004/007/008/010/011/012/013 remain
+  PROPOSED/deferred as recorded; nothing silently closed.
+
 ## Consolidated baseline I-7 (2026-09-17) — current source of truth
 
 Final integration of Agent 4's frozen deliverable (`2a2b5bb`) onto I-6 (`659b285`)
