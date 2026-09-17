@@ -1,6 +1,40 @@
 # Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — CROSS-DOMAIN AUDIT PASS DONE
+## Current Status — FINAL CLOSURE PASS DONE
+Branch `claude/jolly-carson-8t7ufe`. A full-domain closure audit on top of the
+cross-domain pass at `c34cf11`. No new migration: every fix reached a column or
+constraint that already existed. Migrations `0307`–`0312` remain byte-identical
+to `aa337a5`.
+
+**Suite: 1222 tests green, 0 skipped** (1188 at `c34cf11`, 34 added). Typecheck,
+build and a from-empty migration run are clean.
+
+### What the audit found — one recurring shape, four instances
+
+The domain had a repeated defect: a column (or column set) modelling the END or
+the RESOLUTION of something, a constraint that depends on it, and no code path
+that could ever set it. A capability that looked complete in the schema and was
+dead in the service.
+
+| # | Area | Finding |
+| --- | --- | --- |
+| 1 | HCP↔HCO affiliation | `end_date` existed since 0300 and nothing set it: a physician who left a hospital stayed affiliated for ever, counted by HCO 360 and specialty coverage, and `uq_affiliation_open` (keyed on `end_date IS NULL`) made a return after a gap unrepresentable. Closed by `PATCH /hcps/:id/affiliations/:affiliationId`. |
+| 2 | Territory assignment | `valid_to` existed and nothing set it — territory scope could be GRANTED and never REVOKED, an authorization gap, not untidiness. This workstream's own tests were revoking by direct SQL. Closed by `PATCH /territories/:id/assignments/:assignmentId`; back-dating refused. |
+| 3 | Merged records | Only `updateHcp` refused to write to a merged record. Every other HCP write path (affiliations, credentials, identifiers, locations, interests, targeting, engagement, enquiries, verification) and EVERY HCO write path kept attaching state to a resolved-away identity the survivor would never show. Closed by `assertHcpOpen`/`assertHcoOpen` on every write, both sides of an affiliation checked. |
+| 4 | Medication product verification | 0315 gave `medication_product` the full verification column set and nothing reached it — a schema-only feature from the prior pass. A pack attested in 2019 read `verified` for ever. Closed by `POST /medications/:id/products/:productId/verification` + sweep coverage + derived reads. |
+
+Every fix is auditable, tenant- and (where applicable) territory-scoped, RBAC-
+gated, lifecycle-validated, and refuses cross-tenant and forged ids. The
+`0307`–`0311` capabilities were verified against the running system, not
+re-implemented.
+
+### Security review
+Adversarial negative-path tests from a valid `PHARMA_REP` account (the existing
+`pharma-escalation` suite, 38 cases) all still fail closed; the closure suite
+adds cross-tenant, wrong-owner, back-dated and merged-record negatives. No
+bypass found.
+
+## Previous status — cross-domain audit pass
 Branch `claude/jolly-carson-8t7ufe`. Finishes the Pharma surface, red-teams it
 from a valid `PHARMA_REP` account, and audits the Clinical and AI boundaries
 from the Pharma side without touching Agent-2 or Agent-3 code.
