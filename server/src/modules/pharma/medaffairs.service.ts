@@ -264,6 +264,7 @@ export async function triageScientificRequest(
 ) {
   requirePermission(principal, Permission.SCIENTIFIC_REQUEST_FULFILL);
   const input = parse(TriageRequestSchema, raw, 'triage');
+  assertFreeTextClean({ note: input.note ?? null });
 
   return withTransaction(async (client) => {
     const request = await repo.getScientificRequestForUpdate(client, principal.clinicId, requestId);
@@ -357,7 +358,10 @@ export async function answerScientificRequest(
   if (input.decision === 'answer' && !input.answerSummary && !input.answerContentId) {
     throw new ValidationError('An answer must provide answerSummary or cite answerContentId');
   }
-  assertFreeTextClean({ answerSummary: input.answerSummary ?? null });
+  assertFreeTextClean({
+    answerSummary: input.answerSummary ?? null,
+    reason: input.reason ?? null,
+  });
 
   return withTransaction(async (client) => {
     const request = await repo.getScientificRequestForUpdate(client, principal.clinicId, requestId);
@@ -452,6 +456,7 @@ export async function escalateScientificRequest(
 ) {
   requirePermission(principal, Permission.SCIENTIFIC_REQUEST_READ);
   const input = parse(EscalateRequestSchema, raw, 'escalation');
+  assertFreeTextClean({ reason: input.reason });
 
   return withTransaction(async (client) => {
     const request = await repo.getScientificRequestForUpdate(client, principal.clinicId, requestId);

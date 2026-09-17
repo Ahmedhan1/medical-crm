@@ -438,6 +438,11 @@ export async function setHcpVerification(
 ): Promise<Hcp> {
   requirePermission(principal, Permission.HCP_VERIFY);
   const input = parse(VerifyHcpSchema, raw, 'verification');
+  // Operator free text reaches the revision trail and the audit log. It is
+  // screened for the same reason a call report is: a human typing into a box is
+  // the one place a patient identifier can cross into the commercial side by
+  // hand — and these stores are append-only, so it cannot be edited out after.
+  assertFreeTextClean({ evidenceSource: input.evidenceSource, note: input.note ?? null });
 
   return withTransaction(async (client) => {
     const before = await repo.getHcpForUpdate(client, principal.clinicId, id);
@@ -514,6 +519,7 @@ export async function mergeHcp(
   reason: string,
 ): Promise<Hcp> {
   requirePermission(principal, Permission.HCP_MERGE);
+  assertFreeTextClean({ reason });
   if (sourceHcpId === targetHcpId) {
     throw new ValidationError('An HCP cannot be merged into itself');
   }

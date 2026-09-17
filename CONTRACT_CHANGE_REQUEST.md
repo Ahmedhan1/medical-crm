@@ -45,6 +45,68 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-011 — Pharma events on the shared bus: automation binding contract
+- Status: PROPOSED
+- Requested by: Agent 4
+- Date: 2026-09-17
+- Affects: Agent 3 (automation/AI), Agent 4 (pharma)
+- Contract file(s): `server/src/db/migrations/0200_automation.sql`
+  (`automation_rule.event_type`), `server/src/modules/automation/engine.ts`,
+  `server/src/domain/events.pharma.ts`
+- Change: agree, and enforce on the automation side, that a rule may only bind
+  to an event type its own workstream declares — or, if cross-workstream binding
+  is wanted, that pharma event types are opt-in rather than reachable by default.
+- Reason: Agent 4 emits ~50 pharma event types into the SHARED `event` table.
+  `automation_rule.event_type` is free text with no CHECK and no registry
+  lookup, so an operator can bind an automation rule to `HCP_VERIFIED`,
+  `INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED`, `SCIENTIFIC_REQUEST_ESCALATED` and
+  the rest. Today that is harmless, for two reasons that are BOTH Agent 4
+  disciplines rather than guarantees Agent 3 enforces:
+    (a) the three action handlers (`send_message`, `schedule_action`, `noop`)
+        cannot mutate any pharma record — there is no handler that could; and
+    (b) pharma event payloads carry identifiers, enums and dates only, never a
+        patient id, never free text, never a measurement — verified by test and
+        now also by a free-text guard on every governance path.
+  Neither is written down as a contract, so either could be relaxed by a change
+  that looks local. In particular `send_message` resolves a `patientId` out of
+  the triggering event; bound to a pharma event it finds none today, and that is
+  luck rather than design.
+- Backward compatibility: no behaviour change is requested now. If Agent 3
+  adds a registry check, existing clinical rules are unaffected; no pharma rule
+  exists to break.
+- Tests: Agent 4 asserts (existing) that no pharma event payload contains a
+  patient-shaped field. Agent 3 would add a test that a rule naming an
+  unregistered or cross-workstream event type is refused.
+- Decision (Agent 1): _pending_
+
+### CCR-012 — `DraftKind = 'call_report'`: an AI draft aimed at a pharma record
+- Status: PROPOSED
+- Requested by: Agent 4
+- Date: 2026-09-17
+- Affects: Agent 3 (AI), Agent 4 (pharma)
+- Contract file(s): `server/src/modules/ai/drafts.ts`
+- Change: either (a) remove `'call_report'` from `DraftKind` until a promotion
+  contract exists, or (b) define the pharma-side port now — which permission
+  promotes a confirmed draft, that the resulting call report is attributed to
+  the REPRESENTATIVE and not to the AI, and that it passes the same
+  `assertFreeTextClean` screening and visit-ownership check as a hand-written
+  one.
+- Reason: `DraftKind` is `'intake' | 'summary' | 'call_report' | 'clinical_note'`.
+  `call_report` is an Agent 4 artifact. The module is explicit and correct that
+  confirming a draft does NOT write the record, so nothing is wrong today. But
+  the type declares an intent to write into pharma, no contract describes that
+  write, and no Agent 4 code would refuse it — a future promotion step could be
+  added entirely inside Agent 3's files and land AI-authored text in
+  `call_report.summary`, which feeds objection themes and therefore the
+  intelligence pipeline.
+- Backward compatibility: option (a) is a type-only change with no runtime
+  effect (no code constructs a `call_report` draft). Option (b) adds a pharma
+  endpoint and changes nothing existing.
+- Tests: Agent 4 would assert a promoted draft is refused without the
+  representative's own `callreport:write`, is attributed to them, and is
+  screened for patient identifiers exactly as a typed report is.
+- Decision (Agent 1): _pending_
+
 ### CCR-010 — Adverse Event Handoff Contract (pharma field → governed safety workflow)
 - Status: PROPOSED — **design only; no cross-domain workflow implemented**
 - Requested by: Agent 4
