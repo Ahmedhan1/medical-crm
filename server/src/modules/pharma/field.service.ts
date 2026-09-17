@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { withTransaction } from '../../db/pool.js';
+import { getPool, withTransaction } from '../../db/pool.js';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import { emitEvent, EventType } from '../../domain/events.js';
 import { auditTx } from '../governance/audit.js';
@@ -361,6 +361,51 @@ async function assertVisitOwnership(principal: Principal, visit: repo.Visit): Pr
 }
 
 /**
+ * May this principal READ the relationship material attached to a visit — the
+ * briefing and the call report?
+ *
+ * A wider door than {@link assertVisitOwnership}, and deliberately so. A call
+ * report is about the ACCOUNT, not about the representative: a colleague
+ * covering the same territory is entitled to know what was last discussed with
+ * that professional, and can already see it through HCP 360. The visit's status
+ * trail is different — how a given rep spent their day is personnel
+ * information — so that one stays on the narrower ownership rule.
+ *
+ * The hole this closes: both read paths applied territory scope only when the
+ * visit had an HCP. An INSTITUTIONAL visit (0309) has none, so every
+ * `visit:read` holder in the clinic could open any other representative's
+ * institutional briefing and call report with no check at all.
+ */
+async function assertVisitReadable(principal: Principal, visit: repo.Visit): Promise<void> {
+  if (visit.repUserId === principal.userId) return;
+
+  const scope = await territoryScopeFor(principal);
+  if (scope === null) return; // clinic-wide: steward, medical affairs, manager
+
+  if (scope.length > 0) {
+    if (visit.hcpId) {
+      const { rows } = await getPool().query<{ ok: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM hcp_territory
+            WHERE clinic_id = $1 AND hcp_id = $2 AND territory_id = ANY($3)
+         ) AS ok`,
+        [principal.clinicId, visit.hcpId, scope],
+      );
+      if (rows[0]!.ok) return;
+    } else if (visit.territoryId && scope.includes(visit.territoryId)) {
+      // An institutional call is scoped by the organisation's own territory,
+      // since there is no professional to target.
+      return;
+    }
+  }
+
+  const reports = await subordinateUserIds(principal.clinicId, principal.userId);
+  if (reports.includes(visit.repUserId)) return;
+
+  throw new ForbiddenError('This visit is outside your territory and is not yours');
+}
+
+/**
  * The status trail of a visit (0309).
  *
  * Scoped exactly like the visit itself — own call, a report's call, or a
@@ -388,8 +433,8 @@ export async function preVisitBriefing(principal: Principal, visitId: string) {
   requirePermission(principal, Permission.VISIT_READ);
   const visit = await repo.getVisitById(principal.clinicId, visitId);
   if (!visit) throw new NotFoundError('Visit');
+  await assertVisitReadable(principal, visit);
   const hcpId = visit.hcpId;
-  if (hcpId) await assertHcpInScope(principal, hcpId);
 
   const hcp = hcpId ? await getHcpById(principal.clinicId, hcpId) : null;
   if (hcpId && !hcp) throw new NotFoundError('HCP');
@@ -650,7 +695,7 @@ export async function getCallReport(principal: Principal, visitId: string) {
   requirePermission(principal, Permission.CALL_REPORT_READ);
   const visit = await repo.getVisitById(principal.clinicId, visitId);
   if (!visit) throw new NotFoundError('Visit');
-  if (visit.hcpId) await assertHcpInScope(principal, visit.hcpId);
+  await assertVisitReadable(principal, visit);
   const report = await repo.getCallReportByVisit(principal.clinicId, visitId);
   if (!report) throw new NotFoundError('Call report');
   return report;

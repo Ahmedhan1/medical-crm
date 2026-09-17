@@ -16,6 +16,7 @@ import {
   assertAnswerable,
   assertEscalatable,
   assertRequestTransition,
+  edgeRequiresReason,
   isBreached,
   slaDueAt,
   type RequestPriority,
@@ -386,15 +387,23 @@ export async function answerScientificRequest(
       }
     }
 
-    const after =
-      to === RequestStatus.CLOSED && !input.answerSummary && !input.answerContentId
-        ? await repo.closeScientificRequest(client, principal.clinicId, requestId, to)
-        : await repo.answerScientificRequest(client, principal.clinicId, requestId, {
-            status: to,
-            answerSummary: input.answerSummary ?? input.reason ?? null,
-            answerContentId: input.answerContentId ?? null,
-            answeredBy: principal.userId,
-          });
+    // A bare close of an ALREADY-decided request writes no answer fields: the
+    // decision of record is already there and must not be overwritten. A close
+    // of a live request now carries a reason (see `edgeRequiresReason`), and
+    // that reason IS the decision, so it is recorded like one.
+    const houseKeepingClose =
+      to === RequestStatus.CLOSED &&
+      !input.answerSummary &&
+      !input.answerContentId &&
+      !edgeRequiresReason(from, to);
+    const after = houseKeepingClose
+      ? await repo.closeScientificRequest(client, principal.clinicId, requestId, to)
+      : await repo.answerScientificRequest(client, principal.clinicId, requestId, {
+          status: to,
+          answerSummary: input.answerSummary ?? input.reason ?? null,
+          answerContentId: input.answerContentId ?? null,
+          answeredBy: principal.userId,
+        });
 
     await repo.insertRequestEvent(client, {
       clinicId: principal.clinicId,

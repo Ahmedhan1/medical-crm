@@ -57,6 +57,25 @@ const ALLOWED: Record<RequestStatus, readonly RequestStatus[]> = {
 
 const REQUIRES_REASON: ReadonlySet<RequestStatus> = new Set([RequestStatus.REJECTED]);
 
+/**
+ * Whether THIS EDGE needs a recorded reason.
+ *
+ * A reason requirement that looks only at the destination state was not enough,
+ * and the gap was exploitable: `rejected` demanded a reason, but `open → closed`
+ * and `in_review → closed` demanded none, so closing a question nobody had
+ * answered was an unexplained refusal that walked straight past the rule. A
+ * clinician asked something and the file shut with no record of why.
+ *
+ * Closing an ALREADY-ANSWERED or already-rejected request is different: the
+ * decision of record already exists and closing is housekeeping, so it needs no
+ * second rationale.
+ */
+export function edgeRequiresReason(from: RequestStatus, to: RequestStatus): boolean {
+  if (REQUIRES_REASON.has(to)) return true;
+  if (to !== RequestStatus.CLOSED) return false;
+  return from === RequestStatus.OPEN || from === RequestStatus.IN_REVIEW;
+}
+
 export function canTransition(from: RequestStatus, to: RequestStatus): boolean {
   return (ALLOWED[from] ?? []).includes(to);
 }
@@ -83,11 +102,12 @@ export function assertRequestTransition(
       { from, to, allowed: allowedTransitionsFrom(from) },
     );
   }
-  if (REQUIRES_REASON.has(to) && !reason) {
-    throw new ValidationError(
-      `Moving a scientific request to "${to}" requires a reason; an unexplained refusal is not reviewable.`,
-      { field: 'reason' },
-    );
+  if (edgeRequiresReason(from, to) && !reason) {
+    const what =
+      to === RequestStatus.CLOSED
+        ? 'Closing a scientific request that was never answered is a refusal to answer it, so it requires a reason'
+        : `Moving a scientific request to "${to}" requires a reason; an unexplained refusal is not reviewable`;
+    throw new ValidationError(`${what}.`, { field: 'reason', from, to });
   }
 }
 

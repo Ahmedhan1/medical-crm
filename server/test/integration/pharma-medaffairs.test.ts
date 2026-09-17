@@ -266,6 +266,36 @@ describe('medical affairs — answering', () => {
     expect(res.statusCode).toBe(409);
   });
 
+  it('closing an UNANSWERED request without a reason is refused (audit)', async () => {
+    const request = await raise();
+    const bare = await call('POST', `/scientific-requests/${request.id}/answer`, affairsA, {
+      decision: 'close',
+    });
+    // Before this, `close` was an unexplained refusal that walked past the rule
+    // `reject` is held to: a clinician asked something and the file shut.
+    expect(bare.statusCode).toBe(400);
+
+    const closed = await ok('POST', `/scientific-requests/${request.id}/answer`, affairsA, {
+      decision: 'close',
+      reason: 'Enquirer withdrew the question at the next call',
+    });
+    expect(closed.status).toBe('closed');
+    expect(closed.answerSummary).toContain('withdrew');
+  });
+
+  it('closing an ANSWERED request is housekeeping and needs no second rationale', async () => {
+    const request = await raise();
+    await ok('POST', `/scientific-requests/${request.id}/answer`, affairsA, {
+      answerSummary: 'Reduce by one third in moderate impairment.',
+    });
+    const closed = await ok('POST', `/scientific-requests/${request.id}/answer`, affairsA, {
+      decision: 'close',
+    });
+    expect(closed.status).toBe('closed');
+    // The original answer is the decision of record and must survive the close.
+    expect(closed.answerSummary).toContain('one third');
+  });
+
   it('a representative cannot answer a scientific question', async () => {
     const request = await raise();
     const res = await call('POST', `/scientific-requests/${request.id}/answer`, rep, {

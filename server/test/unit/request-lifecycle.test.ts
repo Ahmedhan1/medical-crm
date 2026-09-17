@@ -5,6 +5,7 @@ import {
   assertEscalatable,
   assertRequestTransition,
   canTransition,
+  edgeRequiresReason,
   isBreached,
   isTerminal,
   RequestStatus,
@@ -41,6 +42,25 @@ describe('scientific request — the transition graph', () => {
   it('refuses re-asserting the current status', () => {
     for (const status of ALL) {
       expect(() => assertRequestTransition(status, status, 'x')).toThrow(ConflictError);
+    }
+  });
+
+  it('closing a request nobody answered is a refusal, so it needs a reason', () => {
+    for (const from of [RequestStatus.OPEN, RequestStatus.IN_REVIEW]) {
+      expect(edgeRequiresReason(from, RequestStatus.CLOSED)).toBe(true);
+      expect(() => assertRequestTransition(from, RequestStatus.CLOSED, null)).toThrow(
+        ValidationError,
+      );
+      expect(() =>
+        assertRequestTransition(from, RequestStatus.CLOSED, 'Withdrawn by the enquirer'),
+      ).not.toThrow();
+    }
+  });
+
+  it('closing an already-decided request is housekeeping and needs no second rationale', () => {
+    for (const from of [RequestStatus.ANSWERED, RequestStatus.REJECTED]) {
+      expect(edgeRequiresReason(from, RequestStatus.CLOSED)).toBe(false);
+      expect(() => assertRequestTransition(from, RequestStatus.CLOSED, null)).not.toThrow();
     }
   });
 

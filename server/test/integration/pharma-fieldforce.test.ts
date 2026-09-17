@@ -340,6 +340,89 @@ describe('visit modality and institutional calls', () => {
   });
 });
 
+describe('reading a visit — the institutional hole (audit)', () => {
+  /**
+   * Both read paths applied territory scope only when the visit had an HCP. An
+   * institutional visit has none, so before this fix every `visit:read` holder
+   * in the clinic could open any rep's institutional briefing and call report.
+   */
+  let outsider: TestUser;
+
+  beforeEach(async () => {
+    // A representative with a live assignment, but to a DIFFERENT territory.
+    outsider = await makeUser(clinicId, 'ff-outsider', RoleKey.PHARMA_REP);
+    const south = await ok('POST', '/territories', manager, {
+      code: 'S',
+      name: 'South',
+      country: 'EG',
+    });
+    await ok('POST', `/territories/${south.id}/assignments`, manager, {
+      userId: outsider.userId,
+    });
+  });
+
+  it('an unrelated rep cannot read another rep’s INSTITUTIONAL briefing', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcoId, plannedAt: tomorrow() });
+    const res = await call('GET', `/visits/${visit.id}/briefing`, outsider);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('an unrelated rep cannot read another rep’s INSTITUTIONAL call report', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcoId, plannedAt: tomorrow() });
+    await ok('POST', `/visits/${visit.id}/call-report`, repA, {
+      summary: 'Met the procurement lead.',
+    });
+    const res = await call('GET', `/visits/${visit.id}/call-report`, outsider);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('an unrelated rep cannot read another rep’s HCP call report either', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcpId, plannedAt: tomorrow() });
+    await ok('POST', `/visits/${visit.id}/call-report`, repA, { summary: 'Detailed product A.' });
+    const res = await call('GET', `/visits/${visit.id}/call-report`, outsider);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('the owning rep still reads their own institutional call', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcoId, plannedAt: tomorrow() });
+    const briefing = await ok('GET', `/visits/${visit.id}/briefing`, repA);
+    expect(briefing.hcp).toBeNull();
+  });
+
+  it('a colleague sharing the TERRITORY still reads the account material', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcpId, plannedAt: tomorrow() });
+    await ok('POST', `/visits/${visit.id}/call-report`, repA, { summary: 'Detailed product A.' });
+    const res = await call('GET', `/visits/${visit.id}/call-report`, repB);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('a manager above the rep still reads it', async () => {
+    await ok('PUT', '/field-force/profiles', manager, {
+      userId: repA.userId,
+      managerUserId: district.userId,
+    });
+    const visit = await ok('POST', '/visits', repA, { hcoId, plannedAt: tomorrow() });
+    const res = await call('GET', `/visits/${visit.id}/briefing`, district);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('a clinic-wide principal still reads it', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcoId, plannedAt: tomorrow() });
+    const res = await call('GET', `/visits/${visit.id}/briefing`, manager);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('the status trail stays NARROWER: a territory colleague cannot read it', async () => {
+    const visit = await ok('POST', '/visits', repA, { hcpId, plannedAt: tomorrow() });
+    const report = await call('GET', `/visits/${visit.id}/call-report`, repB);
+    const trail = await call('GET', `/visits/${visit.id}/history`, repB);
+    // How a rep spent their day is personnel information; what was discussed
+    // with the account is the territory's business.
+    expect(trail.statusCode).toBe(403);
+    expect(report.statusCode).toBe(404); // no report submitted, but access allowed
+  });
+});
+
 describe('visit status trail', () => {
   it('records the planning of a visit as its first event', async () => {
     const visit = await ok('POST', '/visits', repA, { hcpId, plannedAt: tomorrow() });
