@@ -80,6 +80,15 @@ export async function medicationRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(await medication.sweepMedicationVerifications(principalOf(req), body.limit));
   });
 
+  app.post('/medications/:id/products/:productId/verification', async (req, reply) => {
+    const { id, productId } = params(
+      z.object({ id: z.string().uuid(), productId: z.string().uuid() }),
+      req.params,
+      'Invalid id',
+    );
+    return reply.send(await medication.verifyProduct(principalOf(req), id, productId, req.body));
+  });
+
   app.post('/medications/:id/verification', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     return reply.send(await medication.verifyMedication(principalOf(req), id, req.body));
