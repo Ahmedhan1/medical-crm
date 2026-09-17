@@ -344,7 +344,28 @@ export async function runIntelligence(principal: Principal, raw: unknown): Promi
 
     const stored: repo.StoredSignal[] = [];
     for (const signal of result.signals) {
-      stored.push(await repo.upsertSignal(client, principal.clinicId, run.id, signal, principal.userId));
+      const saved = await repo.upsertSignal(
+        client,
+        principal.clinicId,
+        run.id,
+        signal,
+        principal.userId,
+      );
+      stored.push(saved.signal);
+      // Both outcomes are lifecycle transitions and neither left a trace
+      // before: a first computation produces a draft, and a re-computation
+      // supersedes whatever review the previous number had earned.
+      await repo.insertSignalEvent(client, {
+        clinicId: principal.clinicId,
+        signalId: saved.signal.id,
+        eventType: saved.inserted ? 'generated' : 'superseded',
+        fromStatus: saved.previousStatus,
+        toStatus: SignalLifecycle.DRAFT,
+        reason: null,
+        detail: { runId: run.id },
+        // A run is operated by a person, so unlike an expiry it is attributed.
+        actorId: principal.userId,
+      });
     }
 
     for (const signal of stored) {
@@ -445,6 +466,15 @@ export interface ListSignalsParams {
  * through this path into anything but an aggregate.
  */
 const CONSUMER_VISIBLE: readonly SignalLifecycle[] = [SignalLifecycle.PUBLISHED];
+
+/** Which trail entry each decision writes. */
+const DECISION_EVENT: Record<SignalDecision, repo.SignalEvent['eventType']> = {
+  [SignalDecision.SUBMIT_REVIEW]: 'submitted',
+  [SignalDecision.APPROVE]: 'approved',
+  [SignalDecision.REJECT]: 'rejected',
+  [SignalDecision.PUBLISH]: 'published',
+  [SignalDecision.WITHDRAW]: 'withdrawn',
+};
 const GOVERNANCE_VISIBLE: readonly SignalLifecycle[] = SIGNAL_LIFECYCLE_STATES;
 
 /**
@@ -587,22 +617,43 @@ export async function decideSignal(principal: Principal, signalId: string, raw: 
     }
 
     const now = new Date().toISOString();
+    const submitting = to === SignalLifecycle.IN_REVIEW;
     const next = await repo.applySignalDecision(client, principal.clinicId, signalId, {
+      // WHO put the claim in front of a reviewer. These two columns existed
+      // from 0311 and nothing ever wrote them: the previous value was read and
+      // written straight back, so they always held NULL.
+      reviewedBy: submitting ? principal.userId : signal.reviewedBy,
+      reviewedAt: submitting ? now : signal.reviewedAt,
       lifecycleStatus: to,
-      reviewedBy: to === SignalLifecycle.DRAFT ? null : (signal.reviewedBy ?? null),
-      reviewedAt: to === SignalLifecycle.DRAFT ? null : (signal.reviewedAt ?? null),
       reviewNote: to === SignalLifecycle.REJECTED ? (input.reason ?? null) : signal.reviewNote,
       // An approval is attributed or it is not an approval. Re-entering review
       // clears it, so a revised claim cannot inherit the old acceptance.
-      approvedBy: to === SignalLifecycle.IN_REVIEW ? null : (to === SignalLifecycle.APPROVED ? principal.userId : signal.approvedBy),
-      approvedAt: to === SignalLifecycle.IN_REVIEW ? null : (to === SignalLifecycle.APPROVED ? now : signal.approvedAt),
+      approvedBy: submitting ? null : to === SignalLifecycle.APPROVED ? principal.userId : signal.approvedBy,
+      approvedAt: submitting ? null : to === SignalLifecycle.APPROVED ? now : signal.approvedAt,
       publishedBy: to === SignalLifecycle.PUBLISHED ? principal.userId : signal.publishedBy,
       publishedAt: to === SignalLifecycle.PUBLISHED ? now : signal.publishedAt,
-      withdrawnBy: to === SignalLifecycle.WITHDRAWN ? principal.userId : null,
-      withdrawnAt: to === SignalLifecycle.WITHDRAWN ? now : null,
-      withdrawalReason: to === SignalLifecycle.WITHDRAWN ? (input.reason ?? null) : null,
+      // A withdrawal is NOT erased by the next decision. Clearing it on
+      // re-submission destroyed the record of why a live claim had been pulled
+      // at exactly the moment that reason matters most; it is superseded only
+      // by a later withdrawal.
+      withdrawnBy: to === SignalLifecycle.WITHDRAWN ? principal.userId : signal.withdrawnBy,
+      withdrawnAt: to === SignalLifecycle.WITHDRAWN ? now : signal.withdrawnAt,
+      withdrawalReason:
+        to === SignalLifecycle.WITHDRAWN ? (input.reason ?? null) : signal.withdrawalReason,
       expiresAt:
         to === SignalLifecycle.PUBLISHED ? signalExpiryFrom(input.validForDays) : null,
+    });
+
+    await repo.insertSignalEvent(client, {
+      clinicId: principal.clinicId,
+      signalId,
+      eventType: DECISION_EVENT[decision],
+      fromStatus: from,
+      toStatus: to,
+      reason: input.reason ?? null,
+      // Shape only: the claim's value and cohort size never enter the trail.
+      detail: { expiresAt: next.expiresAt },
+      actorId: principal.userId,
     });
 
     await emitEvent(client, {
@@ -638,8 +689,27 @@ export async function sweepSignalExpiry(principal: Principal, limit = 500) {
   const bounded = Math.min(Math.max(limit, 1), 1000);
 
   const expired = await withTransaction(async (client) => {
-    const due = await repo.expiredSignals(client, principal.clinicId, bounded);
-    return repo.markSignalsExpired(client, principal.clinicId, due);
+    const due = await repo.expiredSignalRows(client, principal.clinicId, bounded);
+    const count = await repo.markSignalsExpired(
+      client,
+      principal.clinicId,
+      due.map((s) => s.id),
+    );
+    for (const signal of due) {
+      await repo.insertSignalEvent(client, {
+        clinicId: principal.clinicId,
+        signalId: signal.id,
+        eventType: 'expired',
+        fromStatus: signal.lifecycleStatus,
+        toStatus: SignalLifecycle.EXPIRED,
+        reason: null,
+        detail: { expiresAt: signal.expiresAt },
+        // No actor. An expiry is the system observing a clock, not a decision
+        // by whoever happened to run the sweep.
+        actorId: null,
+      });
+    }
+    return count;
   });
 
   await audit({
@@ -650,6 +720,20 @@ export async function sweepSignalExpiry(principal: Principal, limit = 500) {
     metadata: { expired },
   });
   return { expired };
+}
+
+/**
+ * A signal's decision trail (0314).
+ *
+ * Restricted to `intelligence:publish`: the trail names the people who reviewed,
+ * approved, published and retracted a claim, which is governance information
+ * about colleagues rather than the claim itself. A consumer gets the claim.
+ */
+export async function signalHistory(principal: Principal, signalId: string) {
+  requirePermission(principal, Permission.INTELLIGENCE_PUBLISH);
+  const signal = await repo.getSignalById(principal.clinicId, signalId);
+  if (!signal) throw new NotFoundError('Signal');
+  return repo.listSignalEvents(principal.clinicId, signalId);
 }
 
 /** One signal, if this principal is allowed to see it in its current state. */

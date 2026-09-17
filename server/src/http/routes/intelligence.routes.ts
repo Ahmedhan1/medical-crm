@@ -106,6 +106,15 @@ export async function intelligenceRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(await intelligence.getSignal(principalOf(req), id));
   });
 
+  app.get('/intelligence/signals/:id/history', async (req, reply) => {
+    const { id } = params(
+      z.object({ id: z.string().uuid() }),
+      req.params,
+      'Invalid id',
+    );
+    return reply.send({ events: await intelligence.signalHistory(principalOf(req), id) });
+  });
+
   app.post('/intelligence/signals/:id/decision', async (req, reply) => {
     const { id } = params(
       z.object({ id: z.string().uuid() }),

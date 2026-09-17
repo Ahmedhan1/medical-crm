@@ -352,6 +352,159 @@ describe('re-running the pipeline', () => {
   });
 });
 
+describe('the decision trail (0314 audit)', () => {
+  it('a run records the generation of a draft, attributed to whoever ran it', async () => {
+    const id = await draftSignal();
+    const body = await ok('GET', `/intelligence/signals/${id}/history`, producer);
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]).toMatchObject({
+      eventType: 'generated',
+      fromStatus: null,
+      toStatus: 'draft',
+      actorId: producer.userId,
+    });
+  });
+
+  it('every decision lands in the trail, in order, with its actor', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    const body = await ok('GET', `/intelligence/signals/${id}/history`, producer);
+    expect(body.events.map((e: { eventType: string }) => e.eventType)).toEqual([
+      'generated',
+      'submitted',
+      'approved',
+      'published',
+    ]);
+    for (const event of body.events.slice(1)) {
+      expect(event.actorId).toBe(reviewer.userId);
+    }
+  });
+
+  it('a withdrawal records its reason in the trail', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    await ok('POST', `/intelligence/signals/${id}/decision`, reviewer, {
+      decision: 'withdraw',
+      reason: 'Objection theme misread as a trend',
+    });
+    const body = await ok('GET', `/intelligence/signals/${id}/history`, producer);
+    const withdrawal = body.events.at(-1);
+    expect(withdrawal.eventType).toBe('withdrawn');
+    expect(withdrawal.reason).toContain('misread');
+  });
+
+  it('WHO put the claim into review is recorded — those columns were dead', async () => {
+    const id = await draftSignal();
+    await ok('POST', `/intelligence/signals/${id}/decision`, reviewer, {
+      decision: 'submit_review',
+    });
+    const signal = await ok('GET', `/intelligence/signals/${id}`, producer);
+    expect(signal.reviewedBy).toBe(reviewer.userId);
+    expect(signal.reviewedAt).not.toBeNull();
+  });
+
+  it('a withdrawal is NOT erased by re-submitting the claim for review', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    await ok('POST', `/intelligence/signals/${id}/decision`, reviewer, {
+      decision: 'withdraw',
+      reason: 'Superseded by a corrected run',
+    });
+    const back = await ok('POST', `/intelligence/signals/${id}/decision`, reviewer, {
+      decision: 'submit_review',
+    });
+    // Why a live claim was pulled matters most exactly when someone reopens it.
+    expect(back.withdrawalReason).toContain('corrected run');
+    expect(back.withdrawnBy).toBe(reviewer.userId);
+  });
+
+  it('an expiry is recorded per signal and attributed to NOBODY', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    await getPool().query(
+      `UPDATE aggregated_signal SET expires_at = now() - interval '1 day' WHERE id = $1`,
+      [id],
+    );
+    await ok('POST', '/intelligence/signals/expiry-sweep', producer, {});
+    const body = await ok('GET', `/intelligence/signals/${id}/history`, producer);
+    const expiry = body.events.at(-1);
+    expect(expiry.eventType).toBe('expired');
+    expect(expiry.fromStatus).toBe('published');
+    expect(expiry.toStatus).toBe('expired');
+    // The system observed a clock; the person who ran the sweep decided nothing.
+    expect(expiry.actorId).toBeNull();
+  });
+
+  it('a re-run records the SUPERSESSION of the claim it replaced', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    await runPipeline();
+    const body = await ok('GET', `/intelligence/signals/${id}/history`, producer);
+    const superseded = body.events.at(-1);
+    expect(superseded.eventType).toBe('superseded');
+    expect(superseded.fromStatus).toBe('published');
+    expect(superseded.toStatus).toBe('draft');
+  });
+
+  it('the trail cannot be edited or erased', async () => {
+    const id = await draftSignal();
+    await expect(
+      getPool().query(`UPDATE aggregated_signal_event SET reason = 'x' WHERE signal_id = $1`, [id]),
+    ).rejects.toThrow();
+    await expect(
+      getPool().query(`DELETE FROM aggregated_signal_event WHERE signal_id = $1`, [id]),
+    ).rejects.toThrow();
+  });
+
+  it('the database refuses an unexplained refusal in the trail', async () => {
+    const id = await draftSignal();
+    await expect(
+      getPool().query(
+        `INSERT INTO aggregated_signal_event
+           (clinic_id, signal_id, event_type, from_status, to_status)
+         VALUES ($1, $2, 'withdrawn', 'published', 'withdrawn')`,
+        [clinicId, id],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('the trail never carries the claim’s value or cohort size', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    const { rows } = await getPool().query<{ detail: unknown; reason: string | null }>(
+      `SELECT detail, reason FROM aggregated_signal_event WHERE signal_id = $1`,
+      [id],
+    );
+    for (const row of rows) {
+      const serialized = JSON.stringify(row);
+      expect(serialized).not.toContain('cohortSize');
+      expect(serialized).not.toContain('cohort_size');
+      expect(serialized).not.toContain('"value"');
+    }
+  });
+
+  it('the trail belongs to governance, not to a consumer', async () => {
+    const id = await draftSignal();
+    await publishThroughReview(id);
+    const res = await call('GET', `/intelligence/signals/${id}/history`, rep);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('another clinic cannot read the trail', async () => {
+    const id = await draftSignal();
+    const other = await makeClinic('Other Trail Clinic');
+    const outsider = await makeUser(other.clinicId, 'trail-mgr', RoleKey.PHARMA_MANAGER);
+    const res = await call('GET', `/intelligence/signals/${id}/history`, outsider);
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('the trail endpoint requires authentication', async () => {
+    const id = await draftSignal();
+    const res = await app.inject({ method: 'GET', url: `/intelligence/signals/${id}/history` });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
 describe('governance boundaries hold', () => {
   it('a lifecycle decision never carries the signal’s value into an event', async () => {
     const id = await draftSignal();

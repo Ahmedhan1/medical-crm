@@ -89,6 +89,8 @@ interface SignalRow {
   generated_at: string;
   published_at: string | null;
   generated_by: string | null;
+  inserted?: boolean;
+  previous_status?: SignalLifecycle | null;
   lifecycle_status: SignalLifecycle;
   effective_status: SignalLifecycle;
   reviewed_by: string | null;
@@ -386,9 +388,24 @@ export async function upsertSignal(
   runId: string,
   signal: PublishedSignal,
   generatedBy: string,
-): Promise<StoredSignal> {
+): Promise<{ signal: StoredSignal; inserted: boolean; previousStatus: SignalLifecycle | null }> {
   const { rows } = await client.query<SignalRow>(
-    `INSERT INTO aggregated_signal
+    // `prior` reads the pre-statement snapshot of the conflict target, so the
+    // state a recomputed signal is LEAVING is known in the same round trip.
+    // Without it a supersession could only be recorded as "from nowhere".
+    `WITH prior AS (
+       SELECT lifecycle_status
+         FROM aggregated_signal
+        WHERE clinic_id = $1
+          AND signal_type = $3
+          AND signal_key = $4
+          AND scope_type = $6
+          AND scope_id IS NOT DISTINCT FROM $7
+          AND period_start = $11
+          AND period_end = $12
+     ),
+     saved AS (
+     INSERT INTO aggregated_signal
        (clinic_id, run_id, signal_type, signal_key, signal_label, scope_type, scope_id, scope_label,
         jurisdiction, aggregation_level, period_start, period_end, value, value_unit, cohort_size,
         min_cohort_size, confidence, source, source_version, method, provenance, policy_key,
@@ -423,7 +440,14 @@ export async function upsertSignal(
                      withdrawn_at = NULL,
                      withdrawal_reason = NULL,
                      expires_at = NULL
-     RETURNING *, pharma_effective_signal_status(lifecycle_status, expires_at) AS effective_status`,
+     RETURNING *
+     )
+     SELECT saved.*,
+            pharma_effective_signal_status(saved.lifecycle_status, saved.expires_at)
+              AS effective_status,
+            (SELECT lifecycle_status FROM prior) AS previous_status,
+            NOT EXISTS (SELECT 1 FROM prior) AS inserted
+       FROM saved`,
     [
       clinicId,
       runId,
@@ -452,7 +476,12 @@ export async function upsertSignal(
       signal.valueRoundingBase,
     ],
   );
-  return mapSignal(rows[0]!);
+  const row = rows[0]!;
+  return {
+    signal: mapSignal(row),
+    inserted: row.inserted === true,
+    previousStatus: row.previous_status ?? null,
+  };
 }
 
 // --- Query governance log (migration 0305) ----------------------------------
@@ -741,4 +770,125 @@ export async function markSignalsExpired(
     [clinicId, ids],
   );
   return rowCount ?? 0;
+}
+
+// --- the decision trail (migration 0314) -------------------------------------
+
+export interface SignalEvent {
+  id: string;
+  signalId: string;
+  eventType:
+    | 'generated'
+    | 'submitted'
+    | 'approved'
+    | 'rejected'
+    | 'published'
+    | 'withdrawn'
+    | 'expired'
+    | 'superseded';
+  fromStatus: SignalLifecycle | null;
+  toStatus: SignalLifecycle;
+  reason: string | null;
+  detail: Record<string, unknown>;
+  /** NULL for a system transition — an expiry is a clock, not a person. */
+  actorId: string | null;
+  occurredAt: string;
+}
+
+export async function insertSignalEvent(
+  runner: Runner,
+  input: {
+    clinicId: string;
+    signalId: string;
+    eventType: SignalEvent['eventType'];
+    fromStatus: SignalLifecycle | null;
+    toStatus: SignalLifecycle;
+    reason: string | null;
+    detail?: Record<string, unknown>;
+    actorId: string | null;
+  },
+): Promise<void> {
+  await runner.query(
+    `INSERT INTO aggregated_signal_event
+       (clinic_id, signal_id, event_type, from_status, to_status, reason, detail, actor_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      input.clinicId,
+      input.signalId,
+      input.eventType,
+      input.fromStatus,
+      input.toStatus,
+      input.reason,
+      JSON.stringify(input.detail ?? {}),
+      input.actorId,
+    ],
+  );
+}
+
+export async function listSignalEvents(
+  clinicId: string,
+  signalId: string,
+  runner: Runner = getPool(),
+): Promise<SignalEvent[]> {
+  const { rows } = await runner.query<{
+    id: string;
+    signal_id: string;
+    event_type: SignalEvent['eventType'];
+    from_status: SignalLifecycle | null;
+    to_status: SignalLifecycle;
+    reason: string | null;
+    detail: Record<string, unknown>;
+    actor_id: string | null;
+    occurred_at: string;
+  }>(
+    `SELECT id::text AS id, signal_id, event_type, from_status, to_status,
+            reason, detail, actor_id, occurred_at
+       FROM aggregated_signal_event
+      WHERE clinic_id = $1 AND signal_id = $2
+      ORDER BY occurred_at, id`,
+    [clinicId, signalId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    signalId: row.signal_id,
+    eventType: row.event_type,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    reason: row.reason,
+    detail: row.detail,
+    actorId: row.actor_id,
+    occurredAt: row.occurred_at,
+  }));
+}
+
+/**
+ * Lapsed signals, with the state each is leaving, so the sweep can write a
+ * trail entry per signal instead of only an aggregate count.
+ */
+export async function expiredSignalRows(
+  client: PoolClient,
+  clinicId: string,
+  limit: number,
+): Promise<Array<{ id: string; lifecycleStatus: SignalLifecycle; expiresAt: string }>> {
+  const { rows } = await client.query<{
+    id: string;
+    lifecycle_status: SignalLifecycle;
+    expires_at: string;
+  }>(
+    `SELECT id, lifecycle_status, expires_at
+       FROM aggregated_signal
+      WHERE clinic_id = $1
+        AND lifecycle_status = 'published'
+        AND expires_at IS NOT NULL
+        AND expires_at < now()
+      ORDER BY expires_at
+      LIMIT $2
+      FOR UPDATE`,
+    [clinicId, limit],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    lifecycleStatus: r.lifecycle_status,
+    expiresAt: r.expires_at,
+  }));
 }
