@@ -7,6 +7,8 @@ import type { Channel, MessageStatus } from './messaging.types.js';
 import { attemptDelivery, backoffMs } from './messaging.service.js';
 import { getActiveTemplate, renderTemplate } from './templates.js';
 import { resolvePatientRecipient } from './recipients.js';
+import { getConsentStatus, isSendAllowed } from './consent.js';
+import { getEffectivePolicy, inQuietHours, nextAllowedTime, frequencyBlock } from './policy.js';
 
 /**
  * Retry + delivery-status handling (blueprint §16 reliability).
@@ -42,6 +44,52 @@ async function rebuildPlan(row: RetryableRow): Promise<{ to: string; body: strin
   return { to: recipient.to, body, templateKey: row.template_key };
 }
 
+/**
+ * Re-evaluate consent + communication policy AT DELIVERY TIME for a retry, so a
+ * patient who opted out (or a message that would now breach quiet hours or a
+ * frequency cap) after the original failure is never delivered on retry.
+ *   - consent revoked / not opted-in → SUPPRESS (opt-out honored immediately)
+ *   - quiet hours right now          → DEFER to the next allowed time
+ *   - over a frequency cap           → SUPPRESS with the cap reason
+ */
+type RetryGate = { kind: 'allow' } | { kind: 'suppress'; reason: string } | { kind: 'defer'; until: Date };
+
+async function retryGate(row: RetryableRow): Promise<RetryGate> {
+  if (!row.patient_id) return { kind: 'allow' }; // non-patient messages aren't retryable anyway
+  const consent = await getConsentStatus(row.clinic_id, row.patient_id, row.channel);
+  if (!isSendAllowed(consent)) return { kind: 'suppress', reason: 'no_consent' };
+  const policy = await getEffectivePolicy(row.clinic_id, row.channel);
+  const now = new Date();
+  if (inQuietHours(policy, now)) return { kind: 'defer', until: nextAllowedTime(policy, now) };
+  const fblock = await frequencyBlock(policy, row.patient_id, row.channel);
+  if (fblock) return { kind: 'suppress', reason: fblock };
+  return { kind: 'allow' };
+}
+
+async function suppressRetry(row: RetryableRow, reason: string, actorId: string | null): Promise<{ messageId: string; status: MessageStatus }> {
+  await getPool().query(
+    `UPDATE message_log SET status='suppressed', suppressed_reason=$2, next_attempt_at=NULL, updated_at=now() WHERE id=$1`,
+    [row.id, reason],
+  );
+  await audit({
+    clinicId: row.clinic_id, actorId, action: 'message.retry_suppressed', outcome: 'success',
+    targetType: 'message', targetId: row.id, metadata: { channel: row.channel, reason },
+  });
+  return { messageId: row.id, status: 'suppressed' };
+}
+
+async function deferRetry(row: RetryableRow, until: Date, actorId: string | null): Promise<{ messageId: string; status: MessageStatus }> {
+  await getPool().query(
+    `UPDATE message_log SET next_attempt_at=$2, updated_at=now() WHERE id=$1`,
+    [row.id, until],
+  );
+  await audit({
+    clinicId: row.clinic_id, actorId, action: 'message.retry_deferred', outcome: 'success',
+    targetType: 'message', targetId: row.id, metadata: { channel: row.channel, reason: 'quiet_hours' },
+  });
+  return { messageId: row.id, status: 'failed' };
+}
+
 async function loadRetryable(clinicId: string, id: string): Promise<RetryableRow | null> {
   const { rows } = await getPool().query<RetryableRow>(
     `SELECT id, clinic_id, channel, patient_id, template_key, locale, status, attempts, max_attempts
@@ -62,6 +110,10 @@ export async function retryMessage(principal: Principal, id: string): Promise<{ 
   if (row.attempts >= row.max_attempts) {
     throw new ConflictError('Message has reached its maximum attempts (dead-lettered)');
   }
+  // Re-check consent + policy at delivery time (opt-out honored immediately).
+  const gate = await retryGate(row);
+  if (gate.kind === 'suppress') return suppressRetry(row, gate.reason, principal.userId);
+  if (gate.kind === 'defer') return deferRetry(row, gate.until, principal.userId);
   const plan = await rebuildPlan(row);
   await audit({
     clinicId: principal.clinicId,
@@ -97,6 +149,16 @@ export async function retryDueMessages(
   const results: Array<{ messageId: string; status: MessageStatus }> = [];
   for (const row of rows) {
     try {
+      // Re-check consent + policy at delivery time for every retry.
+      const gate = await retryGate(row);
+      if (gate.kind === 'suppress') {
+        results.push(await suppressRetry(row, gate.reason, principal.userId));
+        continue;
+      }
+      if (gate.kind === 'defer') {
+        results.push(await deferRetry(row, gate.until, principal.userId));
+        continue;
+      }
       const plan = await rebuildPlan(row);
       results.push(await attemptDelivery(row.id, principal.clinicId, row.channel, plan, principal.userId));
     } catch {

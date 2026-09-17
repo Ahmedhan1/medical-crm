@@ -1,5 +1,27 @@
 # Agent 3 — AI / Automation / WhatsApp — State
 
+## Gap Audit (post-E5, baseline I-6 @ 659b285)
+End-to-end audit of the AI + Automation + Patient Engagement surface. Two genuine
+gaps found and fixed (both within Agent-3 ownership; no new tables):
+- **GAP-1 (safety, HIGH):** message RETRY (`delivery.retryMessage` /
+  `retryDueMessages`) re-sent a failed message via `attemptDelivery` WITHOUT
+  re-checking consent, quiet hours or frequency caps — so an opt-out (or a cap /
+  quiet-hours breach) occurring after the first failure would still deliver on
+  retry. Fixed: retry now re-evaluates consent + policy AT DELIVERY TIME —
+  opt-out ⇒ suppressed (`no_consent`), quiet hours ⇒ deferred to the next allowed
+  time, over-cap ⇒ suppressed (`min_gap`/`daily_cap`). (Scheduler-driven sends
+  already re-checked via `dispatchMessage`; only the message-level retry bypassed.)
+- **GAP-2 (governance, LOW):** the intake evaluation pass criterion used recall +
+  hallucination only, so a provider emitting EXTRA/incorrect fields could game a
+  misleading "pass". Fixed: pass now also requires precision ≥ 0.99.
+
+Verified NOT gaps (spot-checked): `bypassPolicy` is internal-only (never exposed
+via HTTP, never set true); E4 Action Guard/gateway/policy unchanged; AI authority
+is `ai_identity.scopes` only (never human RBAC); scheduled sends re-check consent
+at delivery; draft-creation paths (intake/summaries) validate output before
+persistence; domain events carry ids only (no PHI); read-only tools are
+clinic-scoped and mutate nothing; clinical PHI reads remain authorization-only.
+
 ## Current Status
 Base: `integration/medcore-v1` @ `48a456b` (I-4 consolidated baseline; my E2/E3/E4 are
 already integrated there). Agent-3 expansion increments:

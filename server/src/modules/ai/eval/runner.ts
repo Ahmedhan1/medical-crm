@@ -51,7 +51,12 @@ function buildReport(
   return report;
 }
 
-/** Run the intake extraction suite. Passes when recall is perfect and no citation is hallucinated. */
+/**
+ * Run the intake extraction suite. Passes only when recall AND precision are
+ * perfect and no citation is hallucinated. Precision is required so a provider
+ * that emits EXTRA/incorrect fields cannot game a recall-only metric into a
+ * misleading "pass".
+ */
 export async function runIntakeEval(provider: AIProvider = new LocalAIProvider()): Promise<EvalReport> {
   const results: EvalCaseResult[] = [];
   for (const fixture of INTAKE_FIXTURES) {
@@ -59,7 +64,7 @@ export async function runIntakeEval(provider: AIProvider = new LocalAIProvider()
     const output = await provider.extractIntake({ text: fixture.text });
     const latencyMs = performance.now() - started;
     const score = scoreIntake(fixture.id, fixture.expected, output);
-    const passed = score.recall >= 0.99 && score.hallucinatedCitations === 0;
+    const passed = score.recall >= 0.99 && score.precision >= 0.99 && score.hallucinatedCitations === 0;
     results.push({ fixtureId: fixture.id, passed, latencyMs });
   }
   return buildReport('intake', provider, results);
