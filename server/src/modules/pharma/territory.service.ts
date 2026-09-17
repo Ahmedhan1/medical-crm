@@ -5,7 +5,8 @@ import { emitEvent, EventType } from '../../domain/events.js';
 import { auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
-import { getHcpById } from '../hcp/hcp.repo.js';
+import { assertHcpOpen, getHcpById } from '../hcp/hcp.repo.js';
+import { today } from './dates.js';
 import * as repo from './territory.repo.js';
 import { territoryScopeFor } from './visibility.js';
 
@@ -150,6 +151,9 @@ export async function targetHcp(principal: Principal, territoryId: string, raw: 
     if (!territory) throw new NotFoundError('Territory');
     const hcp = await getHcpById(principal.clinicId, input.hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    // Targeting, engagement and enquiries all attach NEW state to an identity;
+    // a merged record has been resolved away and must not acquire any.
+    assertHcpOpen(hcp);
 
     await repo.upsertHcpTarget(client, {
       clinicId: principal.clinicId,
@@ -195,4 +199,77 @@ export async function myTerritory(principal: Principal) {
   const territoryIds = assignments.map((a) => a.territoryId);
   const targets = await repo.listTargets(principal.clinicId, territoryIds);
   return { assignments, targets };
+}
+
+/**
+ * End a territory assignment.
+ *
+ * The counterpart to `assignTerritory`, and the one that was missing: territory
+ * scope is an authorization dimension, so being unable to REVOKE it was the
+ * more serious half. Everything a representative can reach — the HCP master
+ * through `territoryScopeFor`, visit lists, briefings, call reports, scientific
+ * requests, signals — flows from an open assignment, and an open assignment
+ * could only be closed by writing to the database by hand.
+ *
+ * `validTo` defaults to today, which revokes at the end of the current day. A
+ * future date schedules the hand-over; a past one is refused, because scope
+ * that was live yesterday cannot be un-lived and the audit trail should not
+ * claim otherwise.
+ */
+export const EndAssignmentSchema = z.object({
+  validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').optional(),
+});
+
+export async function endTerritoryAssignment(
+  principal: Principal,
+  territoryId: string,
+  assignmentId: string,
+  raw: unknown,
+) {
+  requirePermission(principal, Permission.TERRITORY_MANAGE);
+  const input = parse(EndAssignmentSchema, raw ?? {}, 'assignment end');
+  const validTo = input.validTo ?? today();
+  if (validTo < today()) {
+    throw new ValidationError(
+      'An assignment cannot be ended in the past; scope that was live cannot be un-lived.',
+      { field: 'validTo' },
+    );
+  }
+
+  return withTransaction(async (client) => {
+    const territory = await repo.getTerritoryById(principal.clinicId, territoryId, client);
+    if (!territory) throw new NotFoundError('Territory');
+
+    const existing = await repo.getAssignmentById(principal.clinicId, assignmentId, client);
+    // Tenancy first, then shape: a foreign id is never confirmed to exist.
+    if (!existing || existing.territoryId !== territoryId) {
+      throw new NotFoundError('Territory assignment');
+    }
+    if (existing.validTo !== null) {
+      throw new ConflictError('This assignment has already been ended', {
+        validTo: existing.validTo,
+      });
+    }
+
+    const ended = await repo.endAssignment(client, principal.clinicId, assignmentId, validTo);
+    if (!ended) throw new ConflictError('This assignment has already been ended');
+
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.TERRITORY_ASSIGNMENT_ENDED,
+      subjectType: 'territory',
+      subjectId: territoryId,
+      actorId: principal.userId,
+      payload: { assignmentId, userId: ended.userId, validTo: ended.validTo },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'territory.assignment.end',
+      targetType: 'territory',
+      targetId: territoryId,
+      metadata: { assignmentId, userId: ended.userId, validTo: ended.validTo },
+    });
+    return ended;
+  });
 }

@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { ConflictError } from '../../domain/errors.js';
 import { toDateString, validityOn } from '../pharma/dates.js';
 import {
   mapProvenance,
@@ -70,6 +71,27 @@ interface HcpRow extends ProvenanceRow {
   merged_into_hcp_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A merged record is CLOSED to new state.
+ *
+ * Merging is how two identities become one: the losing record stays readable so
+ * its history survives, and everything from then on belongs to the survivor.
+ * Only `updateHcp` enforced that. Every other write path — affiliations,
+ * credentials, identifiers, practice locations, interests, specialties,
+ * verification decisions, territory targeting, content engagement, scientific
+ * requests — happily kept attaching state to a record that had been resolved
+ * away, so a retired identity could go on collecting affiliations and even be
+ * re-verified. The survivor's 360 would never show any of it.
+ */
+export function assertHcpOpen(hcp: Hcp): void {
+  if (hcp.status === 'merged') {
+    throw new ConflictError(
+      'This HCP record was merged; act on the surviving record instead',
+      { mergedIntoHcpId: hcp.mergedIntoHcpId },
+    );
+  }
 }
 
 export function mapHcp(row: HcpRow): Hcp {
@@ -1158,4 +1180,110 @@ export async function listInterests(
     source: r.source,
     confidence: numericToNumber(r.confidence),
   }));
+}
+
+/**
+ * Amend or close an affiliation.
+ *
+ * `hcp_hco_affiliation.end_date` has existed since 0300 and nothing could set
+ * it, so a physician who left a hospital stayed affiliated for ever — counted
+ * by HCO 360 and by specialty coverage. Worse, `uq_affiliation_open` keys on
+ * `end_date IS NULL`, so the same (hcp, hco, department) affiliation could
+ * never be recorded twice: someone who returned after a gap was unrepresentable.
+ *
+ * Dating rather than deleting, for the same reason as everywhere else here: the
+ * affiliation was true while it lasted, and visits recorded against it stay
+ * meaningful only if it survives.
+ */
+export async function updateAffiliation(
+  runner: Runner,
+  clinicId: string,
+  affiliationId: string,
+  hcpId: string,
+  patch: { endDate?: string | null; roleTitle?: string | null; affiliationType?: string },
+): Promise<HcpAffiliation | null> {
+  const { rows } = await runner.query<{
+    id: string;
+    hcp_id: string;
+    hco_id: string;
+    hco_name: string;
+    hco_department_id: string | null;
+    department_name: string | null;
+    department: string | null;
+    role_title: string | null;
+    affiliation_type: HcpAffiliation['affiliationType'];
+    start_date: string | null;
+    end_date: string | null;
+    source: string;
+    verification_status: VerificationStatus;
+    last_verified_at: string | null;
+    confidence: string | null;
+  }>(
+    `WITH updated AS (
+       UPDATE hcp_hco_affiliation
+          SET end_date = coalesce($4::date, end_date),
+              role_title = coalesce($5, role_title),
+              affiliation_type = coalesce($6, affiliation_type),
+              updated_at = now()
+        WHERE id = $1 AND clinic_id = $2 AND hcp_id = $3
+        RETURNING *
+     )
+     SELECT a.*, o.name AS hco_name, d.name AS department_name
+       FROM updated a
+       JOIN hco o ON o.id = a.hco_id
+       LEFT JOIN hco_department d ON d.id = a.hco_department_id`,
+    [
+      affiliationId,
+      clinicId,
+      hcpId,
+      patch.endDate ?? null,
+      patch.roleTitle ?? null,
+      patch.affiliationType ?? null,
+    ],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    hcpId: row.hcp_id,
+    hcoId: row.hco_id,
+    hcoName: row.hco_name,
+    hcoDepartmentId: row.hco_department_id,
+    department: row.department_name ?? row.department,
+    roleTitle: row.role_title,
+    affiliationType: row.affiliation_type,
+    startDate: toDateString(row.start_date),
+    endDate: toDateString(row.end_date),
+    source: row.source,
+    verificationStatus: row.verification_status,
+    lastVerifiedAt: row.last_verified_at,
+    confidence: numericToNumber(row.confidence),
+  };
+}
+
+/** One affiliation, so the service can check tenancy and ownership first. */
+export async function getAffiliationById(
+  clinicId: string,
+  affiliationId: string,
+  runner: Runner = getPool(),
+): Promise<{ id: string; hcpId: string; hcoId: string; endDate: string | null } | null> {
+  const { rows } = await runner.query<{
+    id: string;
+    hcp_id: string;
+    hco_id: string;
+    end_date: Date | string | null;
+  }>(
+    `SELECT id, hcp_id, hco_id, end_date
+       FROM hcp_hco_affiliation
+      WHERE id = $1 AND clinic_id = $2`,
+    [affiliationId, clinicId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    hcpId: row.hcp_id,
+    hcoId: row.hco_id,
+    endDate: toDateString(row.end_date),
+  };
 }

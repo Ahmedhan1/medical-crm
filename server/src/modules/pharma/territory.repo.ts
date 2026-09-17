@@ -290,3 +290,83 @@ export async function territoriesForHcp(
     tier: r.tier,
   }));
 }
+
+/**
+ * Close an open assignment by dating it.
+ *
+ * Territory scope is an AUTHORIZATION dimension, and until now it could only be
+ * granted: `valid_to` existed on the table, `uq_territory_assignment_open` keyed
+ * on it, and nothing in the service ever set it. A representative who moved
+ * territory kept the old one for good, and the only way to revoke it was a
+ * direct write to the database.
+ *
+ * Dating rather than deleting: who covered which territory when is the context
+ * for every visit and call report already recorded against it.
+ */
+export async function endAssignment(
+  runner: Runner,
+  clinicId: string,
+  assignmentId: string,
+  validTo: string,
+): Promise<TerritoryAssignment | null> {
+  const { rows } = await runner.query<{
+    id: string;
+    territory_id: string;
+    territory_code: string;
+    territory_name: string;
+    user_id: string;
+    assignment_role: TerritoryAssignment['assignmentRole'];
+    valid_from: Date | string;
+    valid_to: Date | string | null;
+  }>(
+    `WITH updated AS (
+       UPDATE territory_assignment
+          SET valid_to = $3::date
+        WHERE id = $1 AND clinic_id = $2 AND valid_to IS NULL
+        RETURNING *
+     )
+     SELECT u.*, t.code AS territory_code, t.name AS territory_name
+       FROM updated u
+       JOIN territory t ON t.id = u.territory_id`,
+    [assignmentId, clinicId, validTo],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    territoryId: row.territory_id,
+    territoryCode: row.territory_code,
+    territoryName: row.territory_name,
+    userId: row.user_id,
+    assignmentRole: row.assignment_role,
+    validFrom: toDateString(row.valid_from)!,
+    validTo: toDateString(row.valid_to),
+  };
+}
+
+/** One assignment, for the service to check tenancy and open-ness before ending it. */
+export async function getAssignmentById(
+  clinicId: string,
+  assignmentId: string,
+  runner: Runner = getPool(),
+): Promise<{ id: string; territoryId: string; userId: string; validTo: string | null } | null> {
+  const { rows } = await runner.query<{
+    id: string;
+    territory_id: string;
+    user_id: string;
+    valid_to: Date | string | null;
+  }>(
+    `SELECT id, territory_id, user_id, valid_to
+       FROM territory_assignment
+      WHERE id = $1 AND clinic_id = $2`,
+    [assignmentId, clinicId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    territoryId: row.territory_id,
+    userId: row.user_id,
+    validTo: toDateString(row.valid_to),
+  };
+}

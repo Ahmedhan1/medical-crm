@@ -5,7 +5,7 @@ import { emitEvent, EventType } from '../../domain/events.js';
 import { auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { hasPermission, requirePermission, type Principal } from '../governance/rbac.js';
-import { getHcpById } from '../hcp/hcp.repo.js';
+import { assertHcpOpen, getHcpById } from '../hcp/hcp.repo.js';
 import * as content from './content.repo.js';
 import { isUsable } from './content.service.js';
 import { today } from './dates.js';
@@ -142,6 +142,9 @@ export async function createScientificRequest(principal: Principal, raw: unknown
   return withTransaction(async (client) => {
     const hcp = await getHcpById(principal.clinicId, input.hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    // Targeting, engagement and enquiries all attach NEW state to an identity;
+    // a merged record has been resolved away and must not acquire any.
+    assertHcpOpen(hcp);
     let callReportId: string | null = null;
     if (input.visitId) {
       const visit = await field.getVisitById(principal.clinicId, input.visitId, client);
