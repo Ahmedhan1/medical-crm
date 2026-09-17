@@ -471,6 +471,8 @@ export async function decideHcoVerification(
 ): Promise<Hco> {
   requirePermission(principal, Permission.HCO_VERIFY);
   const input = parse(HcoVerificationSchema, raw, 'HCO verification decision');
+  // This one reaches a shared EVENT payload, not just the audit log.
+  assertFreeTextClean({ evidenceSource: input.evidenceSource, note: input.note ?? null });
 
   return withTransaction(async (client) => {
     const current = await repo.getHcoForUpdate(client, principal.clinicId, id);
@@ -651,6 +653,7 @@ export async function sweepHcoVerifications(
 export async function mergeHco(principal: Principal, id: string, raw: unknown): Promise<Hco> {
   requirePermission(principal, Permission.HCO_MERGE);
   const input = parse(MergeHcoSchema, raw, 'HCO merge');
+  assertFreeTextClean({ reason: input.reason });
   if (input.survivorHcoId === id) {
     throw new ValidationError('An organisation cannot be merged into itself', {
       field: 'survivorHcoId',
@@ -1367,6 +1370,7 @@ export async function decideHcoLocationVerification(
 ): Promise<HcoLocation> {
   requirePermission(principal, Permission.HCO_VERIFY);
   const input = parse(HcoVerificationSchema, raw, 'HCO location verification decision');
+  assertFreeTextClean({ evidenceSource: input.evidenceSource, note: input.note ?? null });
 
   return withTransaction(async (client) => {
     const current = await repo.getHcoLocationForUpdate(client, principal.clinicId, locationId);
@@ -1423,6 +1427,7 @@ export async function decideHcoDepartmentVerification(
 ): Promise<HcoDepartment> {
   requirePermission(principal, Permission.HCO_VERIFY);
   const input = parse(HcoVerificationSchema, raw, 'HCO department verification decision');
+  assertFreeTextClean({ evidenceSource: input.evidenceSource, note: input.note ?? null });
 
   return withTransaction(async (client) => {
     const current = await repo.getHcoDepartmentForUpdate(client, principal.clinicId, departmentId);

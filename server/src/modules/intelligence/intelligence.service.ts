@@ -5,6 +5,7 @@ import { emitEvent, EventType } from '../../domain/events.js';
 import { audit, auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { hasPermission, requirePermission, type Principal } from '../governance/rbac.js';
+import { assertFreeTextClean } from '../pharma/guards.js';
 import { JurisdictionSchema } from '../pharma/provenance.js';
 import { territoryScopeFor } from '../pharma/visibility.js';
 import { applyDisclosureControl } from './disclosure.js';
@@ -601,6 +602,7 @@ export async function decideSignal(principal: Principal, signalId: string, raw: 
     throw new ValidationError('Invalid signal decision', parsed.error.flatten());
   }
   const input = parsed.data;
+  assertFreeTextClean({ reason: input.reason ?? null });
   const decision = input.decision as SignalDecision;
   const to = targetStateFor(decision);
 

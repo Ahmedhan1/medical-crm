@@ -1,6 +1,38 @@
 # Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — GOVERNANCE AUDIT PASS DONE
+## Current Status — CROSS-DOMAIN AUDIT PASS DONE
+Branch `claude/jolly-carson-8t7ufe`. Finishes the Pharma surface, red-teams it
+from a valid `PHARMA_REP` account, and audits the Clinical and AI boundaries
+from the Pharma side without touching Agent-2 or Agent-3 code.
+
+**Suite: 1188 tests green, 0 skipped** (1120 at `2a2b5bb`, 68 added). Typecheck,
+build and a from-empty migration run are clean.
+
+### Pharma findings fixed
+
+| # | Area | Finding |
+| --- | --- | --- |
+| 1 | Drug Master | The THIRD governed master was never brought up to the bar 0306/0307 set for the other two: `verifyMedication` accepted any status, so `unverified → verified` in one step was legal; verification was gated by `medication:write`, so anyone who could RECORD a product could also ATTEST it; there was no `rejected`/`suspended` and no expiry, so a record attested in 2019 still read `verified`. Fixed by `0315` + `medication:verify` + the shared lifecycle module + a sweep. |
+| 2 | PHI in logs and events | `guards.ts` screened what a REPRESENTATIVE types and nothing a STEWARD types. `evidenceSource`, verification `note`, merge `reason`, escalation `reason` and a signal's rejection/withdrawal reason were all unscreened — and every one lands in an append-only revision trail, the audit log, or (HCO and signal paths) a payload on the SHARED event bus. Append-only means a pasted MRN could not be edited out afterwards. Now screened on every governance path. |
+| 3 | Documentation | The state file still used pre-integration CCR numbers (`CCR-006`/`CCR-007`) that the register reconciled to `CCR-009`/`CCR-010`. Corrected. |
+
+### Security review — no escalation found
+38 adversarial tests from a valid `PHARMA_REP` account across tenancy,
+territory, the manager hierarchy, master-data stewardship, content, medical
+affairs, intelligence, export, audit integrity and unauthenticated access. All
+refused. Two of those tests were VACUOUS as first written — an `UPDATE` against
+an empty table succeeds trivially — and now seed a real policy row before
+attacking it. The cohort floor held: `CHECK (min_cohort_size >= 5)` has been in
+`0304` since the start, and the API bound refuses a lowering for a publisher
+too, not only for a rep.
+
+### Cross-domain audit
+Twelve static, repo-wide assertions now run in Agent 4's own suite, so the
+boundary is a property the build enforces rather than a reading someone took
+once. Findings for Agents 2 and 3 are filed as **CCR-011** and **CCR-012**; no
+Agent-2 or Agent-3 file was modified.
+
+## Previous status — governance audit pass
 Branch `claude/jolly-carson-8t7ufe`. A deep completion-and-governance audit of
 the whole Pharma surface, on top of the verified `0307`–`0312` work at
 `aa337a5`. Nothing already delivered was reimplemented; migrations `0307`–`0312`
@@ -109,7 +141,7 @@ Traced against the code at `659b285`, not against any earlier summary.
 
 Deliberately **not** changed: the firewall, `ABSOLUTE_MIN_COHORT = 5`, banding,
 rounding, complementary suppression, narrowing detection, query budgets,
-`clinical_governed` fail-closed (CCR-004), CCR-007 (design only) and CCR-010.
+`clinical_governed` fail-closed (CCR-004), CCR-007 (Agent 2's) and CCR-010 (adverse events, design only).
 No adverse-event pathway was built.
 
 ## Design decisions worth knowing
@@ -133,7 +165,7 @@ No adverse-event pathway was built.
   by the services.
 
 ## Database changes
-Reserved range **0300–0399**; `0300`–`0314` used.
+Reserved range **0300–0399**; `0300`–`0315` used.
 
 | Migration | Contents |
 | --- | --- |
@@ -146,6 +178,7 @@ Reserved range **0300–0399**; `0300`–`0314` used.
 | `0312_pharma_export_log` | append-only export receipts |
 | `0313_hco_site_governance` | `record_version` and append-only revision tables for `hco_location` / `hco_department`; expiry-sweep partial indexes |
 | `0314_signal_decision_trail` | append-only `aggregated_signal_event` |
+| `0315_drug_master_governance` | eight-state verification, `verified_by`, expiry and evidenced-refusal CHECK on `medication` / `medication_product` |
 
 `0311` deliberately RETRACTS pre-existing signals to `draft`. Grandfathering
 unreviewed claims as published truth is the finding the migration exists to
@@ -229,12 +262,19 @@ publishes its own output.
 ## Contract changes
 No new CCRs in this pass. CCR-004 remains APPROVED-as-contract with the
 implementation owned by Agents 1 + 2 and `clinical_governed` still fail-closed;
-CCR-007 remains DESIGN/PROPOSED with no adverse-event workflow built; CCR-010 is
-untouched.
+CCR-010 (adverse events) remains DESIGN/PROPOSED with no workflow built.
 
 ## Remaining gaps and risks
 
 Real, and none of them fixable inside this workstream today:
+
+0. **Two cross-domain contracts are open.** `CCR-011`: pharma events sit on the
+   shared bus and `automation_rule.event_type` is unconstrained free text, so a
+   rule can bind to one. Harmless today only because no automation action can
+   mutate pharma state and pharma payloads carry no patient id or free text —
+   both Agent-4 disciplines, not Agent-3 guarantees. `CCR-012`: `DraftKind`
+   includes `'call_report'`, a pharma artifact, with no promotion contract on
+   the pharma side.
 
 1. **No sweep scheduler.** Three expiry sweeps exist (HCP, HCO+components,
    signals) and all three must be invoked by a caller. Reads derive expiry so
@@ -256,7 +296,7 @@ Real, and none of them fixable inside this workstream today:
 6. **The legacy `hcp_hco_affiliation.department` text is still not backfilled**,
    deliberately — guessing which structured department a free-text string meant
    is the data invention this platform refuses.
-7. **CCR-007 (adverse events) remains blocked** on Agents 1 + 2. No
+7. **CCR-010 (adverse events) remains blocked** on Agents 1 + 2. No
    adverse-event pathway exists and none was built.
 8. **CCR-004 remains fail-closed.** `clinical_governed` throws; its
    implementation is owned by Agents 1 + 2, not here.

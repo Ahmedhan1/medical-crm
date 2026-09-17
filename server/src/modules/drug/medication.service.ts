@@ -3,6 +3,7 @@ import { withTransaction } from '../../db/pool.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import { emitEvent, EventType } from '../../domain/events.js';
 import { audit, auditTx } from '../governance/audit.js';
+import { assertFreeTextClean } from '../pharma/guards.js';
 import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
 import {
@@ -326,6 +327,7 @@ export async function addProduct(principal: Principal, medicationId: string, raw
 export async function verifyMedication(principal: Principal, id: string, raw: unknown) {
   requirePermission(principal, Permission.MEDICATION_VERIFY);
   const input = parse(VerifyMedicationSchema, raw, 'verification');
+  assertFreeTextClean({ evidenceSource: input.evidenceSource, note: input.note ?? null });
 
   return withTransaction(async (client) => {
     const before = await repo.getMedicationForUpdate(client, principal.clinicId, id);
