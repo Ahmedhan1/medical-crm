@@ -45,7 +45,10 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
-### CCR-011 — Pharma events on the shared bus: automation binding contract
+### CCR-013 — Pharma events on the shared bus: automation binding contract
+<!-- Renumbered at final-gate integration from Agent 4's CCR-011, which collided
+     with the existing CCR-011 (recurring expiry-sweep scheduling) already on the
+     trusted branch. No code references the number; decision preserved verbatim. -->
 - Status: PROPOSED
 - Requested by: Agent 4
 - Date: 2026-09-17
