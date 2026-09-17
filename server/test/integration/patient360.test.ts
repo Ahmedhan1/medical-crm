@@ -82,6 +82,12 @@ async function richPatient(): Promise<{ patientId: string }> {
   });
   await app.inject({
     method: 'POST',
+    url: `/encounters/${encounter.id}/vitals`,
+    headers: bearer(nurse),
+    payload: { heartRate: 72, spo2: 98, temperatureC: 37.1 },
+  });
+  await app.inject({
+    method: 'POST',
     url: `/encounters/${encounter.id}/status`,
     headers: bearer(nurse),
     payload: { status: 'ready' },
@@ -130,6 +136,10 @@ describe('Phase 16 — Patient 360', () => {
     expect(v.activePrescriptions).toHaveLength(1);
     expect(v.recentVisits).toHaveLength(1);
     expect(v.recentVisits[0].primaryDiagnosis).toBe('Acute pharyngitis');
+    // The universal vital set is part of the longitudinal summary.
+    expect(v.recentVitals).toHaveLength(1);
+    expect(v.recentVitals[0].heartRate).toBe(72);
+    expect(v.recentVitals[0].spo2).toBe(98);
   });
 
   it('shapes the summary by permission — reception sees fewer sections', async () => {
@@ -150,6 +160,7 @@ describe('Phase 16 — Patient 360', () => {
     // But NOT the doctor/nurse-only clinical sections — omitted entirely,
     // not returned empty.
     expect(v).not.toHaveProperty('activePrescriptions');
+    expect(v).not.toHaveProperty('recentVitals');
     expect(v).not.toHaveProperty('recentObservations');
     expect(v).not.toHaveProperty('treatmentEpisodes');
   });

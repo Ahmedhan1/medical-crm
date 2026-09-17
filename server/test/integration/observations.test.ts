@@ -154,6 +154,29 @@ describe('Phase 3 — recording observations', () => {
     expect((await record({ definitionId: def.id, encounterId, valueNumber: -1 })).statusCode).toBe(400);
   });
 
+  it('is append-only: a recorded observation cannot be updated or deleted', async () => {
+    const def = (await defineObservation(PASI)).json();
+    const { encounterId } = await newEncounter();
+    const recorded = await record({ definitionId: def.id, encounterId, valueNumber: 4 });
+    expect(recorded.statusCode).toBe(201);
+    const observationId = recorded.json().id;
+
+    // A recorded measurement is part of the clinical record; the database is
+    // the last line of defence. Corrections are new rows, never edits.
+    await expect(
+      getPool().query(`UPDATE observation SET value_number = 99 WHERE id = $1`, [observationId]),
+    ).rejects.toThrow(/append-only/i);
+    await expect(
+      getPool().query(`DELETE FROM observation WHERE id = $1`, [observationId]),
+    ).rejects.toThrow(/append-only/i);
+
+    const { rows } = await getPool().query<{ value_number: string }>(
+      `SELECT value_number FROM observation WHERE id = $1`,
+      [observationId],
+    );
+    expect(Number(rows[0]!.value_number)).toBe(4);
+  });
+
   it('requires the value type the definition declares', async () => {
     const def = (await defineObservation(PASI)).json();
     const { encounterId } = await newEncounter();

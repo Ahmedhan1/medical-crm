@@ -10,7 +10,12 @@ import {
   lockEncounter,
   TERMINAL_STATUSES,
 } from './encounter.repo.js';
-import { insertVital, listVitalsByEncounter, type Vital } from './vitals.repo.js';
+import {
+  insertVital,
+  listVitalsByEncounter,
+  listRecentPatientVitals,
+  type Vital,
+} from './vitals.repo.js';
 
 /**
  * Vital-sign bounds. These mirror the CHECK constraints in migration 0100:
@@ -159,4 +164,18 @@ export async function listVitals(principal: Principal, encounterId: string): Pro
   requirePermission(principal, Permission.VITALS_READ);
   const encounter = await getEncounterOrThrow(principal.clinicId, encounterId);
   return listVitalsByEncounter(principal.clinicId, encounter.id);
+}
+
+/**
+ * The patient's most recent vital sets across all encounters — the longitudinal
+ * view used by Patient 360. Same VITALS_READ gate as the per-encounter read.
+ */
+export async function listPatientVitals(
+  principal: Principal,
+  patientId: string,
+  opts: { limit?: number } = {},
+): Promise<Vital[]> {
+  requirePermission(principal, Permission.VITALS_READ);
+  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 200);
+  return listRecentPatientVitals(principal.clinicId, patientId, limit);
 }

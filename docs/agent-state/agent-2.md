@@ -10,6 +10,21 @@ live in the integrated branch.
 Suite: **534 tests / 40 files green.** Typecheck, build and a from-empty
 migration run (18 migrations) all clean.
 
+### Clinical Completion + Gap Audit (on `agent2/clinical-completion-audit`)
+Full clinical-domain gap audit against baseline `integration/medcore-v1 @ 659b285`.
+Three genuine gaps fixed (additive, nothing rewritten); everything else verified
+already complete/safe. **Suite 834 tests / 65 files green; typecheck, build and a
+from-empty migration (31 migrations, incl. 0114) all clean.**
+- **0114** — append-only DB triggers on `vital` + `observation` (they were
+  insert-only in code but had no DB guard). Measurements are now tamper-evident
+  like every other immutable clinical table.
+- **Encounter-cancel → appointment sync** — a cancelled encounter no longer
+  strands its linked appointment live; it closes as `left_without_being_seen`
+  (the state `ck_appointment_arrival` permits post-arrival), freeing the slot.
+- **Patient 360 `recentVitals`** — VITALS_READ-gated patient-level vitals reader
+  wired into the 360 view (the universal vital set was the one longitudinal read
+  missing). No new table; composes the existing permission-checked reader.
+
 ## Completed
 
 ### Clinical Core (C001–C007) — merged at integration

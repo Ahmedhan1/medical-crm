@@ -4,6 +4,7 @@ import { emitEvent, EventType } from '../../domain/events.js';
 import { auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
+import { syncAppointmentFromEncounterTx } from './scheduling.service.js';
 import {
   lockEncounter,
   mapEncounter,
@@ -111,6 +112,20 @@ export async function advanceStatus(
   return withTransaction(async (client) => {
     const encounter = await lockEncounter(client, principal.clinicId, encounterId);
     const updated = await applyStatusTx(client, principal, encounter, to, reason);
+
+    // A cancelled encounter closes its linked appointment (if any) in the same
+    // transaction, so a live appointment is never stranded and its room slot is
+    // released. The patient had already arrived (that is what opens the linked
+    // encounter), so the appointment closes as `left_without_being_seen` rather
+    // than `cancelled`. No-op for a walk-in with no appointment.
+    if (to === 'cancelled') {
+      await syncAppointmentFromEncounterTx(
+        client,
+        principal,
+        encounter.id,
+        'left_without_being_seen',
+      );
+    }
 
     await auditTx(client, {
       clinicId: principal.clinicId,

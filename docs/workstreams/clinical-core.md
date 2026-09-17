@@ -349,6 +349,30 @@ Automation boundary preserved: Clinical Core publishes facts/events; it imports
 no automation/messaging/AI/pharma module and sends nothing. PHI stays in the
 record — event payloads carry ids, status and controlled vocab only.
 
+### Clinical Completion + Gap Audit (migration 0114)
+End-to-end audit of the whole clinical domain against the trusted baseline
+(`integration/medcore-v1 @ 659b285`). Most of the domain was already complete and
+safe; the audit ruled out false gaps (event/audit payloads clean of PHI, tenant
+isolation intact, terminal-encounter guards present on intake/vitals/observations,
+no duplicate models). Three genuine gaps were fixed — additive only, nothing
+rewritten:
+- **Vital / observation immutability (integrity).** `vital` (0100) and
+  `observation` (0106) were insert-only in code but had no DB guard, unlike the
+  other immutable clinical tables. Migration **0114** adds the shared
+  `medcore_append_only()` BEFORE UPDATE OR DELETE trigger to both, so a recorded
+  measurement can never be edited or deleted in place — a correction is a new row.
+- **Encounter-cancel → appointment sync (correctness).** Cancelling an encounter
+  left its linked appointment stranded live, still holding its room slot. The
+  encounter→appointment sync now closes the linked appointment in the same
+  transaction. Because a linked appointment has always been through arrival
+  (`arrived_at` set), it closes as `left_without_being_seen` — the terminal state
+  the arrival constraint (`ck_appointment_arrival`, 0105) permits — never
+  `cancelled`, and the slot is freed.
+- **Patient 360 vitals coverage (completeness).** The universal vital set was
+  absent from Patient 360 while every other longitudinal read was present. Added a
+  patient-level vitals reader (`listPatientVitals`, VITALS_READ-gated) and a
+  `recentVitals` section, permission-shaped like the rest of the view.
+
 ## Next tasks
 CP-6 (procedures/sessions/protocols) or CP-12 (packages), then CP-14 (clinical
 analytics). See `docs/agent-state/agent-2.md`.

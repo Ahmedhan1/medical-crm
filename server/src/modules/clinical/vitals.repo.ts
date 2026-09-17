@@ -131,3 +131,25 @@ export async function listVitalsByEncounter(
   );
   return rows.map(mapVital);
 }
+
+/**
+ * The most recent vital sets for a patient across all their encounters — the
+ * patient-level counterpart to `listVitalsByEncounter`, used by the longitudinal
+ * reads (Patient 360). Clinic-scoped like every other query; ordered newest
+ * first and capped by `limit`.
+ */
+export async function listRecentPatientVitals(
+  clinicId: string,
+  patientId: string,
+  limit: number,
+  runner: Pick<PoolClient, 'query'> = getPool(),
+): Promise<Vital[]> {
+  const { rows } = await runner.query<VitalRow>(
+    `SELECT * FROM vital
+      WHERE clinic_id = $1 AND patient_id = $2
+      ORDER BY recorded_at DESC, id DESC
+      LIMIT $3`,
+    [clinicId, patientId, limit],
+  );
+  return rows.map(mapVital);
+}

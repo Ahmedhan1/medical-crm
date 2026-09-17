@@ -502,6 +502,47 @@ describe('Phase 2 — lifecycle', () => {
     ]);
   });
 
+  it('closes the linked appointment when its encounter is cancelled', async () => {
+    // Arrival opens the visit and links the appointment to the encounter.
+    const { appointment } = await scheduled('Cancelled Sync Patient');
+    const encounterId = (await setStatus(appointment.id, { status: 'arrived' })).json().encounterId;
+    expect(encounterId).toBeTruthy();
+
+    // Cancelling the encounter (front-desk authority) must not strand the
+    // still-live appointment. The patient had already arrived, so the
+    // appointment closes as `left_without_being_seen` in the same transaction,
+    // freeing the slot — it cannot become `cancelled` once arrived.
+    const cancel = await app.inject({
+      method: 'POST',
+      url: `/encounters/${encounterId}/status`,
+      headers: bearer(reception),
+      payload: { status: 'cancelled', reason: 'staff_decision' },
+    });
+    expect(cancel.statusCode).toBe(200);
+
+    const after = await app.inject({
+      method: 'GET',
+      url: `/appointments/${appointment.id}`,
+      headers: bearer(reception),
+    });
+    expect(after.json().appointment.status).toBe('left_without_being_seen');
+    expect(after.json().appointment.closedAt).toBeTruthy();
+    expect(after.json().history.map((h: { toStatus: string }) => h.toStatus)).toEqual([
+      'scheduled',
+      'arrived',
+      'left_without_being_seen',
+    ]);
+
+    // The slot is released: the same window can be booked again.
+    const rebook = await book({
+      patientId: (await newPatient('Rebooked Patient')).id,
+      startsAt: T(9),
+      durationMinutes: 30,
+      practitionerId: doctor.userId,
+    });
+    expect(rebook.statusCode).toBe(201);
+  });
+
   it('refuses transitions the lifecycle does not permit', async () => {
     const { appointment } = await scheduled();
     // waiting before arriving
