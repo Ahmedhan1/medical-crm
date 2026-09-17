@@ -41,6 +41,14 @@ export const PharmaPermission = {
   MEDICATION_READ: 'medication:read',
   /** Steward/import path for the medication master. */
   MEDICATION_WRITE: 'medication:write',
+  /**
+   * Attest that a medication record is true — data stewardship, not data
+   * entry. Separate from `medication:write` for the same reason `hcp:verify`
+   * and `hco:verify` are separate: recording what a source said and vouching
+   * for it are different acts, and for a regulated product the second one
+   * carries more weight, not less.
+   */
+  MEDICATION_VERIFY: 'medication:verify',
 
   // --- Territory & field force ----------------------------------------------
   TERRITORY_READ: 'territory:read',
@@ -95,6 +103,7 @@ export const pharmaPermissions: WorkstreamPermissions = {
     [PharmaPermission.HCO_MERGE]: 'Merge duplicate healthcare organization identities',
     [PharmaPermission.MEDICATION_READ]: 'View the medication/drug master',
     [PharmaPermission.MEDICATION_WRITE]: 'Create, update or import medication master data',
+    [PharmaPermission.MEDICATION_VERIFY]: 'Verify a medication master record (data stewardship)',
     [PharmaPermission.TERRITORY_READ]: 'View territories and their HCP targets',
     [PharmaPermission.TERRITORY_MANAGE]: 'Create territories and assign reps/HCP targets',
     [PharmaPermission.VISIT_READ]: 'View HCP visits and visit plans',
@@ -153,6 +162,7 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.HCO_MERGE,
       PharmaPermission.MEDICATION_READ,
       PharmaPermission.MEDICATION_WRITE,
+      PharmaPermission.MEDICATION_VERIFY,
     ],
 
     // Medical affairs: scientific content lifecycle and scientific-request

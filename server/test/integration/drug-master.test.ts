@@ -341,32 +341,185 @@ describe('drug master — import runs are traceable', () => {
 });
 
 describe('drug master — verification', () => {
+  function decide(medicationId: string, payload: Record<string, unknown>, as: TestUser = steward) {
+    return app.inject({
+      method: 'POST',
+      url: `/medications/${medicationId}/verification`,
+      headers: auth(as),
+      payload: { evidenceSource: 'EDA register 2026-02', ...payload },
+    });
+  }
+
+  async function verifyThroughReview(medicationId: string, validForDays?: number) {
+    await decide(medicationId, { verificationStatus: 'pending_review' });
+    return decide(medicationId, {
+      verificationStatus: 'verified',
+      ...(validForDays !== undefined ? { validForDays } : {}),
+    });
+  }
+
   it('records who verified and when, and bumps the record version', async () => {
     const medication = (await createMedication()).json();
-    const res = await app.inject({
-      method: 'POST',
-      url: `/medications/${medication.id}/verification`,
-      headers: auth(steward),
-      payload: { verificationStatus: 'verified', evidenceSource: 'EDA register 2026-02' },
-    });
+    const res = await verifyThroughReview(medication.id);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ verificationStatus: 'verified', recordVersion: 2 });
+    expect(res.json()).toMatchObject({ verificationStatus: 'verified', recordVersion: 3 });
     expect(res.json().lastVerifiedAt).not.toBeNull();
+    expect(res.json().verifiedBy).toBe(steward.userId);
+    expect(res.json().verificationExpiresAt).not.toBeNull();
   });
 
   it('keeps an append-only revision trail', async () => {
     const medication = (await createMedication()).json();
-    await app.inject({
-      method: 'POST',
-      url: `/medications/${medication.id}/verification`,
-      headers: auth(steward),
-      payload: { verificationStatus: 'verified', evidenceSource: 'register' },
-    });
+    await verifyThroughReview(medication.id);
     const { rows } = await getPool().query<{ change_type: string }>(
       'SELECT change_type FROM medication_revision WHERE medication_id = $1 ORDER BY record_version',
       [medication.id],
     );
-    expect(rows.map((r) => r.change_type)).toEqual(['create', 'verify']);
+    expect(rows.map((r) => r.change_type)).toEqual(['create', 'verify', 'verify']);
     await expect(getPool().query('DELETE FROM medication_revision')).rejects.toThrow(/append-only/);
+  });
+});
+
+describe('drug master — governance parity with the other masters (0315 audit)', () => {
+  let dataSteward: TestUser;
+  let writerOnly: TestUser;
+
+  function decide(medicationId: string, payload: Record<string, unknown>, as: TestUser) {
+    return app.inject({
+      method: 'POST',
+      url: `/medications/${medicationId}/verification`,
+      headers: auth(as),
+      payload: { evidenceSource: 'EDA register 2026-02', ...payload },
+    });
+  }
+
+  beforeEach(async () => {
+    dataSteward = await makeUser(clinicId, 'drug-steward', RoleKey.PHARMA_DATA_STEWARD);
+    // Holds every pharma permission EXCEPT verify: MEDICAL_AFFAIRS can read the
+    // master but has no stewardship over it.
+    writerOnly = await makeUser(clinicId, 'drug-affairs', RoleKey.MEDICAL_AFFAIRS);
+  });
+
+  it('NOTHING reaches verified in one step — the rule the other masters enforce', async () => {
+    const medication = (await createMedication()).json();
+    const res = await decide(medication.id, { verificationStatus: 'verified' }, dataSteward);
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('review then verify is the only path', async () => {
+    const medication = (await createMedication()).json();
+    await decide(medication.id, { verificationStatus: 'pending_review' }, dataSteward);
+    const res = await decide(medication.id, { verificationStatus: 'verified' }, dataSteward);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('a refusal must say why', async () => {
+    const medication = (await createMedication()).json();
+    await decide(medication.id, { verificationStatus: 'pending_review' }, dataSteward);
+    const bare = await decide(medication.id, { verificationStatus: 'rejected' }, dataSteward);
+    expect(bare.statusCode).toBe(400);
+    const explained = await decide(
+      medication.id,
+      { verificationStatus: 'rejected', note: 'Registration withdrawn by the authority' },
+      dataSteward,
+    );
+    expect(explained.statusCode).toBe(200);
+    expect(explained.json().verificationNote).toContain('withdrawn');
+  });
+
+  it('a caller cannot simply declare a record expired', async () => {
+    const medication = (await createMedication()).json();
+    const res = await decide(medication.id, { verificationStatus: 'expired' }, dataSteward);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('ATTESTING is separate from RECORDING: write alone does not verify', async () => {
+    const medication = (await createMedication()).json();
+    // A role with medication:read but not medication:verify.
+    const res = await decide(medication.id, { verificationStatus: 'pending_review' }, writerOnly);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('a field representative cannot verify the drug master', async () => {
+    const medication = (await createMedication()).json();
+    const res = await decide(medication.id, { verificationStatus: 'pending_review' }, rep);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('expiry is DERIVED: a lapsed attestation reads as expired before any sweep', async () => {
+    const medication = (await createMedication()).json();
+    await decide(medication.id, { verificationStatus: 'pending_review' }, dataSteward);
+    await decide(medication.id, { verificationStatus: 'verified' }, dataSteward);
+    await getPool().query(
+      `UPDATE medication SET verification_expires_at = now() - interval '1 day' WHERE id = $1`,
+      [medication.id],
+    );
+    const read = await app.inject({
+      method: 'GET',
+      url: `/medications/${medication.id}`,
+      headers: auth(dataSteward),
+    });
+    expect(read.json().verificationStatus).toBe('expired');
+  });
+
+  it('the sweep persists the lapse, attributes it to nobody, and is idempotent', async () => {
+    const medication = (await createMedication()).json();
+    await decide(medication.id, { verificationStatus: 'pending_review' }, dataSteward);
+    await decide(medication.id, { verificationStatus: 'verified' }, dataSteward);
+    await getPool().query(
+      `UPDATE medication SET verification_expires_at = now() - interval '1 day' WHERE id = $1`,
+      [medication.id],
+    );
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/medications/verification/sweep',
+      headers: auth(dataSteward),
+      payload: {},
+    });
+    expect(first.json().expired).toBe(1);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/medications/verification/sweep',
+      headers: auth(dataSteward),
+      payload: {},
+    });
+    expect(second.json().expired).toBe(0);
+
+    const { rows } = await getPool().query<{ change_type: string; changed_by: string | null }>(
+      `SELECT change_type, changed_by FROM medication_revision
+        WHERE medication_id = $1 ORDER BY record_version DESC LIMIT 1`,
+      [medication.id],
+    );
+    expect(rows[0]!.change_type).toBe('verification_expired');
+    expect(rows[0]!.changed_by).toBeNull();
+  });
+
+  it('the database refuses an unexplained refusal written directly', async () => {
+    const medication = (await createMedication()).json();
+    await expect(
+      getPool().query(
+        `UPDATE medication SET verification_status = 'rejected', verification_note = NULL
+          WHERE id = $1`,
+        [medication.id],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('the sweep requires the verify permission and authentication', async () => {
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: '/medications/verification/sweep',
+      headers: auth(rep),
+      payload: {},
+    });
+    expect(forbidden.statusCode).toBe(403);
+    const anonymous = await app.inject({
+      method: 'POST',
+      url: '/medications/verification/sweep',
+      payload: {},
+    });
+    expect(anonymous.statusCode).toBe(401);
   });
 });

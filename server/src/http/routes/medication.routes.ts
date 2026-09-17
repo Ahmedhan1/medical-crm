@@ -70,6 +70,16 @@ export async function medicationRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(created);
   });
 
+  /** Declared before `/medications/:id` so the literal segment is not swallowed. */
+  app.post('/medications/verification/sweep', async (req, reply) => {
+    const body = params(
+      z.object({ limit: z.number().int().min(1).max(1000).optional() }),
+      req.body ?? {},
+      'Invalid sweep request',
+    );
+    return reply.send(await medication.sweepMedicationVerifications(principalOf(req), body.limit));
+  });
+
   app.post('/medications/:id/verification', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     return reply.send(await medication.verifyMedication(principalOf(req), id, req.body));

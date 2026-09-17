@@ -2,9 +2,14 @@ import { z } from 'zod';
 import { withTransaction } from '../../db/pool.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import { emitEvent, EventType } from '../../domain/events.js';
-import { auditTx } from '../governance/audit.js';
+import { audit, auditTx } from '../governance/audit.js';
 import { Permission } from '../governance/permissions.js';
 import { requirePermission, type Principal } from '../governance/rbac.js';
+import {
+  assertTransition,
+  verificationExpiryFrom,
+  VerificationState,
+} from '../hcp/verification.js';
 import { JurisdictionSchema, ProvenanceSchema, VerificationStatus } from '../pharma/provenance.js';
 import * as repo from './medication.repo.js';
 import { getProvider, listProviders } from './providers.js';
@@ -74,9 +79,28 @@ export const CreateProductSchema = z.object({
   sourceRef: z.string().trim().max(500).optional(),
 });
 
+/**
+ * Deliberately the same field names as the HCP and HCO decision schemas. One
+ * vocabulary for all three masters means a steward does not have to remember
+ * which entity spells the decision differently.
+ *
+ * `expired` is absent on purpose: expiry is derived from the clock and written
+ * by the sweep, never asserted by a caller.
+ */
 export const VerifyMedicationSchema = z.object({
-  verificationStatus: z.enum(['pending_review', 'verified', 'disputed', 'retired']),
+  verificationStatus: z.enum([
+    'pending_review',
+    'verified',
+    'rejected',
+    'suspended',
+    'disputed',
+    'retired',
+  ]),
   evidenceSource: z.string().trim().min(2).max(200),
+  /** Required for `rejected` and `suspended`; an unexplained refusal is not reviewable. */
+  note: z.string().trim().min(2).max(1000).optional(),
+  /** Shelf life of this attestation. Omit for the default of one year. */
+  validForDays: z.number().int().min(1).max(3650).optional(),
   confidence: z.number().min(0).max(1).optional(),
 });
 
@@ -288,18 +312,39 @@ export async function addProduct(principal: Principal, medicationId: string, raw
   });
 }
 
+/**
+ * Decide the verification state of a medication record.
+ *
+ * Gated by `medication:verify`, NOT by `medication:write`: before this, anyone
+ * who could record a medication could also attest that it was true, which is
+ * the separation the HCP and HCO masters have had since 0306.
+ *
+ * The transition itself goes through the SAME rule set as the other two masters
+ * (`hcp/verification.ts`), so `unverified → verified` in one step — previously
+ * legal here and nowhere else — is now refused.
+ */
 export async function verifyMedication(principal: Principal, id: string, raw: unknown) {
-  requirePermission(principal, Permission.MEDICATION_WRITE);
+  requirePermission(principal, Permission.MEDICATION_VERIFY);
   const input = parse(VerifyMedicationSchema, raw, 'verification');
 
   return withTransaction(async (client) => {
     const before = await repo.getMedicationForUpdate(client, principal.clinicId, id);
     if (!before) throw new NotFoundError('Medication');
+    // Decide against the EFFECTIVE status, so a lapsed attestation cannot be
+    // re-verified without passing back through review.
+    assertTransition(
+      before.verificationStatus as VerificationState,
+      input.verificationStatus as VerificationState,
+      input.note ?? null,
+    );
     const verifying = input.verificationStatus === VerificationStatus.VERIFIED;
     const after = await repo.updateMedicationVerification(client, principal.clinicId, id, {
       verificationStatus: input.verificationStatus,
-      lastVerifiedAt: verifying ? new Date().toISOString() : before.lastVerifiedAt,
+      lastVerifiedAt: verifying ? new Date().toISOString() : null,
       confidence: input.confidence ?? null,
+      verifiedBy: verifying ? principal.userId : null,
+      expiresAt: verifying ? verificationExpiryFrom(input.validForDays) : null,
+      note: input.note ?? null,
     });
     await repo.insertMedicationRevision(client, {
       clinicId: principal.clinicId,
@@ -327,12 +372,66 @@ export async function verifyMedication(principal: Principal, id: string, raw: un
       targetType: 'medication',
       targetId: id,
       metadata: {
-        verificationStatus: after.verificationStatus,
+        from: before.verificationStatus,
+        to: after.verificationStatus,
         evidenceSource: input.evidenceSource,
       },
     });
     return after;
   });
+}
+
+/**
+ * Persist lapsed medication attestations.
+ *
+ * Reads already DERIVE expiry, so this only makes the stored value agree with
+ * what callers are already shown — the same bookkeeping role the HCP and HCO
+ * sweeps play, and for the same reason: correctness must not depend on a
+ * background job having run.
+ */
+export async function sweepMedicationVerifications(
+  principal: Principal,
+  limit = 500,
+): Promise<{ expired: number }> {
+  requirePermission(principal, Permission.MEDICATION_VERIFY);
+  const bounded = Math.min(Math.max(limit, 1), 1000);
+
+  const expired = await withTransaction(async (client) => {
+    const due = await repo.expiredMedicationVerifications(client, principal.clinicId, bounded);
+    for (const id of due) {
+      const after = await repo.updateMedicationVerification(client, principal.clinicId, id, {
+        verificationStatus: VerificationStatus.EXPIRED,
+        lastVerifiedAt: null,
+        confidence: null,
+        verifiedBy: null,
+        expiresAt: null,
+        note: null,
+      });
+      await repo.insertMedicationRevision(client, {
+        clinicId: principal.clinicId,
+        medicationId: id,
+        recordVersion: after.recordVersion,
+        changeType: 'verification_expired',
+        changedFields: ['verificationStatus'],
+        snapshot: after,
+        source: after.source,
+        sourceVersion: null,
+        // No actor: the system observed a lapse; nobody decided it.
+        changedBy: null,
+      });
+    }
+    return due.length;
+  });
+
+  await audit({
+    clinicId: principal.clinicId,
+    actorId: principal.userId,
+    action: 'medication.verification.sweep',
+    targetType: 'medication',
+    targetId: null,
+    metadata: { expired },
+  });
+  return { expired };
 }
 
 export async function searchMedications(
