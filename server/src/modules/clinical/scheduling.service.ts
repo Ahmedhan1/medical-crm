@@ -769,7 +769,7 @@ export async function syncAppointmentFromEncounterTx(
   client: PoolClient,
   principal: Principal,
   encounterId: string,
-  to: 'in_consultation' | 'completed',
+  to: 'in_consultation' | 'completed' | 'left_without_being_seen',
 ): Promise<void> {
   const { rows } = await client.query<AppointmentRow>(
     `SELECT ${APPOINTMENT_COLS} FROM appointment
@@ -779,7 +779,20 @@ export async function syncAppointmentFromEncounterTx(
   const appointment = rows[0] ? mapAppointment(rows[0]) : null;
   if (!appointment) return;
   if (appointment.status === to) return;
-  if (!canTransition(appointment.status, to)) return;
+  // A cancelled encounter closes its linked appointment from ANY live state.
+  // A linked appointment has always been through arrival (that is what creates
+  // the encounter), so `arrived_at` is set and the appointment can only close as
+  // `completed` or `left_without_being_seen` (ck_appointment_arrival, 0105) —
+  // never `cancelled`, which is reserved for a visit abandoned before arrival.
+  // So a cancelled visit lands its appointment on `left_without_being_seen`: the
+  // patient arrived but the consultation never completed, and the slot is freed.
+  // `in_consultation` has no desk transition here, so this system-driven sync
+  // (the clinical record is the source of truth) accepts any live state.
+  const permitted =
+    to === 'left_without_being_seen'
+      ? LIVE_STATUSES.includes(appointment.status)
+      : canTransition(appointment.status, to);
+  if (!permitted) return;
 
   const closing = CLOSED_STATUSES.includes(to);
   await client.query(

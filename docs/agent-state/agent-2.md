@@ -10,6 +10,22 @@ live in the integrated branch.
 Suite: **534 tests / 40 files green.** Typecheck, build and a from-empty
 migration run (18 migrations) all clean.
 
+### Clinical OS production audit (on `agent2/clinical-os-audit`)
+End-to-end production-readiness audit against baseline
+`integration/medcore-v1 @ 308ff67`. Three genuine gaps fixed (additive, nothing
+rewritten); the rest of the domain verified production-ready (QR opacity,
+DB-enforced concurrency, DOCTOR-only clinical authority, Reception/Nurse and
+PHARMA_REP correctly excluded, PHI-clean events/audit, keyset timeline).
+- **0114** — append-only DB triggers on `vital` + `observation` (insert-only in
+  code but lacked the DB guard the other immutable clinical tables have).
+- **Encounter-cancel → appointment sync** — a cancelled encounter no longer
+  strands its linked appointment live; it closes as `left_without_being_seen`
+  (the state `ck_appointment_arrival` permits post-arrival), freeing the slot.
+- **Patient 360 `recentVitals`** — VITALS_READ-gated patient-level vitals reader
+  wired into the 360 view. No new table; composes the existing permission-checked
+  reader.
+Deferred: FHIR Observation mapping for the universal vital set (no consumer yet).
+
 ## Completed
 
 ### Clinical Core (C001–C007) — merged at integration

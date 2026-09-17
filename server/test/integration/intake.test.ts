@@ -243,6 +243,34 @@ describe('C001 — vitals', () => {
     expect(list.json().vitals).toHaveLength(2);
   });
 
+  it('is append-only: a recorded vital set cannot be updated or deleted', async () => {
+    const encounterId = await newEncounter();
+    const recorded = await app.inject({
+      method: 'POST',
+      url: `/encounters/${encounterId}/vitals`,
+      headers: bearer(nurse),
+      payload: { heartRate: 72, spo2: 98 },
+    });
+    expect(recorded.statusCode).toBe(201);
+    const vitalId = recorded.json().vital.id;
+
+    // A recorded measurement is a clinical fact; the database is the last line
+    // of defence. A correction is a new row, never an in-place edit.
+    await expect(
+      getPool().query(`UPDATE vital SET heart_rate = 60 WHERE id = $1`, [vitalId]),
+    ).rejects.toThrow(/append-only/i);
+    await expect(
+      getPool().query(`DELETE FROM vital WHERE id = $1`, [vitalId]),
+    ).rejects.toThrow(/append-only/i);
+
+    // The original value is intact.
+    const { rows } = await getPool().query<{ heart_rate: number }>(
+      `SELECT heart_rate FROM vital WHERE id = $1`,
+      [vitalId],
+    );
+    expect(rows[0]!.heart_rate).toBe(72);
+  });
+
   const invalidVitals: Array<[Record<string, unknown>, string]> = [
     [{ heartRate: 400 }, 'heart rate above the possible range'],
     [{ temperatureC: 60 }, 'impossible temperature'],
