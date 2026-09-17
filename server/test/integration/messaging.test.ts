@@ -200,6 +200,51 @@ describe('messaging: retry + dead-letter + delivery status', () => {
   });
 });
 
+describe('messaging: delivery callbacks are idempotent and tenant-safe', () => {
+  async function sendDelivered(): Promise<{ messageId: string; providerRef: string }> {
+    const patientId = await newPatient(reception.token, 'Callback');
+    await setConsent(patientId, 'opted_in');
+    const sent = await app.inject({ method: 'POST', url: '/messages', headers: bearer(reception.token), payload: { channel: 'whatsapp', patientId, templateKey: 'appointment_reminder' } });
+    expect(sent.json().status).toBe('sent');
+    return { messageId: sent.json().messageId, providerRef: defaultMessagingProvider().outbox[0]!.providerRef };
+  }
+  const statusCb = (token: string, providerRef: string, delivered: boolean) => app.inject({
+    method: 'POST', url: '/messages/delivery-status', headers: bearer(token),
+    payload: { provider: 'local-noop', providerRef, delivered },
+  });
+
+  it('applies a DUPLICATE delivered callback with no duplicate side effect', async () => {
+    const { messageId, providerRef } = await sendDelivered();
+    const first = await statusCb(admin.token, providerRef, true);
+    const second = await statusCb(admin.token, providerRef, true);
+    expect(first.json().status).toBe('delivered');
+    // Second callback is a no-op: still delivered, no error, single terminal state.
+    expect(second.statusCode).toBe(200);
+    expect(second.json().status).toBe('delivered');
+    const row = await getPool().query<{ status: string }>(`SELECT status FROM message_log WHERE id=$1`, [messageId]);
+    expect(row.rows[0]!.status).toBe('delivered');
+  });
+
+  it('a failure callback never flips an already-delivered message back to failed', async () => {
+    const { messageId, providerRef } = await sendDelivered();
+    await statusCb(admin.token, providerRef, true); // delivered (terminal)
+    const late = await statusCb(admin.token, providerRef, false); // late "failed" callback
+    expect(late.json().status).toBe('delivered'); // unchanged — terminal state protected
+    const row = await getPool().query<{ status: string }>(`SELECT status FROM message_log WHERE id=$1`, [messageId]);
+    expect(row.rows[0]!.status).toBe('delivered');
+  });
+
+  it('a callback from another clinic cannot touch this clinic\'s message', async () => {
+    const { messageId, providerRef } = await sendDelivered();
+    const clinicB = await makeClinic('Clinic B');
+    const adminB = await makeUser(clinicB.clinicId, 'adminB', RoleKey.ADMIN);
+    const cross = await statusCb(adminB.token, providerRef, true);
+    expect(cross.statusCode).toBe(404); // not found in clinic B's scope
+    const row = await getPool().query<{ status: string }>(`SELECT status FROM message_log WHERE id=$1`, [messageId]);
+    expect(row.rows[0]!.status).toBe('sent'); // clinic A's message untouched
+  });
+});
+
 describe('messaging: authorization boundaries', () => {
   it('a pharma rep cannot send patient messages', async () => {
     const pharma = await makeUser(clinicId, 'rep', RoleKey.PHARMA_REP);

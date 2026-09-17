@@ -366,3 +366,57 @@ two genuine gaps were found and closed. All fixes are additive.
 - Frequency caps are soft quality guards; an exact per-patient cap under high
   concurrency can be off by one (TOCTOU on the count). Consent and the
   duplicate-send invariant are hard and are enforced; the soft cap is acceptable.
+
+## Phase 2 — CLOSED / FROZEN (final gate @ baseline I-6, 659b285)
+Final Phase-2 completion pass. Full repository-wide security scan + adversarial
+reliability coverage verified; one test-coverage gap closed (duplicate delivery
+callbacks). No new production code gap remained; the domain was implemented and
+green, so this pass adds only the missing adversarial test + this closure record.
+
+### Repository-wide security verification (searched the whole repo, not just Agent-3)
+- NO cross-workstream imports from ai/automation/messaging into clinical, pharma,
+  intelligence, or drug modules.
+- AI modules write ONLY AI-owned tables (ai_draft, ai_generation, ai_action_log,
+  ai_identity, ai_eval_run, tenant_ai_policy) — never a clinical/pharma table.
+- pharma/intelligence never import any ai module (no Pharma → AI clinical path).
+- NO console/logger calls in ai/automation/messaging → no PHI to ordinary logs.
+- The only patient reads are existence checks (tenant-scoping) and contact
+  resolution for messaging (in-memory, masked in message_log) — no clinical facts.
+- Every provider call (intake, summaries) goes through the AI Gateway; every AI
+  action goes through executeAiAction → Action Guard; tool handlers are private
+  closures with no direct call path. Prohibited clinical tools are denied first.
+- Receptionist is clinical-first: any clinical signal escalates; it never answers
+  a medical question, never mutates, never stores the message text.
+
+### Adversarial reliability — all covered by tests
+duplicate events (idempotent re-processing), concurrent workers (run-claim +
+retry atomic claim), retry after partial failure, scheduler-retry vs
+message-retry separation, expired actions dropped, timezone/DST windows,
+quiet-hours boundaries, frequency-cap boundaries, revoked consent / opt-out
+after scheduling (re-checked at delivery), provider failure, dead-letter
+recovery, rule-version changes, and duplicate + cross-tenant delivery callbacks.
+
+### This pass added
+- `messaging.test.ts`: duplicate delivered callback is a no-op; a late failure
+  callback never flips a terminal `delivered`; a cross-clinic callback (spoofed
+  providerRef) is 404 and cannot touch another clinic's message.
+
+### Phase-2 capability checklist — all COMPLETE
+AI (provider abstraction, local/cloud routing, classification+tenant policy,
+gateway, identities/permissions, Action Guard, human confirmation, structured
+output+schema/version validation, intake, summaries, evaluation, observability,
+bounded read-only tools, receptionist); Automation (events→conditions→rules→
+actions, priority, versioning, scheduling/timezones, delayed actions,
+idempotency, retry/backoff, dead-letter, expiry, quiet hours, frequency caps,
+simulation); Messaging/WhatsApp (provider abstraction, consent, opt-out,
+delivery status, callbacks, retry separation, dead-letter, audit, PHI-safe
+storage); Patient Engagement (reminders, follow-up, check-ins, routing,
+escalation, failure handling, consent re-checked at delivery). No known
+Agent-3 implementation gap remains.
+
+### CCRs / blocked
+None newly required. Genuinely blocked (deferred, require a cross-domain
+contract — fail-closed, not hacked around): server-side promotion of a confirmed
+intake draft into the clinical record (CCR-001) and any raw clinical-PHI read
+capability for AI (governed-read CCR). Both remain out of the Agent-3 production
+path by design. CCR-003/004/007/010 untouched.
