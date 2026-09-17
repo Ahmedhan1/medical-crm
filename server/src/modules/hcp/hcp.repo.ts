@@ -345,23 +345,6 @@ export async function searchHcps(clinicId: string, filter: HcpSearchFilter): Pro
 }
 
 /** True when the HCP is targeted in at least one of the given territories. */
-export async function isHcpInTerritories(
-  runner: Runner,
-  clinicId: string,
-  hcpId: string,
-  territoryIds: string[],
-): Promise<boolean> {
-  if (territoryIds.length === 0) return false;
-  const { rows } = await runner.query<{ ok: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM hcp_territory
-        WHERE clinic_id = $1 AND hcp_id = $2 AND territory_id = ANY($3)
-     ) AS ok`,
-    [clinicId, hcpId, territoryIds],
-  );
-  return rows[0]!.ok;
-}
-
 export interface HcpUpdateFields {
   fullName?: string;
   givenName?: string | null;
