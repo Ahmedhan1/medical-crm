@@ -1,6 +1,37 @@
 # Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — PHASE 3 FINAL CLOSURE DONE
+## Current Status — PRODUCTION-READINESS PASS DONE
+Branch `claude/jolly-carson-8t7ufe`. A final production-readiness audit of the
+whole Pharma surface. Every previously-flagged item was verified against current
+code; eight of nine were already implemented and the ninth — the HCO directory
+report — is now closed. No new migration and no schema change.
+
+**Suite: 1241 tests green, 0 skipped** (1234 at `4ec6ad4`, 8 added, 1 net after
+the reporting suite grew 24 -> 32). Typecheck, build, fresh-from-empty migration
+and the existing-data upgrade migration all clean.
+
+### Flagged-item audit result
+| Item | Status |
+| --- | --- |
+| HCO site/department verification endpoints | done (0313): `POST /hco-locations/:id/verification`, `POST /hco-departments/:id/verification`, plus `PATCH`/`history` |
+| HCO directory reporting | **CLOSED THIS PASS** — `hco_directory` report, territory-scoped through sites, merged excluded, derived verification, export-permission gated |
+| First-class signal decision trail | done (0314): append-only `aggregated_signal_event`, every transition attributed |
+| 0311 existing-signal → draft | done: `UPDATE ... SET published_at = NULL WHERE lifecycle_status = 'draft'`, covered by the existing-data upgrade test |
+| Medical Affairs separation of duties | done: `assertAnswerable` (the asker never answers) + `signal_no_self_approval` |
+| Field Force ownership vs territory | done: `assertVisitOwnership` (personnel) vs `assertVisitReadable` (account) |
+| Institutional visit / call-report integrity | done (0309): `visit_has_subject`, subject-aware call reports and children |
+| Signal retract / expire | done (0311/0314): withdrawal with reason, derived expiry, sweep, trail |
+| Export → effective signal lifecycle | done: `intelligenceSignals` filters `pharma_effective_signal_status(...) = 'published'` |
+
+### What this pass changed
+- **HCO directory report** — the one genuine remaining API-completeness gap. It
+  mirrors the HCP directory exactly: registered in the report registry, gated by
+  `hco:read` + `pharma:export`, territory-scoped through the organisation's
+  sites, merged organisations excluded, verification derived, column allow-list
+  enforced by the same `assertRegistryValid`/`FORBIDDEN_COLUMN_PATTERNS`, and an
+  append-only receipt written. No migration, no new permission.
+
+## Previous status — phase-3 final closure
 Branch `claude/jolly-carson-8t7ufe`. The last Agent-4 feature pass. A full-domain
 re-audit found no new capability gap — every lifecycle, authorization,
 provenance, firewall and export-governance path is complete and was re-verified
