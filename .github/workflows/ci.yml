@@ -50,9 +50,12 @@ jobs:
         run: npm run build
 
       - name: Migrations apply from an EMPTY database
+        # Reset via pg (no psql binary): the Playwright container ships Chromium
+        # for the PDF regression but not the Postgres client, so `psql` here fails
+        # with "psql: not found". `reset-schema.ts` performs the identical
+        # DROP/CREATE SCHEMA over the shared pool before the from-empty migrate.
         run: |
-          PGPASSWORD=postgres psql -h postgres -U postgres -d medcore_test \
-            -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+          DATABASE_URL="$TEST_DATABASE_URL" NODE_ENV=test npx tsx src/db/reset-schema.ts
           DATABASE_URL="$TEST_DATABASE_URL" NODE_ENV=test npx tsx src/db/migrate.ts
 
       # Full suite includes the governance/security gates:
