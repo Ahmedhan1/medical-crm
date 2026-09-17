@@ -16,8 +16,16 @@ export interface Medication {
   sourceRef: string | null;
   licenseBasis: string;
   jurisdiction: string;
+  /**
+   * The EFFECTIVE status: a lapsed attestation reads as `expired` even if no
+   * sweep has run, so a missed background job can never leave a stale
+   * "verified" on a regulated product.
+   */
   verificationStatus: VerificationStatus;
   lastVerifiedAt: string | null;
+  verifiedBy: string | null;
+  verificationExpiresAt: string | null;
+  verificationNote: string | null;
   confidence: number | null;
   recordVersion: number;
   isActive: boolean;
@@ -68,6 +76,19 @@ function toNumber(value: string | number | null): number | null {
   return typeof value === 'number' ? value : Number(value);
 }
 
+/**
+ * Every medication read goes through this list rather than `SELECT *`, so the
+ * derived verification status is computed consistently and cannot be forgotten
+ * by a new query. `m` is the required alias for the `medication` table.
+ *
+ * The function is the SAME `pharma_effective_verification` the HCP and HCO
+ * masters use (0306), so the three masters can never disagree about what
+ * "expired" means.
+ */
+const SELECT_MEDICATION_COLUMNS = `m.*,
+         pharma_effective_verification(m.verification_status, m.verification_expires_at)
+           AS effective_verification_status`;
+
 interface MedicationRow {
   id: string;
   clinic_id: string;
@@ -81,7 +102,12 @@ interface MedicationRow {
   license_basis: string;
   jurisdiction: string;
   verification_status: VerificationStatus;
+  /** Computed by `pharma_effective_verification` — see SELECT_MEDICATION_COLUMNS. */
+  effective_verification_status: VerificationStatus;
   last_verified_at: string | null;
+  verified_by: string | null;
+  verification_expires_at: string | null;
+  verification_note: string | null;
   confidence: string | null;
   record_version: number;
   is_active: boolean;
@@ -102,8 +128,11 @@ function mapMedication(row: MedicationRow): Medication {
     sourceRef: row.source_ref,
     licenseBasis: row.license_basis,
     jurisdiction: row.jurisdiction,
-    verificationStatus: row.verification_status,
+    verificationStatus: row.effective_verification_status ?? row.verification_status,
     lastVerifiedAt: row.last_verified_at,
+    verifiedBy: row.verified_by ?? null,
+    verificationExpiresAt: row.verification_expires_at ?? null,
+    verificationNote: row.verification_note ?? null,
     confidence: toNumber(row.confidence),
     recordVersion: row.record_version,
     isActive: row.is_active,
@@ -159,7 +188,7 @@ export async function getMedicationById(
   runner: Runner = getPool(),
 ): Promise<Medication | null> {
   const { rows } = await runner.query<MedicationRow>(
-    `SELECT * FROM medication WHERE id = $1 AND clinic_id = $2`,
+    `SELECT ${SELECT_MEDICATION_COLUMNS} FROM medication m WHERE m.id = $1 AND m.clinic_id = $2`,
     [id, clinicId],
   );
   return rows[0] ? mapMedication(rows[0]) : null;
@@ -171,7 +200,8 @@ export async function getMedicationForUpdate(
   id: string,
 ): Promise<Medication | null> {
   const { rows } = await client.query<MedicationRow>(
-    `SELECT * FROM medication WHERE id = $1 AND clinic_id = $2 FOR UPDATE`,
+    `SELECT ${SELECT_MEDICATION_COLUMNS} FROM medication m
+      WHERE m.id = $1 AND m.clinic_id = $2 FOR UPDATE`,
     [id, clinicId],
   );
   return rows[0] ? mapMedication(rows[0]) : null;
@@ -188,7 +218,7 @@ export async function searchMedications(
   },
 ): Promise<Medication[]> {
   const { rows } = await getPool().query<MedicationRow>(
-    `SELECT DISTINCT m.* FROM medication m
+    `SELECT DISTINCT ${SELECT_MEDICATION_COLUMNS} FROM medication m
        LEFT JOIN medication_product p ON p.medication_id = m.id
       WHERE m.clinic_id = $1
         AND ($2::text IS NULL
@@ -207,20 +237,65 @@ export async function updateMedicationVerification(
   client: PoolClient,
   clinicId: string,
   id: string,
-  input: { verificationStatus: VerificationStatus; lastVerifiedAt: string | null; confidence: number | null },
+  input: {
+    verificationStatus: VerificationStatus;
+    lastVerifiedAt: string | null;
+    confidence: number | null;
+    verifiedBy: string | null;
+    expiresAt: string | null;
+    note: string | null;
+  },
 ): Promise<Medication> {
   const { rows } = await client.query<MedicationRow>(
-    `UPDATE medication
-        SET verification_status = $3,
-            last_verified_at = $4,
-            confidence = coalesce($5, confidence),
-            record_version = record_version + 1,
-            updated_at = now()
-      WHERE id = $1 AND clinic_id = $2
-      RETURNING *`,
-    [id, clinicId, input.verificationStatus, input.lastVerifiedAt, input.confidence],
+    `WITH updated AS (
+       UPDATE medication
+          SET verification_status = $3,
+              last_verified_at = $4,
+              confidence = coalesce($5, confidence),
+              verified_by = $6,
+              verification_expires_at = $7,
+              verification_note = $8,
+              record_version = record_version + 1,
+              updated_at = now()
+        WHERE id = $1 AND clinic_id = $2
+        RETURNING *
+     )
+     SELECT ${SELECT_MEDICATION_COLUMNS} FROM updated m`,
+    [
+      id,
+      clinicId,
+      input.verificationStatus,
+      input.lastVerifiedAt,
+      input.confidence,
+      input.verifiedBy,
+      input.expiresAt,
+      input.note,
+    ],
   );
   return mapMedication(rows[0]!);
+}
+
+/**
+ * Medications whose attestation has lapsed but which still say `verified`.
+ * Reads the stored columns so the 0315 partial index is usable.
+ */
+export async function expiredMedicationVerifications(
+  client: PoolClient,
+  clinicId: string,
+  limit: number,
+): Promise<string[]> {
+  const { rows } = await client.query<{ id: string }>(
+    `SELECT id FROM medication
+      WHERE clinic_id = $1
+        AND verification_status = 'verified'
+        AND verification_expires_at IS NOT NULL
+        AND verification_expires_at < now()
+      ORDER BY verification_expires_at
+      LIMIT $2
+      FOR UPDATE`,
+    [clinicId, limit],
+  );
+  return rows.map((r) => r.id);
 }
 
 export async function insertMedicationRevision(
@@ -234,7 +309,8 @@ export async function insertMedicationRevision(
     snapshot: unknown;
     source: string;
     sourceVersion: string | null;
-    changedBy: string;
+    /** NULL for a system-written revision, such as an automatic expiry. */
+    changedBy: string | null;
   },
 ): Promise<void> {
   await client.query(
