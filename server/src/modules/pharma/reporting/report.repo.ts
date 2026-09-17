@@ -81,6 +81,73 @@ export async function hcpDirectory(
   }));
 }
 
+/**
+ * Directory of organisations.
+ *
+ * Territory-scoped through the organisation's SITES: a scoped rep sees the
+ * organisations that have at least one `hco_location` in a territory assigned to
+ * them — the places they would actually call at — while a clinic-wide principal
+ * (null scope) sees every organisation. An empty scope yields nothing, never
+ * everything. Merged organisations are excluded, exactly as merged HCPs are from
+ * the HCP directory: a resolved-away identity is not a directory entry.
+ *
+ * Verification is DERIVED so a lapsed attestation exports as `expired`, and no
+ * column here is patient-shaped — an organisation has no patients.
+ */
+export async function hcoDirectory(
+  clinicId: string,
+  territoryIds: string[] | null,
+  limit: number,
+  runner: Runner = getPool(),
+): Promise<Array<Record<string, unknown>>> {
+  if (scopedToNothing(territoryIds)) return [];
+  const { rows } = await runner.query<{
+    hco_id: string;
+    name: string;
+    hco_type: string;
+    ownership_type: string;
+    operating_status: string;
+    country: string;
+    city: string | null;
+    verification_status: string;
+    jurisdiction: string;
+    source: string;
+  }>(
+    `SELECT o.id AS hco_id,
+            o.name,
+            o.hco_type,
+            o.ownership_type,
+            o.operating_status,
+            o.country,
+            o.city,
+            pharma_effective_verification(o.verification_status, o.verification_expires_at)
+              AS verification_status,
+            o.jurisdiction,
+            o.source
+       FROM hco o
+      WHERE o.clinic_id = $1
+        AND o.operating_status <> 'merged'
+        AND ($2::uuid[] IS NULL OR EXISTS (
+              SELECT 1 FROM hco_location l
+               WHERE l.hco_id = o.id AND l.territory_id = ANY($2)))
+      ORDER BY o.name
+      LIMIT $3`,
+    [clinicId, territoryIds, limit],
+  );
+  return rows.map((r) => ({
+    hcoId: r.hco_id,
+    name: r.name,
+    hcoType: r.hco_type,
+    ownershipType: r.ownership_type,
+    operatingStatus: r.operating_status,
+    country: r.country,
+    city: r.city,
+    verificationStatus: r.verification_status,
+    jurisdiction: r.jurisdiction,
+    source: r.source,
+  }));
+}
+
 export async function fieldActivity(
   clinicId: string,
   territoryIds: string[] | null,

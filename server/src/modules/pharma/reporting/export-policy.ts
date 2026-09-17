@@ -139,6 +139,30 @@ export const REPORT_DEFINITIONS: Readonly<Record<string, ReportDefinition>> = Ob
     maxRows: 5000,
     cohortGoverned: false,
   },
+  hco_directory: {
+    key: 'hco_directory',
+    title: 'HCO directory',
+    description:
+      'Directory of healthcare organisations the caller can reach, with ownership, ' +
+      'operating and verification state. Never a care setting — a commercial counterparty.',
+    dataClass: ExportDataClass.HCP_PROFESSIONAL,
+    permission: Permission.HCO_READ,
+    territoryScoped: true,
+    columns: [
+      'hcoId',
+      'name',
+      'hcoType',
+      'ownershipType',
+      'operatingStatus',
+      'country',
+      'city',
+      'verificationStatus',
+      'jurisdiction',
+      'source',
+    ],
+    maxRows: 5000,
+    cohortGoverned: false,
+  },
   field_activity: {
     key: 'field_activity',
     title: 'Field activity',

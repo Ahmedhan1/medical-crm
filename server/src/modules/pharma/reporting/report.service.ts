@@ -86,6 +86,8 @@ async function fetchRows(
   switch (definition.key) {
     case 'hcp_directory':
       return repo.hcpDirectory(clinicId, territoryIds, limit);
+    case 'hco_directory':
+      return repo.hcoDirectory(clinicId, territoryIds, limit);
     case 'field_activity':
       return repo.fieldActivity(clinicId, territoryIds, filters, limit);
     case 'content_usage':
