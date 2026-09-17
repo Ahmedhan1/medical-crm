@@ -206,8 +206,19 @@ function parse<T extends z.ZodTypeAny>(schema: T, raw: unknown, what: string): z
 export async function createSpecialty(principal: Principal, raw: unknown): Promise<Specialty> {
   requirePermission(principal, Permission.HCP_WRITE);
   const input = parse(CreateSpecialtySchema, raw, 'specialty');
-  return withTransaction((client) =>
-    repo.insertSpecialty(client, {
+  return withTransaction(async (client) => {
+    // `specialty.parent_id` references `specialty(id)` with no clinic in the
+    // constraint, so the database would happily accept a parent from ANOTHER
+    // tenant. Every other parent link in this workstream (HCO, territory)
+    // checks the tenant in the service; this one did not.
+    if (input.parentId) {
+      const { rows } = await client.query(
+        `SELECT 1 FROM specialty WHERE id = $1 AND clinic_id = $2`,
+        [input.parentId, principal.clinicId],
+      );
+      if (rows.length === 0) throw new NotFoundError('Parent specialty');
+    }
+    return repo.insertSpecialty(client, {
       clinicId: principal.clinicId,
       taxonomy: input.taxonomy,
       code: input.code,
@@ -216,8 +227,8 @@ export async function createSpecialty(principal: Principal, raw: unknown): Promi
       source: input.source,
       sourceVersion: input.sourceVersion ?? null,
       jurisdiction: input.jurisdiction ?? null,
-    }),
-  );
+    });
+  });
 }
 
 export async function listSpecialties(principal: Principal): Promise<Specialty[]> {
@@ -500,6 +511,7 @@ export async function mergeHcp(
   principal: Principal,
   sourceHcpId: string,
   targetHcpId: string,
+  reason: string,
 ): Promise<Hcp> {
   requirePermission(principal, Permission.HCP_MERGE);
   if (sourceHcpId === targetHcpId) {
@@ -545,7 +557,7 @@ export async function mergeHcp(
       action: 'hcp.merge',
       targetType: 'hcp',
       targetId: after.id,
-      metadata: { mergedIntoHcpId: targetHcpId },
+      metadata: { mergedIntoHcpId: targetHcpId, reason },
     });
     return after;
   });

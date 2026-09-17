@@ -9,6 +9,7 @@ import {
 import type {
   AffiliatedHcp,
   Hco,
+  HcoComponentRevision,
   HcoDepartment,
   HcoIdentifier,
   HcoLocation,
@@ -542,6 +543,7 @@ interface HcoLocationRow extends ProvenanceRow {
   verification_expires_at: string | null;
   verification_note: string | null;
   effective_verification_status: VerificationStatus;
+  record_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -575,6 +577,7 @@ function mapHcoLocation(row: HcoLocationRow): HcoLocation {
     effectiveTo: toDateString(row.effective_to),
     verificationExpiresAt: row.verification_expires_at,
     verificationNote: row.verification_note,
+    recordVersion: row.record_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -697,6 +700,7 @@ interface HcoDepartmentRow extends ProvenanceRow {
   verification_expires_at: string | null;
   verification_note: string | null;
   effective_verification_status: VerificationStatus;
+  record_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -723,6 +727,7 @@ function mapHcoDepartment(row: HcoDepartmentRow): HcoDepartment {
     },
     verificationExpiresAt: row.verification_expires_at,
     verificationNote: row.verification_note,
+    recordVersion: row.record_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -934,4 +939,306 @@ export async function territoriesForHco(
     name: row.name,
     locationCount: Number(row.location_count),
   }));
+}
+
+// --- site and department governance (migration 0313) -------------------------
+
+/**
+ * Locking reads for the two component entities.
+ *
+ * Both write paths (patch, verification decision) serialise on the row the way
+ * the organisation's own do, so two stewards editing the same site cannot
+ * interleave into a version number that skips.
+ */
+export async function getHcoLocationForUpdate(
+  runner: Runner,
+  clinicId: string,
+  id: string,
+): Promise<HcoLocation | null> {
+  const { rows } = await runner.query<HcoLocationRow>(
+    `SELECT ${SELECT_LOCATION_COLUMNS} FROM hco_location l
+      WHERE l.id = $1 AND l.clinic_id = $2
+      FOR UPDATE`,
+    [id, clinicId],
+  );
+  return rows[0] ? mapHcoLocation(rows[0]) : null;
+}
+
+export async function getHcoDepartmentById(
+  clinicId: string,
+  id: string,
+  runner: Runner = getPool(),
+): Promise<HcoDepartment | null> {
+  const { rows } = await runner.query<HcoDepartmentRow>(
+    `SELECT ${SELECT_DEPARTMENT_COLUMNS}
+       FROM hco_department d
+       LEFT JOIN specialty s ON s.id = d.specialty_id
+      WHERE d.id = $1 AND d.clinic_id = $2`,
+    [id, clinicId],
+  );
+  return rows[0] ? mapHcoDepartment(rows[0]) : null;
+}
+
+export async function getHcoDepartmentForUpdate(
+  runner: Runner,
+  clinicId: string,
+  id: string,
+): Promise<HcoDepartment | null> {
+  // The specialty join cannot carry FOR UPDATE, so the lock is taken on the
+  // department alone and the display name resolved by a second read.
+  const { rows } = await runner.query<{ id: string }>(
+    `SELECT id FROM hco_department WHERE id = $1 AND clinic_id = $2 FOR UPDATE`,
+    [id, clinicId],
+  );
+  if (!rows[0]) return null;
+  return getHcoDepartmentById(clinicId, id, runner);
+}
+
+export type HcoLocationUpdatableColumn =
+  | 'label'
+  | 'address_line'
+  | 'city'
+  | 'region'
+  | 'country'
+  | 'postal_code'
+  | 'latitude'
+  | 'longitude'
+  | 'territory_id'
+  | 'operating_status'
+  | 'source'
+  | 'source_version'
+  | 'source_ref'
+  | 'source_date'
+  | 'jurisdiction'
+  | 'confidence';
+
+export async function updateHcoLocationColumns(
+  runner: Runner,
+  clinicId: string,
+  id: string,
+  patch: Partial<Record<HcoLocationUpdatableColumn, unknown>>,
+  nextVersion: number,
+): Promise<HcoLocation> {
+  const columns = Object.keys(patch) as HcoLocationUpdatableColumn[];
+  const assignments = columns.map((column, i) => `${column} = $${i + 4}`);
+  const { rows } = await runner.query<HcoLocationRow>(
+    `WITH updated AS (
+       UPDATE hco_location
+          SET ${[...assignments, 'record_version = $3', 'updated_at = now()'].join(', ')}
+        WHERE id = $1 AND clinic_id = $2
+        RETURNING *
+     )
+     SELECT ${SELECT_LOCATION_COLUMNS} FROM updated l`,
+    [id, clinicId, nextVersion, ...columns.map((c) => patch[c])],
+  );
+  return mapHcoLocation(rows[0]!);
+}
+
+export type HcoDepartmentUpdatableColumn =
+  | 'name'
+  | 'hco_location_id'
+  | 'specialty_id'
+  | 'operating_status'
+  | 'source'
+  | 'source_version'
+  | 'source_ref'
+  | 'source_date'
+  | 'jurisdiction'
+  | 'confidence';
+
+export async function updateHcoDepartmentColumns(
+  runner: Runner,
+  clinicId: string,
+  id: string,
+  patch: Partial<Record<HcoDepartmentUpdatableColumn, unknown>>,
+  nextVersion: number,
+): Promise<HcoDepartment> {
+  const columns = Object.keys(patch) as HcoDepartmentUpdatableColumn[];
+  const assignments = columns.map((column, i) => `${column} = $${i + 4}`);
+  await runner.query(
+    `UPDATE hco_department
+        SET ${[...assignments, 'record_version = $3', 'updated_at = now()'].join(', ')}
+      WHERE id = $1 AND clinic_id = $2`,
+    [id, clinicId, nextVersion, ...columns.map((c) => patch[c])],
+  );
+  return (await getHcoDepartmentById(clinicId, id, runner))!;
+}
+
+/** A verification decision on a site. Separate from the patch path by design. */
+export async function applyHcoLocationVerification(
+  runner: Runner,
+  clinicId: string,
+  id: string,
+  next: {
+    status: VerificationStatus;
+    note: string | null;
+    verifiedBy: string | null;
+    lastVerifiedAt: string | null;
+    expiresAt: string | null;
+    recordVersion: number;
+  },
+): Promise<HcoLocation> {
+  const { rows } = await runner.query<HcoLocationRow>(
+    `WITH updated AS (
+       UPDATE hco_location
+          SET verification_status = $3,
+              verification_note = $4,
+              verified_by = $5,
+              last_verified_at = $6,
+              verification_expires_at = $7,
+              record_version = $8,
+              updated_at = now()
+        WHERE id = $1 AND clinic_id = $2
+        RETURNING *
+     )
+     SELECT ${SELECT_LOCATION_COLUMNS} FROM updated l`,
+    [
+      id,
+      clinicId,
+      next.status,
+      next.note,
+      next.verifiedBy,
+      next.lastVerifiedAt,
+      next.expiresAt,
+      next.recordVersion,
+    ],
+  );
+  return mapHcoLocation(rows[0]!);
+}
+
+export async function applyHcoDepartmentVerification(
+  runner: Runner,
+  clinicId: string,
+  id: string,
+  next: {
+    status: VerificationStatus;
+    note: string | null;
+    verifiedBy: string | null;
+    lastVerifiedAt: string | null;
+    expiresAt: string | null;
+    recordVersion: number;
+  },
+): Promise<HcoDepartment> {
+  await runner.query(
+    `UPDATE hco_department
+        SET verification_status = $3,
+            verification_note = $4,
+            verified_by = $5,
+            last_verified_at = $6,
+            verification_expires_at = $7,
+            record_version = $8,
+            updated_at = now()
+      WHERE id = $1 AND clinic_id = $2`,
+    [
+      id,
+      clinicId,
+      next.status,
+      next.note,
+      next.verifiedBy,
+      next.lastVerifiedAt,
+      next.expiresAt,
+      next.recordVersion,
+    ],
+  );
+  return (await getHcoDepartmentById(clinicId, id, runner))!;
+}
+
+/** Which component table a revision belongs to. */
+export type HcoComponent = 'location' | 'department';
+
+const REVISION_TABLE: Record<HcoComponent, { table: string; column: string }> = {
+  location: { table: 'hco_location_revision', column: 'hco_location_id' },
+  department: { table: 'hco_department_revision', column: 'hco_department_id' },
+};
+
+export async function insertHcoComponentRevision(
+  runner: Runner,
+  component: HcoComponent,
+  input: {
+    clinicId: string;
+    componentId: string;
+    recordVersion: number;
+    changeType: HcoComponentRevision['changeType'];
+    changedFields: string[];
+    snapshot: unknown;
+    source: string;
+    changedBy: string | null;
+  },
+): Promise<void> {
+  // The table and column come from a closed map keyed by a union type, never
+  // from caller input, so this interpolation cannot carry anything but one of
+  // two literal names.
+  const { table, column } = REVISION_TABLE[component];
+  await runner.query(
+    `INSERT INTO ${table}
+       (clinic_id, ${column}, record_version, change_type, changed_fields, snapshot, source, changed_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      input.clinicId,
+      input.componentId,
+      input.recordVersion,
+      input.changeType,
+      input.changedFields,
+      JSON.stringify(input.snapshot),
+      input.source,
+      input.changedBy,
+    ],
+  );
+}
+
+export async function listHcoComponentRevisions(
+  component: HcoComponent,
+  clinicId: string,
+  componentId: string,
+  runner: Runner = getPool(),
+): Promise<HcoComponentRevision[]> {
+  const { table, column } = REVISION_TABLE[component];
+  const { rows } = await runner.query<{
+    record_version: number;
+    change_type: HcoComponentRevision['changeType'];
+    changed_fields: string[];
+    source: string;
+    changed_by: string | null;
+    changed_at: string;
+  }>(
+    `SELECT record_version, change_type, changed_fields, source, changed_by, changed_at
+       FROM ${table}
+      WHERE clinic_id = $1 AND ${column} = $2
+      ORDER BY record_version DESC`,
+    [clinicId, componentId],
+  );
+  return rows.map((row) => ({
+    recordVersion: row.record_version,
+    changeType: row.change_type,
+    changedFields: row.changed_fields,
+    source: row.source,
+    changedBy: row.changed_by,
+    changedAt: row.changed_at,
+  }));
+}
+
+/**
+ * Sites or departments whose verification has lapsed but which still say
+ * `verified`. Reads the stored columns so the 0313 partial indexes are usable.
+ */
+export async function expiredComponentVerifications(
+  runner: Runner,
+  component: HcoComponent,
+  clinicId: string,
+  limit: number,
+): Promise<Array<{ id: string; recordVersion: number }>> {
+  const table = component === 'location' ? 'hco_location' : 'hco_department';
+  const { rows } = await runner.query<{ id: string; record_version: number }>(
+    `SELECT id, record_version
+       FROM ${table}
+      WHERE clinic_id = $1
+        AND verification_status = 'verified'
+        AND verification_expires_at IS NOT NULL
+        AND verification_expires_at < now()
+      ORDER BY verification_expires_at
+      LIMIT $2
+      FOR UPDATE`,
+    [clinicId, limit],
+  );
+  return rows.map((r) => ({ id: r.id, recordVersion: r.record_version }));
 }

@@ -1,5 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
-import { toDateString } from '../pharma/dates.js';
+import { toDateString, validityOn } from '../pharma/dates.js';
 import {
   mapProvenance,
   numericToNumber,
@@ -712,6 +712,7 @@ function mapCredential(row: CredentialRow): HcpCredential {
     awardedOn: toDateString(row.awarded_on),
     validFrom: toDateString(row.valid_from),
     validTo: toDateString(row.valid_to),
+    validity: validityOn(toDateString(row.valid_from), toDateString(row.valid_to)),
     source: row.source,
     sourceDate: toDateString(row.source_date),
     verificationStatus: row.verification_status,

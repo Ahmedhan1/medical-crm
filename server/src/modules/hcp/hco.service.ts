@@ -12,6 +12,7 @@ import { territoryScopeFor } from '../pharma/visibility.js';
 import * as repo from './hco.repo.js';
 import type {
   Hco,
+  HcoComponentRevision,
   HcoDepartment,
   HcoIdentifier,
   HcoLocation,
@@ -527,14 +528,23 @@ export async function decideHcoVerification(
  * value agree with what callers are already shown — it is a bookkeeping job, and
  * nothing depends on it having run.
  */
+/**
+ * Move lapsed verifications to `expired` and record the lapse in history —
+ * for the organisation AND for its sites and departments (0313).
+ *
+ * Reads already DERIVE expiry, so this only makes the stored value agree with
+ * what callers are already shown. It is a bookkeeping job, and nothing depends
+ * on it having run — which is exactly why it may cover all three entities in
+ * one pass without that becoming a correctness dependency.
+ */
 export async function sweepHcoVerifications(
   principal: Principal,
   limit = 500,
-): Promise<{ expired: number }> {
+): Promise<{ expired: number; organisations: number; locations: number; departments: number }> {
   requirePermission(principal, Permission.HCO_VERIFY);
   const bounded = Math.min(Math.max(limit, 1), 1000);
 
-  const expired = await withTransaction(async (client) => {
+  const counts = await withTransaction(async (client) => {
     const due = await repo.expiredHcoVerifications(client, principal.clinicId, bounded);
     for (const row of due) {
       const updated = await repo.applyHcoVerification(client, principal.clinicId, row.id, {
@@ -557,18 +567,83 @@ export async function sweepHcoVerifications(
         changedBy: null,
       });
     }
-    return due.length;
+
+    const dueLocations = await repo.expiredComponentVerifications(
+      client,
+      'location',
+      principal.clinicId,
+      bounded,
+    );
+    for (const row of dueLocations) {
+      const updated = await repo.applyHcoLocationVerification(client, principal.clinicId, row.id, {
+        status: VerificationState.EXPIRED,
+        note: null,
+        verifiedBy: null,
+        lastVerifiedAt: null,
+        expiresAt: null,
+        recordVersion: row.recordVersion + 1,
+      });
+      await repo.insertHcoComponentRevision(client, 'location', {
+        clinicId: principal.clinicId,
+        componentId: row.id,
+        recordVersion: updated.recordVersion,
+        changeType: 'verification_expired',
+        changedFields: ['verificationStatus'],
+        snapshot: updated,
+        source: updated.provenance.source,
+        changedBy: null,
+      });
+    }
+
+    const dueDepartments = await repo.expiredComponentVerifications(
+      client,
+      'department',
+      principal.clinicId,
+      bounded,
+    );
+    for (const row of dueDepartments) {
+      const updated = await repo.applyHcoDepartmentVerification(
+        client,
+        principal.clinicId,
+        row.id,
+        {
+          status: VerificationState.EXPIRED,
+          note: null,
+          verifiedBy: null,
+          lastVerifiedAt: null,
+          expiresAt: null,
+          recordVersion: row.recordVersion + 1,
+        },
+      );
+      await repo.insertHcoComponentRevision(client, 'department', {
+        clinicId: principal.clinicId,
+        componentId: row.id,
+        recordVersion: updated.recordVersion,
+        changeType: 'verification_expired',
+        changedFields: ['verificationStatus'],
+        snapshot: updated,
+        source: updated.provenance.source,
+        changedBy: null,
+      });
+    }
+
+    return {
+      organisations: due.length,
+      locations: dueLocations.length,
+      departments: dueDepartments.length,
+    };
   });
 
+  const expired = counts.organisations + counts.locations + counts.departments;
   await audit({
     clinicId: principal.clinicId,
     actorId: principal.userId,
     action: 'hco.verification.sweep',
     targetType: 'hco',
     targetId: null,
-    metadata: { expired },
+    metadata: counts,
   });
-  return { expired };
+  return { expired, ...counts };
 }
 
 // --- merge ------------------------------------------------------------------
@@ -953,4 +1028,471 @@ export async function hco360(principal: Principal, hcoId: string) {
     dataBoundary:
       'Organisation, site and professional-affiliation data only. No patient-level data participates in this view (§45).',
   };
+}
+
+// --- site and department governance (migration 0313) -------------------------
+
+/**
+ * Sites and departments were write-once: 0308 gave them provenance, the full
+ * verification vocabulary and an `operating_status`, and no endpoint could ever
+ * change any of it. A site that moved could not be corrected and a department
+ * could never leave `unverified`.
+ *
+ * They are governed here exactly as the organisation is — the same lifecycle
+ * module, the same material-change rule, the same append-only history, the same
+ * two permissions (`hco:write` to correct, `hco:verify` to attest). The point of
+ * the repetition is that a steward who knows how to curate an organisation does
+ * not have to learn a second set of rules to curate its sites.
+ */
+
+/**
+ * Attributes of a SITE whose change invalidates a completed verification: where
+ * it is, what it is called, whether it is operating, and which territory it
+ * routes to. `isPrimary` is excluded — which site is the head office is an
+ * internal preference, not a claim a reviewer attested to.
+ */
+export const HCO_LOCATION_MATERIAL_ATTRIBUTES: ReadonlySet<string> = new Set([
+  'label',
+  'addressLine',
+  'city',
+  'region',
+  'country',
+  'postalCode',
+  'latitude',
+  'longitude',
+  'territoryId',
+  'operatingStatus',
+]);
+
+/**
+ * Attributes of a DEPARTMENT whose change invalidates a verification: what it
+ * is called, what it practises, where it sits, and whether it is operating.
+ */
+export const HCO_DEPARTMENT_MATERIAL_ATTRIBUTES: ReadonlySet<string> = new Set([
+  'name',
+  'specialtyId',
+  'hcoLocationId',
+  'operatingStatus',
+]);
+
+/**
+ * `merged` is absent from what a caller may set here, on both entities: a site
+ * or a department does not have a survivor to point at, so the fourth value of
+ * `operating_status` has no meaning below the organisation.
+ */
+const COMPONENT_OPERATING_STATUS = z.enum(['active', 'suspended', 'closed']);
+
+export const UpdateHcoLocationSchema = z
+  .object({
+    label: z.string().trim().min(2).max(160).optional(),
+    addressLine: z.string().trim().max(300).nullable().optional(),
+    city: z.string().trim().max(120).nullable().optional(),
+    region: z.string().trim().max(120).nullable().optional(),
+    country: z.string().trim().length(2).optional(),
+    postalCode: z.string().trim().max(20).nullable().optional(),
+    latitude: z.number().min(-90).max(90).nullable().optional(),
+    longitude: z.number().min(-180).max(180).nullable().optional(),
+    territoryId: z.string().uuid().nullable().optional(),
+    operatingStatus: COMPONENT_OPERATING_STATUS.optional(),
+    provenance: ProvenanceSchema,
+  })
+  .refine((v) => Object.keys(v).length > 1, {
+    message: 'Provide at least one field to change alongside provenance',
+  });
+
+export const UpdateHcoDepartmentSchema = z
+  .object({
+    name: z.string().trim().min(2).max(160).optional(),
+    hcoLocationId: z.string().uuid().nullable().optional(),
+    specialtyId: z.string().uuid().nullable().optional(),
+    operatingStatus: COMPONENT_OPERATING_STATUS.optional(),
+    provenance: ProvenanceSchema,
+  })
+  .refine((v) => Object.keys(v).length > 1, {
+    message: 'Provide at least one field to change alongside provenance',
+  });
+
+const LOCATION_COLUMN_OF: Record<string, repo.HcoLocationUpdatableColumn> = {
+  label: 'label',
+  addressLine: 'address_line',
+  city: 'city',
+  region: 'region',
+  country: 'country',
+  postalCode: 'postal_code',
+  latitude: 'latitude',
+  longitude: 'longitude',
+  territoryId: 'territory_id',
+  operatingStatus: 'operating_status',
+};
+
+const DEPARTMENT_COLUMN_OF: Record<string, repo.HcoDepartmentUpdatableColumn> = {
+  name: 'name',
+  hcoLocationId: 'hco_location_id',
+  specialtyId: 'specialty_id',
+  operatingStatus: 'operating_status',
+};
+
+/** Provenance always moves with an edit; a changed fact may not cite the old source. */
+function provenancePatch(
+  provenance: z.infer<typeof ProvenanceSchema>,
+): Record<string, unknown> {
+  return {
+    source: provenance.source,
+    source_version: provenance.sourceVersion ?? null,
+    source_ref: provenance.sourceRef ?? null,
+    source_date: provenance.sourceDate ?? null,
+    jurisdiction: provenance.jurisdiction,
+    confidence: provenance.confidence ?? null,
+  };
+}
+
+/** Which fields a patch actually changes, compared against the current record. */
+function changedFieldsOf(
+  columnMap: Record<string, string>,
+  input: Record<string, unknown>,
+  current: Record<string, unknown>,
+): { patch: Record<string, unknown>; changedFields: string[] } {
+  const patch: Record<string, unknown> = {};
+  const changedFields: string[] = [];
+  for (const [field, column] of Object.entries(columnMap)) {
+    if (!(field in input)) continue;
+    if (input[field] === current[field]) continue;
+    patch[column] = input[field];
+    changedFields.push(field);
+  }
+  return { patch, changedFields };
+}
+
+export async function updateHcoLocation(
+  principal: Principal,
+  locationId: string,
+  raw: unknown,
+): Promise<HcoLocation> {
+  requirePermission(principal, Permission.HCO_WRITE);
+  const input = parse(UpdateHcoLocationSchema, raw, 'HCO location update');
+  assertFreeTextClean({ label: input.label, addressLine: input.addressLine });
+
+  return withTransaction(async (client) => {
+    const current = await repo.getHcoLocationForUpdate(client, principal.clinicId, locationId);
+    if (!current) throw new NotFoundError('HCO location');
+
+    if (input.territoryId) {
+      const { rows } = await client.query(
+        `SELECT 1 FROM territory WHERE id = $1 AND clinic_id = $2`,
+        [input.territoryId, principal.clinicId],
+      );
+      if (rows.length === 0) throw new NotFoundError('Territory');
+    }
+
+    const { patch, changedFields } = changedFieldsOf(
+      LOCATION_COLUMN_OF,
+      input as Record<string, unknown>,
+      current as unknown as Record<string, unknown>,
+    );
+    Object.assign(patch, provenancePatch(input.provenance));
+    if (current.provenance.jurisdiction !== input.provenance.jurisdiction) {
+      changedFields.push('jurisdiction');
+    }
+    if (changedFields.length === 0) throw new ConflictError('No field would change');
+
+    let changeType: HcoComponentRevision['changeType'] = 'update';
+    if ([...HCO_LOCATION_MATERIAL_ATTRIBUTES].some((a) => changedFields.includes(a))) {
+      const demoted = stateAfterMaterialChange(
+        current.provenance.verificationStatus as VerificationState,
+      );
+      if (demoted) {
+        await repo.applyHcoLocationVerification(client, principal.clinicId, locationId, {
+          status: demoted,
+          note: null,
+          verifiedBy: null,
+          lastVerifiedAt: null,
+          expiresAt: null,
+          recordVersion: current.recordVersion,
+        });
+        changeType = 'status_change';
+      }
+    }
+
+    const updated = await repo.updateHcoLocationColumns(
+      client,
+      principal.clinicId,
+      locationId,
+      patch as Partial<Record<repo.HcoLocationUpdatableColumn, unknown>>,
+      current.recordVersion + 1,
+    );
+    await repo.insertHcoComponentRevision(client, 'location', {
+      clinicId: principal.clinicId,
+      componentId: locationId,
+      recordVersion: updated.recordVersion,
+      changeType,
+      changedFields,
+      snapshot: updated,
+      source: updated.provenance.source,
+      changedBy: principal.userId,
+    });
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.HCO_LOCATION_UPDATED,
+      subjectType: 'hco',
+      subjectId: updated.hcoId,
+      actorId: principal.userId,
+      payload: { locationId, changedFields },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'hco.location.update',
+      targetType: 'hco_location',
+      targetId: locationId,
+      metadata: { changedFields },
+    });
+    return updated;
+  });
+}
+
+export async function updateHcoDepartment(
+  principal: Principal,
+  departmentId: string,
+  raw: unknown,
+): Promise<HcoDepartment> {
+  requirePermission(principal, Permission.HCO_WRITE);
+  const input = parse(UpdateHcoDepartmentSchema, raw, 'HCO department update');
+  assertFreeTextClean({ name: input.name });
+
+  return withTransaction(async (client) => {
+    const current = await repo.getHcoDepartmentForUpdate(client, principal.clinicId, departmentId);
+    if (!current) throw new NotFoundError('HCO department');
+
+    if (input.hcoLocationId) {
+      const location = await repo.getHcoLocationById(
+        principal.clinicId,
+        input.hcoLocationId,
+        client,
+      );
+      // The composite FK already refuses a site belonging to a different
+      // organisation; checking here turns a 500 into an honest 404.
+      if (!location || location.hcoId !== current.hcoId) {
+        throw new NotFoundError('HCO location');
+      }
+    }
+    if (input.specialtyId) {
+      const { rows } = await client.query(
+        `SELECT 1 FROM specialty WHERE id = $1 AND clinic_id = $2`,
+        [input.specialtyId, principal.clinicId],
+      );
+      if (rows.length === 0) throw new NotFoundError('Specialty');
+    }
+
+    const { patch, changedFields } = changedFieldsOf(
+      DEPARTMENT_COLUMN_OF,
+      input as Record<string, unknown>,
+      current as unknown as Record<string, unknown>,
+    );
+    Object.assign(patch, provenancePatch(input.provenance));
+    if (current.provenance.jurisdiction !== input.provenance.jurisdiction) {
+      changedFields.push('jurisdiction');
+    }
+    if (changedFields.length === 0) throw new ConflictError('No field would change');
+
+    let changeType: HcoComponentRevision['changeType'] = 'update';
+    if ([...HCO_DEPARTMENT_MATERIAL_ATTRIBUTES].some((a) => changedFields.includes(a))) {
+      const demoted = stateAfterMaterialChange(
+        current.provenance.verificationStatus as VerificationState,
+      );
+      if (demoted) {
+        await repo.applyHcoDepartmentVerification(client, principal.clinicId, departmentId, {
+          status: demoted,
+          note: null,
+          verifiedBy: null,
+          lastVerifiedAt: null,
+          expiresAt: null,
+          recordVersion: current.recordVersion,
+        });
+        changeType = 'status_change';
+      }
+    }
+
+    let updated: HcoDepartment;
+    try {
+      updated = await repo.updateHcoDepartmentColumns(
+        client,
+        principal.clinicId,
+        departmentId,
+        patch as Partial<Record<repo.HcoDepartmentUpdatableColumn, unknown>>,
+        current.recordVersion + 1,
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === '23505') {
+        throw new ConflictError('That department already exists at this site', {
+          name: input.name,
+        });
+      }
+      throw error;
+    }
+
+    await repo.insertHcoComponentRevision(client, 'department', {
+      clinicId: principal.clinicId,
+      componentId: departmentId,
+      recordVersion: updated.recordVersion,
+      changeType,
+      changedFields,
+      snapshot: updated,
+      source: updated.provenance.source,
+      changedBy: principal.userId,
+    });
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.HCO_DEPARTMENT_UPDATED,
+      subjectType: 'hco',
+      subjectId: updated.hcoId,
+      actorId: principal.userId,
+      payload: { departmentId, changedFields },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'hco.department.update',
+      targetType: 'hco_department',
+      targetId: departmentId,
+      metadata: { changedFields },
+    });
+    return updated;
+  });
+}
+
+export async function decideHcoLocationVerification(
+  principal: Principal,
+  locationId: string,
+  raw: unknown,
+): Promise<HcoLocation> {
+  requirePermission(principal, Permission.HCO_VERIFY);
+  const input = parse(HcoVerificationSchema, raw, 'HCO location verification decision');
+
+  return withTransaction(async (client) => {
+    const current = await repo.getHcoLocationForUpdate(client, principal.clinicId, locationId);
+    if (!current) throw new NotFoundError('HCO location');
+
+    const from = current.provenance.verificationStatus as VerificationState;
+    const to = input.verificationStatus as VerificationState;
+    assertTransition(from, to, input.note ?? null);
+
+    const verifying = to === VerificationState.VERIFIED;
+    const updated = await repo.applyHcoLocationVerification(client, principal.clinicId, locationId, {
+      status: to,
+      note: input.note ?? null,
+      verifiedBy: verifying ? principal.userId : null,
+      lastVerifiedAt: verifying ? new Date().toISOString() : null,
+      expiresAt: verifying ? verificationExpiryFrom(input.validForDays) : null,
+      recordVersion: current.recordVersion + 1,
+    });
+
+    await repo.insertHcoComponentRevision(client, 'location', {
+      clinicId: principal.clinicId,
+      componentId: locationId,
+      recordVersion: updated.recordVersion,
+      changeType: verifying ? 'verify' : 'status_change',
+      changedFields: ['verificationStatus'],
+      snapshot: updated,
+      source: input.evidenceSource,
+      changedBy: principal.userId,
+    });
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.HCO_LOCATION_VERIFICATION_CHANGED,
+      subjectType: 'hco',
+      subjectId: updated.hcoId,
+      actorId: principal.userId,
+      payload: { locationId, from, to, expiresAt: updated.verificationExpiresAt },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'hco.location.verification',
+      targetType: 'hco_location',
+      targetId: locationId,
+      metadata: { from, to },
+    });
+    return updated;
+  });
+}
+
+export async function decideHcoDepartmentVerification(
+  principal: Principal,
+  departmentId: string,
+  raw: unknown,
+): Promise<HcoDepartment> {
+  requirePermission(principal, Permission.HCO_VERIFY);
+  const input = parse(HcoVerificationSchema, raw, 'HCO department verification decision');
+
+  return withTransaction(async (client) => {
+    const current = await repo.getHcoDepartmentForUpdate(client, principal.clinicId, departmentId);
+    if (!current) throw new NotFoundError('HCO department');
+
+    const from = current.provenance.verificationStatus as VerificationState;
+    const to = input.verificationStatus as VerificationState;
+    assertTransition(from, to, input.note ?? null);
+
+    const verifying = to === VerificationState.VERIFIED;
+    const updated = await repo.applyHcoDepartmentVerification(
+      client,
+      principal.clinicId,
+      departmentId,
+      {
+        status: to,
+        note: input.note ?? null,
+        verifiedBy: verifying ? principal.userId : null,
+        lastVerifiedAt: verifying ? new Date().toISOString() : null,
+        expiresAt: verifying ? verificationExpiryFrom(input.validForDays) : null,
+        recordVersion: current.recordVersion + 1,
+      },
+    );
+
+    await repo.insertHcoComponentRevision(client, 'department', {
+      clinicId: principal.clinicId,
+      componentId: departmentId,
+      recordVersion: updated.recordVersion,
+      changeType: verifying ? 'verify' : 'status_change',
+      changedFields: ['verificationStatus'],
+      snapshot: updated,
+      source: input.evidenceSource,
+      changedBy: principal.userId,
+    });
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.HCO_DEPARTMENT_VERIFICATION_CHANGED,
+      subjectType: 'hco',
+      subjectId: updated.hcoId,
+      actorId: principal.userId,
+      payload: { departmentId, from, to, expiresAt: updated.verificationExpiresAt },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'hco.department.verification',
+      targetType: 'hco_department',
+      targetId: departmentId,
+      metadata: { from, to },
+    });
+    return updated;
+  });
+}
+
+export async function listHcoLocationHistory(
+  principal: Principal,
+  locationId: string,
+): Promise<HcoComponentRevision[]> {
+  requirePermission(principal, Permission.HCO_READ);
+  const location = await repo.getHcoLocationById(principal.clinicId, locationId);
+  if (!location) throw new NotFoundError('HCO location');
+  return repo.listHcoComponentRevisions('location', principal.clinicId, locationId);
+}
+
+export async function listHcoDepartmentHistory(
+  principal: Principal,
+  departmentId: string,
+): Promise<HcoComponentRevision[]> {
+  requirePermission(principal, Permission.HCO_READ);
+  const department = await repo.getHcoDepartmentById(principal.clinicId, departmentId);
+  if (!department) throw new NotFoundError('HCO department');
+  return repo.listHcoComponentRevisions('department', principal.clinicId, departmentId);
 }

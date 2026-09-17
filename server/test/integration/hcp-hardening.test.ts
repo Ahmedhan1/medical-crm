@@ -98,6 +98,118 @@ describe('HCP master — professional category', () => {
   });
 });
 
+describe('HCP master — credential validity is derived (0313 audit)', () => {
+  async function addCredential(hcpId: string, extra: Record<string, unknown>) {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/hcps/${hcpId}/credentials`,
+      headers: auth(steward),
+      payload: {
+        credentialType: 'licence',
+        credentialName: 'Practice licence',
+        issuingBody: 'EG MOH',
+        source: 'licence register',
+        ...extra,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
+  }
+
+  it('a lapsed credential no longer reads as in force', async () => {
+    const hcp = (await createHcp()).json();
+    const credential = await addCredential(hcp.id, {
+      validFrom: '2018-01-01',
+      validTo: '2019-01-01',
+    });
+    expect(credential.validity).toBe('expired');
+  });
+
+  it('a live credential reads as in force', async () => {
+    const hcp = (await createHcp()).json();
+    const credential = await addCredential(hcp.id, {
+      validFrom: '2020-01-01',
+      validTo: '2099-01-01',
+    });
+    expect(credential.validity).toBe('in_force');
+  });
+
+  it('a credential that has not started yet says so rather than being in force', async () => {
+    const hcp = (await createHcp()).json();
+    const credential = await addCredential(hcp.id, { validFrom: '2099-01-01' });
+    expect(credential.validity).toBe('not_yet_effective');
+  });
+
+  it('a credential with no window claims nothing about its window', async () => {
+    const hcp = (await createHcp()).json();
+    const credential = await addCredential(hcp.id, {});
+    expect(credential.validity).toBe('undated');
+  });
+
+  it('validity is SEPARATE from verification: a checked credential can still be expired', async () => {
+    const hcp = (await createHcp()).json();
+    await addCredential(hcp.id, { validFrom: '2018-01-01', validTo: '2019-01-01' });
+    const list = await app.inject({
+      method: 'GET',
+      url: `/hcps/${hcp.id}/credentials`,
+      headers: auth(steward),
+    });
+    const [credential] = list.json().credentials;
+    expect(credential.verificationStatus).toBe('unverified');
+    expect(credential.validity).toBe('expired');
+  });
+});
+
+describe('specialty taxonomy — tenancy (0313 audit)', () => {
+  it('refuses a parent specialty from another clinic', async () => {
+    const other = await makeClinic('Other Taxonomy Clinic');
+    const otherSteward = await makeUser(other.clinicId, 'tax-stw', RoleKey.PHARMA_DATA_STEWARD);
+    const foreign = await app.inject({
+      method: 'POST',
+      url: '/specialties',
+      headers: auth(otherSteward),
+      payload: { taxonomy: 'internal', code: 'ROOT', displayName: 'Root', source: 'internal' },
+    });
+    expect(foreign.statusCode).toBe(201);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/specialties',
+      headers: auth(steward),
+      payload: {
+        taxonomy: 'internal',
+        code: 'CHILD',
+        displayName: 'Child',
+        parentId: foreign.json().id,
+        source: 'internal',
+      },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('accepts a parent from the caller’s own clinic', async () => {
+    const parent = await app.inject({
+      method: 'POST',
+      url: '/specialties',
+      headers: auth(steward),
+      payload: { taxonomy: 'internal', code: 'ROOT', displayName: 'Root', source: 'internal' },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/specialties',
+      headers: auth(steward),
+      payload: {
+        taxonomy: 'internal',
+        code: 'CHILD',
+        displayName: 'Child',
+        parentId: parent.json().id,
+        source: 'internal',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+  });
+});
+
 describe('HCP master — credentials', () => {
   it('records a qualification with its issuing body and provenance', async () => {
     const hcp = (await createHcp()).json();

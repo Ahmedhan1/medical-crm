@@ -21,7 +21,13 @@ export const PharmaEventType = {
   /** Two organisation records resolved to one survivor. */
   HCO_MERGED: 'HCO_MERGED',
   HCO_LOCATION_ADDED: 'HCO_LOCATION_ADDED',
+  HCO_LOCATION_UPDATED: 'HCO_LOCATION_UPDATED',
+  /** A verification decision on a SITE, including a refusal (0313). */
+  HCO_LOCATION_VERIFICATION_CHANGED: 'HCO_LOCATION_VERIFICATION_CHANGED',
   HCO_DEPARTMENT_ADDED: 'HCO_DEPARTMENT_ADDED',
+  HCO_DEPARTMENT_UPDATED: 'HCO_DEPARTMENT_UPDATED',
+  /** A verification decision on a DEPARTMENT, including a refusal (0313). */
+  HCO_DEPARTMENT_VERIFICATION_CHANGED: 'HCO_DEPARTMENT_VERIFICATION_CHANGED',
   HCP_AFFILIATION_CHANGED: 'HCP_AFFILIATION_CHANGED',
 
   // Drug / medication master

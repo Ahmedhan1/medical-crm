@@ -1,3 +1,4 @@
+import type { ValidityState } from '../pharma/dates.js';
 import type { Provenance, VerificationStatus } from '../pharma/provenance.js';
 
 /**
@@ -132,6 +133,12 @@ export interface HcpCredential {
   awardedOn: string | null;
   validFrom: string | null;
   validTo: string | null;
+  /**
+   * DERIVED from the validity window, not stored. Separate from
+   * `verificationStatus`: a credential can be verified and expired at once —
+   * we checked it, and it has since lapsed.
+   */
+  validity: ValidityState;
   source: string;
   sourceDate: string | null;
   verificationStatus: VerificationStatus;

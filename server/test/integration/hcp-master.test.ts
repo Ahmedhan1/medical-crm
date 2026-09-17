@@ -251,7 +251,7 @@ describe('HCP master — identity resolution (merge)', () => {
       method: 'POST',
       url: `/hcps/${duplicate.id}/merge`,
       headers: auth(steward),
-      payload: { targetHcpId: survivor.id },
+      payload: { targetHcpId: survivor.id, reason: 'Same syndicate registration number' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: 'merged', mergedIntoHcpId: survivor.id });
@@ -272,7 +272,19 @@ describe('HCP master — identity resolution (merge)', () => {
       method: 'POST',
       url: `/hcps/${hcp.id}/merge`,
       headers: auth(steward),
-      payload: { targetHcpId: hcp.id },
+      payload: { targetHcpId: hcp.id, reason: 'Duplicate of itself' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('refuses a merge with no recorded reason, as the HCO path does', async () => {
+    const survivor = (await createHcp(steward)).json();
+    const duplicate = (await createHcp(steward, { fullName: 'Dr M. Farouk' })).json();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/hcps/${duplicate.id}/merge`,
+      headers: auth(steward),
+      payload: { targetHcpId: survivor.id },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -284,7 +296,7 @@ describe('HCP master — identity resolution (merge)', () => {
       method: 'POST',
       url: `/hcps/${duplicate.id}/merge`,
       headers: auth(steward),
-      payload: { targetHcpId: survivor.id },
+      payload: { targetHcpId: survivor.id, reason: 'Duplicate registration' },
     });
     const res = await app.inject({ method: 'GET', url: '/hcps?q=Farouk', headers: auth(steward) });
     expect(res.json().results.map((h: { id: string }) => h.id)).toEqual([survivor.id]);

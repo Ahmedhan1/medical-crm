@@ -109,6 +109,7 @@ export interface HcoLocation {
   effectiveTo: string | null;
   verificationExpiresAt: string | null;
   verificationNote: string | null;
+  recordVersion: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,8 +128,24 @@ export interface HcoDepartment {
   provenance: Provenance;
   verificationExpiresAt: string | null;
   verificationNote: string | null;
+  recordVersion: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Append-only history for a site or a department (0313).
+ *
+ * Deliberately the same shape as {@link HcoRevision}: a reader who has learned
+ * to read one organisation's history can read a site's without relearning it.
+ */
+export interface HcoComponentRevision {
+  recordVersion: number;
+  changeType: 'create' | 'update' | 'verify' | 'status_change' | 'verification_expired';
+  changedFields: string[];
+  source: string;
+  changedBy: string | null;
+  changedAt: string;
 }
 
 /** Append-only master-data history for an organisation. */

@@ -46,7 +46,16 @@ const SearchQuery = z.object({
   offset: z.coerce.number().int().min(0).optional(),
 });
 
-const MergeBody = z.object({ targetHcpId: z.string().uuid() });
+/**
+ * Merging two professional identities is as destructive as merging two
+ * organisations, so it carries the same evidence requirement: a recorded reason.
+ * Before this the HCO path demanded one and the HCP path did not — the same act
+ * held to two different bars.
+ */
+const MergeBody = z.object({
+  targetHcpId: z.string().uuid(),
+  reason: z.string().trim().min(4).max(2000),
+});
 
 function params<T extends z.ZodTypeAny>(schema: T, raw: unknown, message: string): z.infer<T> {
   const parsed = schema.safeParse(raw);
@@ -117,7 +126,7 @@ export async function hcpRoutes(app: FastifyInstance): Promise<void> {
   app.post('/hcps/:id/merge', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     const body = params(MergeBody, req.body, 'Invalid merge target');
-    return reply.send(await hcp.mergeHcp(principalOf(req), id, body.targetHcpId));
+    return reply.send(await hcp.mergeHcp(principalOf(req), id, body.targetHcpId, body.reason));
   });
 
   app.get('/hcps/:id/provenance', async (req, reply) => {

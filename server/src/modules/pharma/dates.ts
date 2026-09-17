@@ -27,3 +27,30 @@ export function toDateString(value: Date | string | null | undefined): string | 
 export function today(): string {
   return toDateString(new Date())!;
 }
+
+/**
+ * Whether a dated claim is in force on a given day.
+ *
+ * `hcp_credential` (0306) carries `valid_from` / `valid_to` and nothing read
+ * them: a board certification that lapsed in 2019 was returned looking exactly
+ * like one renewed last month, so a rep could cite it and a report could count
+ * it. This is the same shape of answer the rest of the domain already derives —
+ * `pharma_effective_verification`, `pharma_effective_signal_status`, the SLA
+ * breach flag — computed rather than stored, so it is true without a sweep.
+ *
+ * Kept deliberately separate from VERIFICATION status: a credential can be
+ * verified and expired at once (we checked it, and it has since lapsed), and
+ * collapsing the two would lose that distinction.
+ */
+export type ValidityState = 'in_force' | 'not_yet_effective' | 'expired' | 'undated';
+
+export function validityOn(
+  validFrom: string | null,
+  validTo: string | null,
+  onDate: string = today(),
+): ValidityState {
+  if (validFrom === null && validTo === null) return 'undated';
+  if (validFrom !== null && validFrom > onDate) return 'not_yet_effective';
+  if (validTo !== null && validTo < onDate) return 'expired';
+  return 'in_force';
+}

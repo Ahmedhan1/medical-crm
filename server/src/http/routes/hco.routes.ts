@@ -109,4 +109,39 @@ export async function hcoRoutes(app: FastifyInstance): Promise<void> {
     const { id } = params(IdParam, req.params, 'Invalid id');
     return reply.send({ departments: await hco.listHcoDepartments(principalOf(req), id) });
   });
+
+  // --- site and department governance (0313) --------------------------------
+  // Addressed by their OWN id rather than nested under the organisation: a site
+  // has one organisation for life, so `/hcos/:hcoId/locations/:id` would carry a
+  // segment the service must then check for agreement — a check that is easy to
+  // forget and adds nothing the composite foreign keys do not already enforce.
+  app.patch('/hco-locations/:id', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await hco.updateHcoLocation(principalOf(req), id, req.body));
+  });
+
+  app.post('/hco-locations/:id/verification', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await hco.decideHcoLocationVerification(principalOf(req), id, req.body));
+  });
+
+  app.get('/hco-locations/:id/history', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send({ revisions: await hco.listHcoLocationHistory(principalOf(req), id) });
+  });
+
+  app.patch('/hco-departments/:id', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await hco.updateHcoDepartment(principalOf(req), id, req.body));
+  });
+
+  app.post('/hco-departments/:id/verification', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send(await hco.decideHcoDepartmentVerification(principalOf(req), id, req.body));
+  });
+
+  app.get('/hco-departments/:id/history', async (req, reply) => {
+    const { id } = params(IdParam, req.params, 'Invalid id');
+    return reply.send({ revisions: await hco.listHcoDepartmentHistory(principalOf(req), id) });
+  });
 }
