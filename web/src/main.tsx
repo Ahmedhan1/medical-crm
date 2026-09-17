@@ -8,6 +8,13 @@ import { ToastProvider } from './components/ui/index.js';
 import './styles/tokens.css';
 import './styles/global.css';
 
+// --- Domain registration block (one coordinated side-effect import per domain;
+// see docs/platform/FRONTEND-INTEGRATION.md). Each domain self-registers its nav,
+// routes and i18n via the platform extension points — no other shared-file edits.
+import './domains/clinical/register.js'; // CCR-015 (Agent 2 clinical UX)
+// import './domains/ai/register.js';     // reserved: Agent 3
+// import './domains/pharma/register.js';  // reserved: Agent 4
+
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing #root');
 

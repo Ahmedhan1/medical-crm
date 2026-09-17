@@ -46,7 +46,9 @@ inside your own feature module; adding a new table in your migration range.
 ## Requests
 
 ### CCR-015 — Wire the Clinical frontend domain into the platform entry
-- Status: PROPOSED
+- Status: **APPROVED — implemented at v1 release integration** (Agent 1 added the
+  single `import './domains/clinical/register.js'` to `web/src/main.tsx`; additive,
+  permission-gated, distinct `clinical` section/`/clinical/*` prefix, no collision)
 - Requested by: Agent 2
 - Date: 2026-09-17
 - Affects: Agent 1 (platform frontend entry), Agent 2 (Clinical UX)

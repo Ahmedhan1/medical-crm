@@ -285,6 +285,14 @@ describe('nothing identifier-shaped reaches an append-only store', () => {
     });
 
     const patterns = [/\bMRN[-\s]?\d{3,}\b/i, /(?<!\d)\d{11,20}(?!\d)/];
+    // These stores legitimately carry INTERNAL record UUIDs (e.g. locationId,
+    // departmentId) — not PHI. A UUID's 12-hex tail is all-digits ~0.8% of the
+    // time, which would coincidentally trip the "11–20 digit run" patient-id
+    // pattern and make this guard flaky. Strip UUIDs first: a real patient
+    // identifier in a free-text field is never inside a UUID, so it is still
+    // caught, while the false positive on internal ids is removed. (Determinism
+    // fix at v1 release integration; the security intent is unchanged.)
+    const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
     for (const [table, column] of [
       ['audit_log', 'metadata::text'],
       ['event', 'payload::text'],
@@ -296,8 +304,9 @@ describe('nothing identifier-shaped reaches an append-only store', () => {
         [clinicId],
       );
       for (const row of rows) {
+        const scanned = (row.v ?? '').replace(UUID, '');
         for (const pattern of patterns) {
-          expect(pattern.test(row.v ?? ''), `${table}.${column} carries an identifier`).toBe(false);
+          expect(pattern.test(scanned), `${table}.${column} carries an identifier`).toBe(false);
         }
       }
     }
