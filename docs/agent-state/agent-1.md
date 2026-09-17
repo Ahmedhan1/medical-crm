@@ -13,6 +13,25 @@ Does NOT build Agent 2–4 domain features.
 all done. Full suite green (698 tests / 53 files); 25 migrations apply from empty
 → 91 tables; typecheck + build clean; integrated backup→restore verified.
 
+## FINAL CLOSURE GATE (2026-09-17) — new trusted MEDCORE baseline
+Consolidated Agent 4's phase-3 final closure (`4ec6ad4`) onto the trusted branch.
+`git cherry` showed 5 of its 7 commits were already integrated at I-9 (by content);
+only two were genuinely new and were cherry-picked:
+- `e5f3319` — removed two DEAD functions (`isHcpInTerritories` in hcp.repo,
+  `expiredSignals` in signals.repo; both had 0 references) and added an
+  existing-data **migration-upgrade** test and a **pharma-concurrency** race test.
+- `4ec6ad4` — Agent 4 docs only.
+No migration added (still 40 → 107 tables); no shared/cross-domain file touched;
+CCR ledger untouched (14 CCRs intact). Abandoned WIP branches (`a4/*`) not merged.
+Gate (serial, shared DB): **1280 tests / 87 files green, 0 failures, 0 skips**;
+typecheck + build clean; fresh empty→107-table migration; existing-data upgrade
+test green; backup → verify → restore round-trips 107 tables. Cross-domain audit
+clean: no workstream reads/writes clinical tables; no illegal cross-workstream
+imports; no permission collisions; migrations ordered/unique. Invariants intact:
+clinical authority, AI Gateway + Action Guard, Pharma Firewall, CCR-004 fail-closed
+(501), cohort floor = 5, suppression/banding/rounding, export authorization,
+tenant/territory isolation, PHI safety. **This branch is the new trusted baseline.**
+
 ## Final Integration + Production-Readiness Gate I-9 (2026-09-17)
 Consolidated the three latest VERIFIED completion branches onto the trusted branch
 (`7c740d9` = 659b285 + I-7 Agent-4 completion + I-8 request_id + CI fix), in order
