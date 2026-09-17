@@ -196,6 +196,7 @@ describe('reporting — territory scope', () => {
     // combination next.
     for (const query of [
       reportRepo.hcpDirectory(clinicId, [], 100),
+      reportRepo.hcoDirectory(clinicId, [], 100),
       reportRepo.fieldActivity(clinicId, [], {}, 100),
       reportRepo.contentUsage(clinicId, [], {}, 100),
       reportRepo.intelligenceSignals(clinicId, [], {}, 100),
@@ -206,6 +207,98 @@ describe('reporting — territory scope', () => {
     // …and a non-empty scope for a territory with data does return rows, so the
     // empty case above is a real guard rather than a query that never works.
     expect(await reportRepo.hcpDirectory(clinicId, [north.id], 100)).toHaveLength(1);
+  });
+});
+
+describe('reporting — HCO directory', () => {
+  async function makeHcoWithSite(name: string, territoryId: string | null) {
+    const hco = (
+      await app.inject({
+        method: 'POST',
+        url: '/hcos',
+        headers: auth(steward),
+        payload: { name, country: 'EG', provenance: PROV },
+      })
+    ).json();
+    if (territoryId) {
+      await app.inject({
+        method: 'POST',
+        url: `/hcos/${hco.id}/locations`,
+        headers: auth(steward),
+        payload: { label: 'Main', country: 'EG', territoryId, provenance: PROV },
+      });
+    }
+    return hco;
+  }
+
+  it('a clinic-wide principal sees every organisation, with derived verification', async () => {
+    await makeHcoWithSite('North Hospital', north.id);
+    await makeHcoWithSite('South Hospital', south.id);
+    const res = await runReport(manager, 'hco_directory');
+    expect(res.statusCode).toBe(200);
+    const names = res.json().rows.map((r: { name: string }) => r.name).sort();
+    expect(names).toEqual(['North Hospital', 'South Hospital']);
+    for (const row of res.json().rows) expect(row.verificationStatus).toBe('unverified');
+  });
+
+  it('scopes to organisations with a site in the caller’s territory', async () => {
+    await makeHcoWithSite('North Hospital', north.id);
+    await makeHcoWithSite('South Hospital', south.id);
+    // Directly at the query layer, because no role is both territory-scoped and
+    // export-capable (same reason the HCP directory scope is tested this way).
+    const northOnly = await reportRepo.hcoDirectory(clinicId, [north.id], 100);
+    expect(northOnly.map((r) => r.name)).toEqual(['North Hospital']);
+  });
+
+  it('an organisation with no sited location is clinic-wide-only, never in a scoped view', async () => {
+    await makeHcoWithSite('Unsited Hospital', null);
+    expect(await reportRepo.hcoDirectory(clinicId, [north.id], 100)).toEqual([]);
+    expect((await reportRepo.hcoDirectory(clinicId, null, 100)).map((r) => r.name)).toContain(
+      'Unsited Hospital',
+    );
+  });
+
+  it('excludes a merged organisation, as the HCP directory excludes merged HCPs', async () => {
+    const survivor = await makeHcoWithSite('Survivor Hospital', north.id);
+    const loser = await makeHcoWithSite('Duplicate Hospital', north.id);
+    await app.inject({
+      method: 'POST',
+      url: `/hcos/${loser.id}/merge`,
+      headers: auth(steward),
+      payload: { survivorHcoId: survivor.id, reason: 'duplicate facility licence' },
+    });
+    const names = (await runReport(steward, 'hco_directory')).json().rows.map(
+      (r: { name: string }) => r.name,
+    );
+    expect(names).toContain('Survivor Hospital');
+    expect(names).not.toContain('Duplicate Hospital');
+  });
+
+  it('requires HCO read AND export permission', async () => {
+    // A rep has hco:read but not pharma:export.
+    expect((await runReport(rep, 'hco_directory')).statusCode).toBe(403);
+    // A steward has both.
+    expect((await runReport(steward, 'hco_directory')).statusCode).toBe(200);
+  });
+
+  it('tenant isolation: another clinic’s organisations never appear', async () => {
+    await makeHcoWithSite('Home Hospital', north.id);
+    const other = await makeClinic('Other HCO Clinic');
+    const otherManager = await makeUser(other.clinicId, 'mgr3', RoleKey.PHARMA_MANAGER);
+    expect((await runReport(otherManager, 'hco_directory')).json().rows).toEqual([]);
+  });
+
+  it('writes an export receipt, and the receipt carries no organisation names', async () => {
+    await makeHcoWithSite('Receipt Hospital', north.id);
+    await runReport(steward, 'hco_directory');
+    const log = await app.inject({
+      method: 'GET',
+      url: '/pharma/reports/export-log',
+      headers: auth(steward),
+    });
+    const entry = log.json().exports.find((e: { reportKey: string }) => e.reportKey === 'hco_directory');
+    expect(entry).toBeDefined();
+    expect(JSON.stringify(entry)).not.toContain('Receipt Hospital');
   });
 });
 
