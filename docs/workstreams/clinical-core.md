@@ -349,6 +349,37 @@ Automation boundary preserved: Clinical Core publishes facts/events; it imports
 no automation/messaging/AI/pharma module and sends nothing. PHI stays in the
 record — event payloads carry ids, status and controlled vocab only.
 
+### Clinical OS production audit (migration 0114)
+End-to-end production-readiness audit of the whole clinical domain against
+baseline `integration/medcore-v1 @ 308ff67`. Most of the domain passed: QR is
+opaque/hashed/TTL'd/clinic-guarded with no PHI; concurrency is DB-enforced
+(partial unique index `uq_encounter_active_patient`, gist exclusion on room
+overlap, `FOR UPDATE` locks, prescribing safety inside one transaction);
+clinical authority (diagnosis/prescription/treatment/note/complete/override) is
+DOCTOR-only; Reception/Nurse hold none of it and PHARMA_REP has zero clinical
+permissions; event/audit payloads carry ids + controlled vocab only; the
+timeline is keyset-ordered. Three genuine gaps were fixed — additive only:
+- **Vital / observation immutability (integrity).** `vital` (0100) and
+  `observation` (0106) were insert-only in code but had no DB guard, unlike the
+  other immutable clinical tables. Migration **0114** adds the shared
+  `medcore_append_only()` BEFORE UPDATE OR DELETE trigger to both — a correction
+  is a new row, never an in-place edit.
+- **Encounter-cancel → appointment sync (broken state machine).** Cancelling an
+  encounter left its linked appointment stranded live, holding its room slot. The
+  sync now closes the linked appointment in the same transaction. Because a
+  linked appointment has always been through arrival (`arrived_at` set), it
+  closes as `left_without_being_seen` — the terminal state `ck_appointment_arrival`
+  (0105) permits — never `cancelled`, and the slot is freed.
+- **Patient 360 vitals coverage (completeness).** The universal vital set was the
+  one longitudinal read missing from Patient 360. Added a VITALS_READ-gated
+  patient-level reader (`listPatientVitals`) and a `recentVitals` section,
+  permission-shaped like the rest of the view. No new table.
+
+Deferred (documented, not implemented): a FHIR Observation mapping for the
+universal vital set (interoperability, no consumer/endpoint yet — would be
+speculative); surfacing vitals/observations as timeline entries (by design they
+live in the encounter view and Patient 360).
+
 ## Next tasks
 CP-6 (procedures/sessions/protocols) or CP-12 (packages), then CP-14 (clinical
 analytics). See `docs/agent-state/agent-2.md`.

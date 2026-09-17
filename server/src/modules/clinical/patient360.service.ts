@@ -11,6 +11,8 @@ import {
 } from '../identity/patients.lifecycle.service.js';
 import { listAllergies, type Allergy } from './allergies.service.js';
 import { listPatientObservations, type Observation } from './observations.service.js';
+import { listPatientVitals } from './vitals.service.js';
+import { type Vital } from './vitals.repo.js';
 import { getPatientAppointments, type ScheduleEntry } from './scheduling.service.js';
 import { listPrescriptionsForPatient, type Prescription } from './prescriptions.service.js';
 import { listPatientDocuments, type DocumentReference } from './documents.service.js';
@@ -48,6 +50,7 @@ export interface Patient360 {
   identifiers?: PatientIdentifier[];
   contacts?: PatientContact[];
   allergies?: Allergy[];
+  recentVitals?: Vital[];
   recentObservations?: Observation[];
   upcomingAppointments?: ScheduleEntry[];
   recentVisits?: PreviousVisit[];
@@ -83,6 +86,7 @@ export async function getPatient360(
     identifiers,
     contacts,
     allergies,
+    recentVitals,
     recentObservations,
     upcomingAppointments,
     recentVisits,
@@ -101,6 +105,9 @@ export async function getPatient360(
       listContacts(principal, patient.id),
     ),
     section(principal, Permission.ALLERGY_READ, () => listAllergies(principal, patient.id)),
+    section(principal, Permission.VITALS_READ, () =>
+      listPatientVitals(principal, patient.id, { limit: 20 }),
+    ),
     section(principal, Permission.OBSERVATION_READ, () =>
       listPatientObservations(principal, patient.id, { limit: 20 }),
     ),
@@ -144,7 +151,7 @@ export async function getPatient360(
     outcome: 'success',
     targetType: 'patient',
     targetId: patient.id,
-    metadata: { sections: sectionNames({ identifiers, contacts, allergies, recentObservations, upcomingAppointments, recentVisits, activePrescriptions, documents, treatmentEpisodes, openFollowUps, referrals, procedures, carePlans }) },
+    metadata: { sections: sectionNames({ identifiers, contacts, allergies, recentVitals, recentObservations, upcomingAppointments, recentVisits, activePrescriptions, documents, treatmentEpisodes, openFollowUps, referrals, procedures, carePlans }) },
   });
 
   const view: Patient360 = {
@@ -164,6 +171,7 @@ export async function getPatient360(
   if (identifiers !== undefined) view.identifiers = identifiers;
   if (contacts !== undefined) view.contacts = contacts;
   if (allergies !== undefined) view.allergies = allergies;
+  if (recentVitals !== undefined) view.recentVitals = recentVitals;
   if (recentObservations !== undefined) view.recentObservations = recentObservations;
   if (upcomingAppointments !== undefined) view.upcomingAppointments = upcomingAppointments;
   if (recentVisits !== undefined) view.recentVisits = recentVisits;
