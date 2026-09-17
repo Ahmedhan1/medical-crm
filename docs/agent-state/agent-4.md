@@ -1,6 +1,43 @@
 # Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — FINAL CLOSURE PASS DONE
+## Current Status — PHASE 3 FINAL CLOSURE DONE
+Branch `claude/jolly-carson-8t7ufe`. The last Agent-4 feature pass. A full-domain
+re-audit found no new capability gap — every lifecycle, authorization,
+provenance, firewall and export-governance path is complete and was re-verified
+against the running system. This pass removed dead code and added the two kinds
+of test the gate names but the suite lacked.
+
+**Suite: 1234 tests green, 0 skipped** (1222 at `f5ecfc1`, 12 added). Typecheck,
+build, fresh-from-empty migration and an existing-data upgrade migration all
+clean. No new migration and no schema change this pass.
+
+### Audit result — complete, with three closures verified in place
+- Every pharma permission is referenced by a guard; every event type is emitted;
+  no stale route, no duplicate HCO model (the single `Hco` definition is
+  re-exported from `hco.types.ts`), no TODO/stub in the pharma tree.
+- Firewall route coverage is derived dynamically from `pharma.feature.ts` and
+  its non-vacuity is asserted (scan set == registered routes + 1), so a new
+  route cannot silently escape it.
+- `ABSOLUTE_MIN_COHORT = 5`, banding, rounding, complementary suppression, query
+  budgets, narrowing detection, territory authorization, tenant isolation,
+  CCR-004 fail-closed: all intact and re-verified.
+
+### What this pass changed
+- **Removed two dead functions**: `signals.repo.ts::expiredSignals` (superseded
+  by `expiredSignalRows`) and `hcp.repo.ts::isHcpInTerritories` (never wired;
+  scope is checked inline in `visibility.ts`).
+- **Existing-data upgrade test** (`migration-upgrade.test.ts`): applies the
+  domain up to 0312, seeds real master rows, then applies 0313-0315 and proves
+  the additive `ALTER`s land safely on populated tables — the one risk a
+  fresh-from-empty run never exercises. Manages its own throwaway DB.
+- **Concurrency tests** (`pharma-concurrency.test.ts`): two-at-once requests
+  against one record for HCP verification, HCP merge, signal approval (incl.
+  the generator losing an approval race — self-approval holds whoever gets the
+  lock first), territory-assignment revocation, and the affiliation open-slot
+  unique index. Proves the `FOR UPDATE` locks and partial unique indexes are
+  load-bearing.
+
+## Previous status — final closure pass
 Branch `claude/jolly-carson-8t7ufe`. A full-domain closure audit on top of the
 cross-domain pass at `c34cf11`. No new migration: every fix reached a column or
 constraint that already existed. Migrations `0307`–`0312` remain byte-identical
