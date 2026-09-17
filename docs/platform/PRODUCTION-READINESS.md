@@ -23,8 +23,8 @@ evidence. "Partial" = implemented + tested but incomplete for full production.
 | Security headers | Ready | static PHI-free set on every response — strict CSP (`default-src 'none'`), `X-Frame-Options: DENY`, nosniff, `Referrer-Policy: no-referrer`, COOP/CORP `same-origin`, HSTS; no dependency (Phase 0) | Low | A1 |
 | Membership / BOX foundation | Foundation (contract) | `modules/platform/entitlement`: Ed25519 signed-entitlement verify (fail-closed), offline grace, installation+tenant binding, feature gate that never gates `core:*`; pure logic + 21 tests, unwired | cloud plane, persistence, installer = Final phase; wiring gated by CCR-014 | A1 |
 | Configuration | Ready | zod-validated fail-fast config incl. backup; prod refuses placeholder pepper | Low | A1 |
-| Frontend | Planned | none exists | n/a until Priority 5 | A1 |
-| Design system | Planned | none (no client yet) | n/a until Priority 6 | A1 |
+| Frontend | Foundation | `web/` React+Vite SPA: app shell, routing, protected/RBAC routes, auth/session, API client, i18n EN/AR + structural RTL, nav/route registry for domains; 13 unit + 4 shell E2E tests | domain UX is Agents 2/3/4 | A1 |
+| Design system | Foundation | token-based CSS (light/dark, RTL logical props) + shared components (button/input/select/card/dialog/drawer/table/tabs/badge/alert/empty/skeleton/error/pagination/toast) | Low | A1 |
 | FHIR | Planned | naming-aligned only | Priority 7 | A1 |
 | Performance | Partial | high-value indexes added; no load testing | Priority 10 | A1 |
 | Deployment / BOX | Planned | single-host run works; no packaging | Priority 11 | A1 |

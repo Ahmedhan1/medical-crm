@@ -10,7 +10,7 @@ cloud service, or any billing — those are Final-phase (see
 
 ```
 MEDCORE BOX (clinic hardware / on-prem server)
-├── Frontend              (Final phase — not built yet)
+├── Frontend              web/  (React + Vite SPA; static bundle served locally)
 ├── Backend               server/  (Fastify + pg, this repo)
 ├── PostgreSQL            local instance; migrations 0001..0901 → clean schema
 ├── Configuration         config/env.ts — zod-validated, fail-fast
@@ -46,6 +46,19 @@ MEDCORE BOX (clinic hardware / on-prem server)
 | Security headers | `http/server.ts` `SECURITY_HEADERS` | Done (Phase 0) |
 | Request correlation id | `http/server.ts` | Done |
 | Membership/entitlement contract | `modules/platform/entitlement` | Contract + pure logic (Phase 0) |
+| Frontend platform (shell, design system, API/auth/RBAC/i18n) | `web/` | Foundation built; served same-origin, offline-capable |
+
+## Frontend serving on the BOX
+
+The frontend is a static SPA bundle (`web/dist`). On the BOX it is served from the
+same origin as the API (a reverse proxy maps `/` → static files and `/api` → the
+backend), so there is **no CORS surface** and the backend needs no CORS config. The
+SPA loads and runs entirely from the box; the only network calls are same-origin
+API requests to the local backend. Core clinical workflows therefore work with no
+Internet. Internet-dependent capabilities (WhatsApp, cloud AI, remote backup/sync,
+updates, cloud control plane) are reached only by the backend and are isolated
+behind their own config — the frontend never assumes connectivity and renders a
+`network_error` state (not a crash) when the API is unreachable.
 
 ## Membership Client foundation (`modules/platform/entitlement`)
 

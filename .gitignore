@@ -26,6 +26,10 @@ logs/
 coverage/
 .vitest/
 **/.tmp-test-backups/
+# Frontend E2E artifacts
+**/test-results/
+**/playwright-report/
+**/.playwright/
 
 # Backup artifacts (never commit PHI-bearing dumps)
 backups/
