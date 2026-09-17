@@ -384,6 +384,71 @@ export async function verifyMedication(principal: Principal, id: string, raw: un
 }
 
 /**
+ * Decide the verification state of a PRODUCT (the branded, registered pack).
+ *
+ * The molecule and the pack lapse independently — a registration is withdrawn
+ * without the molecule changing — so the product carries its own attestation,
+ * gated by the same `medication:verify` and driven through the same lifecycle
+ * as everything else. Products have no revision table (0301 gave one only to
+ * the molecule), so the decision trail for a product is the audit log and the
+ * emitted event rather than a snapshot.
+ */
+export async function verifyProduct(
+  principal: Principal,
+  medicationId: string,
+  productId: string,
+  raw: unknown,
+) {
+  requirePermission(principal, Permission.MEDICATION_VERIFY);
+  const input = parse(VerifyMedicationSchema, raw, 'product verification');
+  assertFreeTextClean({ evidenceSource: input.evidenceSource, note: input.note ?? null });
+
+  return withTransaction(async (client) => {
+    const before = await repo.getProductForUpdate(client, principal.clinicId, productId);
+    if (!before || before.medicationId !== medicationId) throw new NotFoundError('Product');
+    assertTransition(
+      before.verificationStatus as VerificationState,
+      input.verificationStatus as VerificationState,
+      input.note ?? null,
+    );
+    const verifying = input.verificationStatus === VerificationStatus.VERIFIED;
+    const after = await repo.updateProductVerification(client, principal.clinicId, productId, {
+      verificationStatus: input.verificationStatus,
+      lastVerifiedAt: verifying ? new Date().toISOString() : null,
+      verifiedBy: verifying ? principal.userId : null,
+      expiresAt: verifying ? verificationExpiryFrom(input.validForDays) : null,
+      note: input.note ?? null,
+    });
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.MEDICATION_PRODUCT_VERIFIED,
+      subjectType: 'medication_product',
+      subjectId: productId,
+      actorId: principal.userId,
+      payload: {
+        medicationId,
+        from: before.verificationStatus,
+        to: after.verificationStatus,
+      },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'medication.product.verify',
+      targetType: 'medication_product',
+      targetId: productId,
+      metadata: {
+        medicationId,
+        from: before.verificationStatus,
+        to: after.verificationStatus,
+        evidenceSource: input.evidenceSource,
+      },
+    });
+    return after;
+  });
+}
+
+/**
  * Persist lapsed medication attestations.
  *
  * Reads already DERIVE expiry, so this only makes the stored value agree with
@@ -398,7 +463,7 @@ export async function sweepMedicationVerifications(
   requirePermission(principal, Permission.MEDICATION_VERIFY);
   const bounded = Math.min(Math.max(limit, 1), 1000);
 
-  const expired = await withTransaction(async (client) => {
+  const counts = await withTransaction(async (client) => {
     const due = await repo.expiredMedicationVerifications(client, principal.clinicId, bounded);
     for (const id of due) {
       const after = await repo.updateMedicationVerification(client, principal.clinicId, id, {
@@ -422,18 +487,37 @@ export async function sweepMedicationVerifications(
         changedBy: null,
       });
     }
-    return due.length;
+
+    // Products lapse independently of their molecule, so the same sweep clears
+    // both. Products have no revision table; the expiry is auditable via the
+    // sweep's own audit entry below.
+    const dueProducts = await repo.expiredProductVerifications(
+      client,
+      principal.clinicId,
+      bounded,
+    );
+    for (const id of dueProducts) {
+      await repo.updateProductVerification(client, principal.clinicId, id, {
+        verificationStatus: VerificationStatus.EXPIRED,
+        lastVerifiedAt: null,
+        verifiedBy: null,
+        expiresAt: null,
+        note: null,
+      });
+    }
+    return { medications: due.length, products: dueProducts.length };
   });
 
+  const expired = counts.medications + counts.products;
   await audit({
     clinicId: principal.clinicId,
     actorId: principal.userId,
     action: 'medication.verification.sweep',
     targetType: 'medication',
     targetId: null,
-    metadata: { expired },
+    metadata: counts,
   });
-  return { expired };
+  return { expired, ...counts };
 }
 
 export async function searchMedications(

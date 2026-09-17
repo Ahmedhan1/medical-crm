@@ -67,6 +67,9 @@ export interface MedicationProduct {
   licenseBasis: string;
   verificationStatus: VerificationStatus;
   lastVerifiedAt: string | null;
+  verifiedBy: string | null;
+  verificationExpiresAt: string | null;
+  verificationNote: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -433,7 +436,11 @@ interface ProductRow {
   source_ref: string | null;
   license_basis: string;
   verification_status: VerificationStatus;
+  effective_verification_status: VerificationStatus;
   last_verified_at: string | null;
+  verified_by: string | null;
+  verification_expires_at: string | null;
+  verification_note: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -461,12 +468,20 @@ function mapProduct(row: ProductRow): MedicationProduct {
     sourceVersion: row.source_version,
     sourceRef: row.source_ref,
     licenseBasis: row.license_basis,
-    verificationStatus: row.verification_status,
+    // The EFFECTIVE status: a lapsed product attestation reads as `expired`
+    // without a sweep, exactly as the medication and the two other masters do.
+    verificationStatus: row.effective_verification_status ?? row.verification_status,
     lastVerifiedAt: row.last_verified_at,
+    verifiedBy: row.verified_by ?? null,
+    verificationExpiresAt: row.verification_expires_at ?? null,
+    verificationNote: row.verification_note ?? null,
     isActive: row.is_active,
     createdAt: row.created_at,
   };
 }
+
+/** Product reads derive the effective verification status; `p` is the alias. */
+const PRODUCT_EFFECTIVE = `pharma_effective_verification(p.verification_status, p.verification_expires_at)`;
 
 export async function insertProduct(
   client: PoolClient,
@@ -506,7 +521,9 @@ export async function insertProduct(
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING *
      )
-     SELECT i.*, m.name AS manufacturer_name
+     SELECT i.*, m.name AS manufacturer_name,
+            pharma_effective_verification(i.verification_status, i.verification_expires_at)
+              AS effective_verification_status
        FROM inserted i
        LEFT JOIN manufacturer m ON m.id = i.manufacturer_id`,
     [
@@ -542,7 +559,7 @@ export async function listProducts(
   jurisdiction: string | null,
 ): Promise<MedicationProduct[]> {
   const { rows } = await getPool().query<ProductRow>(
-    `SELECT p.*, m.name AS manufacturer_name
+    `SELECT p.*, m.name AS manufacturer_name, ${PRODUCT_EFFECTIVE} AS effective_verification_status
        FROM medication_product p
        LEFT JOIN manufacturer m ON m.id = p.manufacturer_id
       WHERE p.clinic_id = $1 AND p.medication_id = $2
@@ -688,4 +705,84 @@ export async function listImportRuns(clinicId: string, limit: number) {
     startedAt: r.started_at,
     finishedAt: r.finished_at,
   }));
+}
+
+// --- product verification (migration 0315) -----------------------------------
+
+export async function getProductForUpdate(
+  client: PoolClient,
+  clinicId: string,
+  productId: string,
+): Promise<MedicationProduct | null> {
+  const { rows } = await client.query<ProductRow>(
+    `SELECT p.*, m.name AS manufacturer_name, ${PRODUCT_EFFECTIVE} AS effective_verification_status
+       FROM medication_product p
+       LEFT JOIN manufacturer m ON m.id = p.manufacturer_id
+      WHERE p.id = $1 AND p.clinic_id = $2
+      FOR UPDATE OF p`,
+    [productId, clinicId],
+  );
+  return rows[0] ? mapProduct(rows[0]) : null;
+}
+
+export async function updateProductVerification(
+  client: PoolClient,
+  clinicId: string,
+  productId: string,
+  input: {
+    verificationStatus: VerificationStatus;
+    lastVerifiedAt: string | null;
+    verifiedBy: string | null;
+    expiresAt: string | null;
+    note: string | null;
+  },
+): Promise<MedicationProduct> {
+  const { rows } = await client.query<ProductRow>(
+    `WITH updated AS (
+       UPDATE medication_product
+          SET verification_status = $3,
+              last_verified_at = $4,
+              verified_by = $5,
+              verification_expires_at = $6,
+              verification_note = $7,
+              updated_at = now()
+        WHERE id = $1 AND clinic_id = $2
+        RETURNING *
+     )
+     SELECT p.*, m.name AS manufacturer_name,
+            pharma_effective_verification(p.verification_status, p.verification_expires_at)
+              AS effective_verification_status
+       FROM updated p
+       LEFT JOIN manufacturer m ON m.id = p.manufacturer_id`,
+    [
+      productId,
+      clinicId,
+      input.verificationStatus,
+      input.lastVerifiedAt,
+      input.verifiedBy,
+      input.expiresAt,
+      input.note,
+    ],
+  );
+  return mapProduct(rows[0]!);
+}
+
+/** Products whose attestation has lapsed but which still say `verified`. */
+export async function expiredProductVerifications(
+  client: PoolClient,
+  clinicId: string,
+  limit: number,
+): Promise<string[]> {
+  const { rows } = await client.query<{ id: string }>(
+    `SELECT id FROM medication_product
+      WHERE clinic_id = $1
+        AND verification_status = 'verified'
+        AND verification_expires_at IS NOT NULL
+        AND verification_expires_at < now()
+      ORDER BY verification_expires_at
+      LIMIT $2
+      FOR UPDATE`,
+    [clinicId, limit],
+  );
+  return rows.map((r) => r.id);
 }

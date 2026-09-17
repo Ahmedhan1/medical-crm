@@ -523,3 +523,154 @@ describe('drug master — governance parity with the other masters (0315 audit)'
     expect(anonymous.statusCode).toBe(401);
   });
 });
+
+describe('drug master — product verification is a first-class path (0315 closure)', () => {
+  let dataSteward: TestUser;
+
+  async function makeProduct(): Promise<{ medicationId: string; productId: string }> {
+    const medication = (await createMedication()).json();
+    const product = await app.inject({
+      method: 'POST',
+      url: `/medications/${medication.id}/products`,
+      headers: auth(dataSteward),
+      payload: {
+        brandName: 'Cidophage',
+        manufacturerName: 'Example Pharma',
+        dosageForm: 'tablet',
+        route: 'oral',
+        jurisdiction: 'EG',
+        regulatoryAuthority: 'EDA',
+        regulatoryIdentifier: 'EG-REG-11223',
+        regulatoryStatus: 'approved',
+        source: 'public register entry',
+      },
+    });
+    expect(product.statusCode).toBe(201);
+    return { medicationId: medication.id, productId: product.json().id };
+  }
+
+  function decide(
+    medicationId: string,
+    productId: string,
+    payload: Record<string, unknown>,
+    as: TestUser = dataSteward,
+  ) {
+    return app.inject({
+      method: 'POST',
+      url: `/medications/${medicationId}/products/${productId}/verification`,
+      headers: auth(as),
+      payload: { evidenceSource: 'EDA public register 2026-02', ...payload },
+    });
+  }
+
+  beforeEach(async () => {
+    dataSteward = await makeUser(clinicId, 'prod-steward', RoleKey.PHARMA_DATA_STEWARD);
+  });
+
+  it('a product is born unverified', async () => {
+    const { medicationId, productId } = await makeProduct();
+    const read = await app.inject({
+      method: 'GET',
+      url: `/medications/${medicationId}`,
+      headers: auth(dataSteward),
+    });
+    const product = read.json().products.find((p: { id: string }) => p.id === productId);
+    expect(product.verificationStatus).toBe('unverified');
+  });
+
+  it('review then verify records the attestation and an expiry', async () => {
+    const { medicationId, productId } = await makeProduct();
+    await decide(medicationId, productId, { verificationStatus: 'pending_review' });
+    const res = await decide(medicationId, productId, { verificationStatus: 'verified' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().verificationStatus).toBe('verified');
+    expect(res.json().verifiedBy).toBe(dataSteward.userId);
+    expect(res.json().verificationExpiresAt).not.toBeNull();
+  });
+
+  it('nothing reaches verified in one step', async () => {
+    const { medicationId, productId } = await makeProduct();
+    const res = await decide(medicationId, productId, { verificationStatus: 'verified' });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('a refusal must say why', async () => {
+    const { medicationId, productId } = await makeProduct();
+    await decide(medicationId, productId, { verificationStatus: 'pending_review' });
+    const bare = await decide(medicationId, productId, { verificationStatus: 'suspended' });
+    expect(bare.statusCode).toBe(400);
+  });
+
+  it('the molecule and the pack lapse independently', async () => {
+    const { medicationId, productId } = await makeProduct();
+    await decide(medicationId, productId, { verificationStatus: 'pending_review' });
+    await decide(medicationId, productId, { verificationStatus: 'verified' });
+    await getPool().query(
+      `UPDATE medication_product SET verification_expires_at = now() - interval '1 day' WHERE id = $1`,
+      [productId],
+    );
+    const read = await app.inject({
+      method: 'GET',
+      url: `/medications/${medicationId}`,
+      headers: auth(dataSteward),
+    });
+    const product = read.json().products.find((p: { id: string }) => p.id === productId);
+    // Derived: expired before any sweep, and the molecule is untouched.
+    expect(product.verificationStatus).toBe('expired');
+    expect(read.json().verificationStatus).toBe('unverified');
+  });
+
+  it('the sweep clears lapsed products and counts them separately', async () => {
+    const { medicationId, productId } = await makeProduct();
+    await decide(medicationId, productId, { verificationStatus: 'pending_review' });
+    await decide(medicationId, productId, { verificationStatus: 'verified' });
+    await getPool().query(
+      `UPDATE medication_product SET verification_expires_at = now() - interval '1 day' WHERE id = $1`,
+      [productId],
+    );
+    const swept = await app.inject({
+      method: 'POST',
+      url: '/medications/verification/sweep',
+      headers: auth(dataSteward),
+      payload: {},
+    });
+    expect(swept.json().products).toBe(1);
+    expect(swept.json().medications).toBe(0);
+    expect(swept.json().expired).toBe(1);
+    void medicationId;
+  });
+
+  it('a field representative cannot verify a product', async () => {
+    const { medicationId, productId } = await makeProduct();
+    const res = await decide(medicationId, productId, { verificationStatus: 'pending_review' }, rep);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('refuses a product id belonging to a different medication', async () => {
+    const { productId } = await makeProduct();
+    const other = (await createMedication({ genericName: 'ibuprofen' })).json();
+    const res = await decide(other.id, productId, { verificationStatus: 'pending_review' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('the database refuses an unexplained product refusal written directly', async () => {
+    const { productId } = await makeProduct();
+    await expect(
+      getPool().query(
+        `UPDATE medication_product SET verification_status = 'rejected', verification_note = NULL
+          WHERE id = $1`,
+        [productId],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('requires authentication', async () => {
+    const { medicationId, productId } = await makeProduct();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/medications/${medicationId}/products/${productId}/verification`,
+      payload: { verificationStatus: 'pending_review', evidenceSource: 'x' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
