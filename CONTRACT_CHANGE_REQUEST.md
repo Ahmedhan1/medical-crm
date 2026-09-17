@@ -217,6 +217,63 @@ regulatory submission, any clinical write, or any AI that classifies autonomousl
   independently-audited phase owned by Agent 1 + Agent 4.
 
 
+### CCR-011 — Recurring expiry sweeps driven by the shared automation scheduler
+- Status: PROPOSED — **design only; not implemented (no genuine gap today)**
+- Requested by: Agent 1 (Integration Owner), final integration audit I-7
+- Date: 2026-09-17
+- Affects: Agent 4 (pharma/intelligence expiry sweeps), Agent 3 (automation/
+  scheduler architecture), Agent 1 (platform, deployment/worker wiring)
+- Contract file(s): none yet. The sweep functions already exist and are owned by
+  Agent 4 (`sweepSignalExpiry`, `sweepHcoVerifications`, `sweepExpiredVerifications`);
+  the scheduler is owned by Agent 3 (`modules/automation/scheduler*`).
+
+#### Why this is a contract, not a bug
+The final audit re-examined the known open question: *"Pharma expiry sweeps exist
+but scheduling may require Agent 3 scheduler integration."* Investigation shows
+there is **no correctness or disclosure gap**, so nothing is implemented this gate:
+- **Expiry is DERIVED at read, not swept.** Every read path computes effective
+  status through STABLE SQL functions — `pharma_effective_verification(status,
+  expires_at)` (HCP/HCO, migration 0306/0307) and `pharma_effective_signal_status(
+  lifecycle_status, expires_at)` (signals, 0311). A lapsed record therefore **reads
+  as expired the instant its clock passes**, whether or not any sweep has run. No
+  stale "verified" or "published" state is ever disclosed. This is fail-safe by
+  construction.
+- **The sweeps are bookkeeping, not a gate.** `sweepSignalExpiry` /
+  `sweepHcoVerifications` / `sweepExpiredVerifications` materialise the stored
+  status and write the transition into the append-only decision trail
+  (`aggregated_signal_event`, etc.). They make the *audit trail* complete; they do
+  not make the *disclosure* safe (that is already guaranteed above).
+- **No workaround was built inside Pharma.** Each sweep is reachable only through an
+  admin-gated HTTP endpoint (`intelligence:publish` / the relevant steward
+  permission). This mirrors the platform's own scheduler, whose `runDueActions`
+  entry point is documented as *"called on an interval by a worker, or on demand"*
+  via an admin-gated route. Pharma follows the identical operator/worker-driven
+  model — it did not embed a timer, a cron, or a cross-domain call.
+
+#### The (optional, future) contract
+IF a deployment later wants the decision-trail bookkeeping to happen automatically
+rather than by an operator/worker call, it MUST go through the existing shared
+automation architecture, preserving ownership:
+- Agent 3 exposes a recurring/interval registration in the automation scheduler
+  (the `trigger_type='schedule'` + `schedule_cron` rule shape already modelled in
+  migration 0200 is the natural home). Agent 3 owns the scheduler; Agent 4 does not
+  reach into it.
+- Each sweep is registered as an **idempotent scheduled action** whose handler
+  calls the Agent 4 sweep service function behind its existing permission. Sweeps
+  are already idempotent (a re-run is a no-op once statuses are materialised), so
+  at-least-once scheduling is safe.
+- No new cross-workstream import: pharma does not import automation and automation
+  does not import pharma; the wiring is an action-registry entry owned by the
+  platform/automation side, exactly like every other scheduled action.
+
+#### Decision (Agent 1 / Integration I-7)
+PROPOSED / **deferred as an operational enhancement**. Not required for v1
+correctness or security (expiry is derived and fail-safe). Recorded here so the
+future path is the governed one — a scheduled action through Agent 3's engine —
+rather than a timer smuggled into the pharma layer. No code, no migration, no new
+dependency this gate.
+
+
 ### CCR-009 — Intelligence signal response: exact cohort size replaced by a band
 - Status: **ACKNOWLEDGED / APPROVED** (renumbered from Agent 4's CCR-006 at integration — collided with Agent 2's patient-extension CCR-006)
 - Requested by: Agent 4

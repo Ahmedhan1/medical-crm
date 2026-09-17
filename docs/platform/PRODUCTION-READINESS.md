@@ -57,6 +57,40 @@ and validates the numbers on its own hardware.
 | prod config validation / health-readiness / error redaction | PARTIAL |
 | deployment / upgrade / rollback tests | not yet (Priority 11/12) |
 
+## Consolidated baseline I-7 (2026-09-17) — current source of truth
+
+Final integration of Agent 4's frozen deliverable (`2a2b5bb`) onto I-6 (`659b285`)
+as a clean fast-forward. All four workstreams are now fully consolidated on
+`integration/medcore-v1`.
+
+- **Migrations:** 37 apply from empty in order (0001 / 0100–0113 / 0200–0204 /
+  0300–0314 / 0900–0901) → **107 tables**. Pharma range 0300–0314 is now complete
+  (the earlier 0307–0311 reservation is filled and verified end-to-end).
+- **Tests:** **1110 / 74 files green, 0 failures, 0 skips**; typecheck + build clean.
+- **Integrated recovery (§6):** backup → verify (checksum + archive) → restore into a
+  fresh DB round-trips all 107 tables, including HCO master/sites/departments, field
+  force, medical affairs, and the signal lifecycle + decision trail.
+- **Newly integrated (Agent 4):** HCO organisation master + site/department
+  governance (0307/0308/0313), field-force rep platform (0309), medical-affairs
+  request lifecycle (0310), intelligence signal lifecycle + decision trail
+  (0311/0314). Ten pre-existing pharma audit findings closed within Agent 4's domain.
+- **Cross-domain audit (this gate):** pharma firewall holds (94 firewall tests +
+  21 red-team tests green; no clinical reads/writes; no cross-workstream imports);
+  every new table tenant-scoped; new decision-trail tables append-only; territory
+  authorization enforced; new permissions role-reachable via the barrel; event
+  payloads shape-only; inline service queries carry `clinic_id`.
+- **Invariants confirmed intact:** cohort floor = 5, banding/suppression/query
+  budgets (files byte-unchanged), CCR-004 fail-closed (501), E4 Action Guard + AI
+  gateway/classification byte-unchanged.
+- **Expiry scheduling (known item) — no gap:** expiry is DERIVED at read
+  (`pharma_effective_verification` / `pharma_effective_signal_status`), so lapsed
+  records read as expired with no sweep; sweeps are admin-gated audit-trail
+  bookkeeping, driven the same operator/worker way as the platform's own scheduler.
+  Recurring auto-scheduling deferred as **CCR-011** (via Agent 3's scheduler if ever
+  wanted; never a timer inside pharma).
+- **CCRs:** no ledger conflicts; added CCR-011 (expiry-sweep scheduling contract,
+  design-only). CCR-004/007/008/010 unchanged; disclosure controls untouched.
+
 ## Consolidated baseline I-6 (2026-09-16) — current source of truth
 
 On `integration/medcore-v1`, on the I-5 hardening baseline (`f369d83`). Integrated

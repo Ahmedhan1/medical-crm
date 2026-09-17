@@ -13,6 +13,41 @@ Does NOT build Agent 2–4 domain features.
 all done. Full suite green (698 tests / 53 files); 25 migrations apply from empty
 → 91 tables; typecheck + build clean; integrated backup→restore verified.
 
+## Final Integration Gate I-7 (2026-09-17) — Agent 4 completion consolidated
+Integrated Agent 4's **frozen** deliverable `2a2b5bb` onto the I-6 baseline
+`659b285`. Agent 4 had merged the integration branch into their branch and then
+**completed end-to-end the formerly-reserved WIP 0307–0311** plus two additive
+audit-fix migrations (0313 site/department governance, 0314 signal decision trail).
+Because `659b285` was a true ancestor, this integrated as a clean **fast-forward**
+(no conflicts); every changed file is docs or pharma/HCP/intelligence-owned — all
+platform/clinical/AI files verified byte-unchanged.
+Now integrated: HCO organisation master + sites/departments with governance
+(0307/0308/0313), field-force rep platform (0309), medical-affairs request
+lifecycle (0310), intelligence signal lifecycle + decision trail (0311/0314).
+Gate result: **37 migrations apply from empty → 107 tables** (pharma range now
+0300–0314, no gap); **1110 tests / 74 files green, 0 failures, 0 skips**;
+typecheck + build clean; backup → verify → restore round-trips all 107 tables.
+Full cross-domain audit clean: pharma firewall holds (no clinical reads/writes,
+94-test suite green); no cross-workstream imports; every new table carries
+`clinic_id`; new decision-trail tables (`aggregated_signal_event`,
+`scientific_request_event`, `visit_event`) are append-only; territory
+authorization enforced (`assertHcpInScope`, cross-rep `ForbiddenError`); new
+permissions (`hco:verify`/`hco:merge`, medical-affairs SoD) merge through the
+barrel and are role-reachable; event payloads are shape-only (no PHI/PII); inline
+service queries all carry `clinic_id`. Untouchable invariants confirmed intact:
+`ABSOLUTE_MIN_COHORT = 5`, banding/suppression/query-budget/narrowing controls
+(firewall/disclosure/query-governance files byte-unchanged), CCR-004 fail-closed
+(501), E4 Action Guard + AI gateway/classification byte-unchanged.
+**Flagged cross-domain item resolved as no gap:** pharma/intelligence expiry is
+DERIVED at read (`pharma_effective_verification` / `pharma_effective_signal_status`
+read `now()`), so a lapsed record reads as expired without any sweep; the sweeps
+are admin-gated bookkeeping that only complete the audit trail, mirroring the
+platform scheduler's own operator/worker-driven `runDueActions`. Recurring
+auto-scheduling recorded as **CCR-011** (deferred operational enhancement, to be
+done through Agent 3's scheduler if ever wanted — never a timer inside pharma). No
+genuine code gaps found, so no fixes and no new tests were required; no new
+dependency.
+
 ## Integration Gate I-6 (2026-09-16) — consolidation on I-5 baseline
 Baseline `integration/medcore-v1` @ `f369d83` (I-5). Integrated ONLY the three
 verified deliverables, in order Clinical → AI → Pharma, by cherry-pick (all three
