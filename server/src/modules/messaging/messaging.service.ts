@@ -244,7 +244,7 @@ export async function attemptDelivery(
       await client.query(
         `UPDATE message_log
             SET status = 'sent', provider_ref = $2, attempts = $3,
-                last_error = NULL, next_attempt_at = NULL, updated_at = now()
+                last_error = NULL, next_attempt_at = NULL, retry_claimed_at = NULL, updated_at = now()
           WHERE id = $1`,
         [messageId, result.providerRef ?? null, attempts],
       );
@@ -266,7 +266,8 @@ export async function attemptDelivery(
     const nextAttemptAt = dead ? null : new Date(Date.now() + backoffMs(attempts));
     await client.query(
       `UPDATE message_log
-          SET status = $2, attempts = $3, last_error = $4, next_attempt_at = $5, updated_at = now()
+          SET status = $2, attempts = $3, last_error = $4, next_attempt_at = $5,
+              retry_claimed_at = NULL, updated_at = now()
         WHERE id = $1`,
       [messageId, status, attempts, result.errorMessage ?? result.errorCode ?? 'send failed', nextAttemptAt],
     );

@@ -312,3 +312,57 @@ Structured-output schema validation (Phase 12), prompt/output governance
 (Phases 27/28), then BOUNDED agents (Reception, Scheduling, Documentation…) that
 call `executeAiAction` — never one unrestricted agent. Only after the kernel is
 proven and integrated. Autonomous execution remains OUT until then.
+
+## Full Domain Closure (post-E5, baseline I-6 @ 659b285)
+End-to-end audit of the whole Agent-3 surface (AI safety kernel, gateway,
+classification/policy, providers, structured output, eval, observability,
+automation engine/scheduler, messaging/WhatsApp, receptionist, patient
+engagement, routes). Most of the domain was already correct and fail-closed;
+two genuine gaps were found and closed. All fixes are additive.
+
+- **CLOSURE-1 (BUG / RELIABILITY, HIGH) — message retry could double-send.**
+  `delivery.retryMessage` / `retryDueMessages` selected a `failed` row and then
+  called the provider send OUTSIDE any lock (`attemptDelivery` only locks the row
+  to persist the outcome, AFTER the network send). Two concurrent retriers (an
+  admin retry racing the worker sweep, or two workers) both read the same `failed`
+  row and both transmitted — the patient received the message twice. Fix:
+  migration `0205` adds a `retry_claimed_at` lease; `claimForRetry` atomically
+  claims a row with a guarded conditional UPDATE before any send, so exactly one
+  retrier wins (the loser gets a conflict / is skipped, never a second send). The
+  lease self-heals a retry that crashes mid-send. The claim is released on every
+  terminal outcome (sent / failed / suppressed / deferred). This mirrors the
+  scheduler's `claimDue(FOR UPDATE SKIP LOCKED)` guarantee for the messaging path.
+
+- **CLOSURE-2 (GOVERNANCE hardening, LOW) — AI identity scope vs human permission.**
+  `createIdentity` claimed (in a comment) to reject human-role-shaped scopes but
+  only validated type/length. The AI scope vocabulary and the human RBAC
+  `Permission` vocabulary are disjoint by design, and the Action Guard never
+  consults RBAC for an AI identity, so it was not exploitable — but the boundary
+  was convention-only. Fix: `createIdentity` now rejects any scope equal to a
+  human `Permission` value, making "an AI identity never holds a human permission"
+  a validated invariant (defense in depth for the guard's scope check).
+
+### Verified NOT gaps (spot-checked this pass)
+- AI Gateway is the sole provider chokepoint; only `intake.ts` and `summaries.ts`
+  call a provider, both after `authorizeAiRequest`; cloud routing is fail-closed
+  with a defense-in-depth re-check.
+- Action Guard chain unchanged and fail-closed; prohibited clinical tools denied
+  first; confirmation tokens are action-bound, TTL-bounded, timing-safe.
+- Automation run + scheduled-action claiming are atomic (UNIQUE dedupe /
+  `FOR UPDATE SKIP LOCKED`); action idempotency keys are stable across retries.
+- Consent enforced at delivery on every send path (dispatch AND retry); opt-out
+  honored immediately; quiet hours are tz/DST-safe (re-evaluated per step);
+  frequency caps count only in-flight/sent messages.
+- Observability/audit records are shape-only (no PHI, no bodies, no recipients,
+  no arguments); `message_log` never stores the rendered body.
+
+### Migrations
+- `0205_message_retry_claim.sql` — adds `message_log.retry_claimed_at` + a
+  supporting index. Additive, nullable, no backfill; fresh- and existing-data safe.
+
+### Remaining limitations (unchanged, deliberate)
+- Raw clinical PHI reads for AI remain authorization-only (handler-less) pending a
+  governed-read CCR — fail-closed by design.
+- Frequency caps are soft quality guards; an exact per-patient cap under high
+  concurrency can be off by one (TOCTOU on the count). Consent and the
+  duplicate-send invariant are hard and are enforced; the soft cap is acceptable.

@@ -66,6 +66,9 @@ export async function getIdentity(clinicId: string, id: string): Promise<AiIdent
 
 const RISK_CEILINGS: RiskCeiling[] = ['read_only', 'low_risk', 'medium_risk', 'high_risk'];
 
+/** Every human RBAC permission value — an AI identity scope may never be one. */
+const HUMAN_PERMISSIONS = new Set<string>(Object.values(Permission));
+
 export interface CreateIdentityInput {
   agentType: string;
   name: string;
@@ -82,10 +85,17 @@ export async function createIdentity(principal: Principal, input: CreateIdentity
   if (input.riskCeiling && !RISK_CEILINGS.includes(input.riskCeiling)) {
     throw new ValidationError('Invalid riskCeiling');
   }
-  // Reject any attempt to grant a human-role-shaped scope onto an AI identity.
+  // Reject any attempt to grant a human RBAC permission as an AI identity scope.
+  // AI authority is an AI-only scope vocabulary; a human permission must never be
+  // held by an AI identity. The two vocabularies are disjoint by design, so this
+  // rejects nothing legitimate — it makes the "AI never receives a human-only
+  // permission" boundary a validated invariant rather than a convention.
   const scopes = input.scopes ?? [];
   for (const s of scopes) {
     if (typeof s !== 'string' || s.length > 100) throw new ValidationError('Invalid scope');
+    if (HUMAN_PERMISSIONS.has(s)) {
+      throw new ValidationError('An AI identity scope must not be a human RBAC permission');
+    }
   }
 
   return withTransaction(async (client) => {

@@ -66,9 +66,35 @@ async function retryGate(row: RetryableRow): Promise<RetryGate> {
   return { kind: 'allow' };
 }
 
+/**
+ * Atomically CLAIM a failed message for a single retry attempt. The conditional
+ * UPDATE flips `retry_claimed_at`, so under two concurrent retriers exactly one
+ * wins the row (the loser's guarded UPDATE matches zero rows and returns null) —
+ * this is what makes "a retry never creates duplicate patient communication"
+ * structural rather than best-effort. A stale lease (a retry that crashed
+ * mid-send) is reclaimable after RETRY_CLAIM_LEASE, so a message is never
+ * stranded. The claim is released by attemptDelivery / suppress / defer once the
+ * attempt reaches a terminal outcome.
+ */
+const RETRY_CLAIM_LEASE = "5 minutes";
+
+async function claimForRetry(clinicId: string, id: string): Promise<RetryableRow | null> {
+  const { rows } = await getPool().query<RetryableRow>(
+    `UPDATE message_log
+        SET retry_claimed_at = now(), updated_at = now()
+      WHERE id = $1 AND clinic_id = $2
+        AND status = 'failed'
+        AND attempts < max_attempts
+        AND (retry_claimed_at IS NULL OR retry_claimed_at <= now() - interval '${RETRY_CLAIM_LEASE}')
+      RETURNING id, clinic_id, channel, patient_id, template_key, locale, status, attempts, max_attempts`,
+    [id, clinicId],
+  );
+  return rows[0] ?? null;
+}
+
 async function suppressRetry(row: RetryableRow, reason: string, actorId: string | null): Promise<{ messageId: string; status: MessageStatus }> {
   await getPool().query(
-    `UPDATE message_log SET status='suppressed', suppressed_reason=$2, next_attempt_at=NULL, updated_at=now() WHERE id=$1`,
+    `UPDATE message_log SET status='suppressed', suppressed_reason=$2, next_attempt_at=NULL, retry_claimed_at=NULL, updated_at=now() WHERE id=$1`,
     [row.id, reason],
   );
   await audit({
@@ -80,7 +106,7 @@ async function suppressRetry(row: RetryableRow, reason: string, actorId: string 
 
 async function deferRetry(row: RetryableRow, until: Date, actorId: string | null): Promise<{ messageId: string; status: MessageStatus }> {
   await getPool().query(
-    `UPDATE message_log SET next_attempt_at=$2, updated_at=now() WHERE id=$1`,
+    `UPDATE message_log SET next_attempt_at=$2, retry_claimed_at=NULL, updated_at=now() WHERE id=$1`,
     [row.id, until],
   );
   await audit({
@@ -110,11 +136,17 @@ export async function retryMessage(principal: Principal, id: string): Promise<{ 
   if (row.attempts >= row.max_attempts) {
     throw new ConflictError('Message has reached its maximum attempts (dead-lettered)');
   }
+  // Atomically claim the row BEFORE any send, so a concurrent retrier (another
+  // admin, or the worker sweep) can never also transmit this message. Losing the
+  // claim means someone else is already retrying it — surface a conflict, never
+  // a second send.
+  const claimed = await claimForRetry(principal.clinicId, id);
+  if (!claimed) throw new ConflictError('Message is already being retried');
   // Re-check consent + policy at delivery time (opt-out honored immediately).
-  const gate = await retryGate(row);
-  if (gate.kind === 'suppress') return suppressRetry(row, gate.reason, principal.userId);
-  if (gate.kind === 'defer') return deferRetry(row, gate.until, principal.userId);
-  const plan = await rebuildPlan(row);
+  const gate = await retryGate(claimed);
+  if (gate.kind === 'suppress') return suppressRetry(claimed, gate.reason, principal.userId);
+  if (gate.kind === 'defer') return deferRetry(claimed, gate.until, principal.userId);
+  const plan = await rebuildPlan(claimed);
   await audit({
     clinicId: principal.clinicId,
     actorId: principal.userId,
@@ -149,18 +181,22 @@ export async function retryDueMessages(
   const results: Array<{ messageId: string; status: MessageStatus }> = [];
   for (const row of rows) {
     try {
+      // Atomically claim before sending; skip rows another worker already grabbed
+      // (prevents two concurrent sweeps double-sending the same message).
+      const claimed = await claimForRetry(principal.clinicId, row.id);
+      if (!claimed) continue;
       // Re-check consent + policy at delivery time for every retry.
-      const gate = await retryGate(row);
+      const gate = await retryGate(claimed);
       if (gate.kind === 'suppress') {
-        results.push(await suppressRetry(row, gate.reason, principal.userId));
+        results.push(await suppressRetry(claimed, gate.reason, principal.userId));
         continue;
       }
       if (gate.kind === 'defer') {
-        results.push(await deferRetry(row, gate.until, principal.userId));
+        results.push(await deferRetry(claimed, gate.until, principal.userId));
         continue;
       }
-      const plan = await rebuildPlan(row);
-      results.push(await attemptDelivery(row.id, principal.clinicId, row.channel, plan, principal.userId));
+      const plan = await rebuildPlan(claimed);
+      results.push(await attemptDelivery(claimed.id, principal.clinicId, claimed.channel, plan, principal.userId));
     } catch {
       // A message that can't be re-rendered stays failed; skip it in the batch.
       results.push({ messageId: row.id, status: row.status });

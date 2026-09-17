@@ -237,8 +237,15 @@ describe('kernel: RED-TEAM — every bypass attempt fails closed', () => {
       expect(d.decision, label).not.toBe('allow');
     }
 
-    // 6 "ADMIN-like" identity: a human-role-shaped scope grants nothing — no tool maps to it.
-    const fakeAdmin = await mkId({ scopes: ['admin:*', 'patient:register', '*'], riskCeiling: 'high_risk', dataCeiling: 'highly_restricted' });
+    // 6 "ADMIN-like" identity. Two defenses in depth:
+    //  (a) a real human RBAC permission is REJECTED as an AI scope at creation, and
+    const rejected = await app.inject({
+      method: 'POST', url: '/ai/identities', headers: bearer(admin.token),
+      payload: { agentType: 'x', name: 'reject-human-perm', scopes: ['patient:register'] },
+    });
+    expect(rejected.statusCode).toBe(400);
+    //  (b) even a non-permission, human-role-shaped scope grants nothing — no tool maps to it.
+    const fakeAdmin = await mkId({ scopes: ['admin:*', 'superuser', '*'], riskCeiling: 'high_risk', dataCeiling: 'highly_restricted' });
     expect((await authorizeAiAction({ clinicId, identityId: fakeAdmin, toolId: 'demo.echo' })).reasonCode).toBe('missing_permission');
     expect((await authorizeAiAction({ clinicId, identityId: fakeAdmin, toolId: 'clinical.diagnosis.modify' })).reasonCode).toBe('prohibited');
 
