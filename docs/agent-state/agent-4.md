@@ -1,6 +1,73 @@
 # Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — COMPLETION PASS DONE
+## Current Status — GOVERNANCE AUDIT PASS DONE
+Branch `claude/jolly-carson-8t7ufe`. A deep completion-and-governance audit of
+the whole Pharma surface, on top of the verified `0307`–`0312` work at
+`aa337a5`. Nothing already delivered was reimplemented; migrations `0307`–`0312`
+are byte-identical to `aa337a5`.
+
+Ten findings, all pre-existing, all fixed. Two additive migrations, `0313` and
+`0314`. **Suite: 1110 tests green, 0 skipped** (1047 at `aa337a5`, 63 added
+here). Typecheck, build and a from-empty migration run are clean.
+
+### What the audit found
+
+| # | Area | Finding | Kind |
+| --- | --- | --- | --- |
+| 1 | HCO sites / departments | 0308 gave both the full master-data column set — provenance, the eight-state verification vocabulary, `verified_by`, `verification_expires_at`, `operating_status` — and the CHECK constraints for it, then made them **write-once**. No update, no verification decision, no operating-status change, no history. The schema promised governance no endpoint delivered. | capability |
+| 2 | Specialty taxonomy | **Tenancy leak.** `createSpecialty` never validated `parentId`, and `specialty.parent_id` references `specialty(id)` with no clinic in the constraint — so a specialty in one tenant could be given a parent from another. Every other parent link here (HCO, territory) checks the tenant; this one did not. | security |
+| 3 | HCP merge | Merging an HCO required a recorded reason; merging an HCP — equally destructive to identity resolution — required none. The same act held to two bars. | governance |
+| 4 | HCP credentials | `valid_from` / `valid_to` were stored and never interpreted, so a board certification that lapsed in 2019 was returned looking exactly like one renewed last month — citable by a rep, countable by a report. | correctness |
+| 5 | Institutional visits | `preVisitBriefing` and `getCallReport` applied territory scope **only when the visit had an HCP**. An institutional visit (0309) has none, so the guard was skipped entirely and any `visit:read` holder in the clinic could open another rep's institutional briefing and call report. | security |
+| 6 | Medical affairs | The reason requirement looked only at the destination state, so `rejected` demanded a rationale while `open → closed` demanded none. **Closing a question nobody had answered was an unexplained refusal that walked past the rule.** | governance |
+| 7 | Signal review | `reviewed_by` / `reviewed_at` existed on `aggregated_signal` from 0311 and **no code path ever wrote them** — the service read each value and wrote it straight back. Dead columns that looked like an answer. | correctness |
+| 8 | Signal withdrawal | Every non-withdraw transition NULLed the withdrawal fields, so re-submitting a withdrawn claim **destroyed the record of why a live claim had been pulled** — at exactly the moment that reason matters most. | governance |
+| 9 | Signal expiry / re-run | The sweep bulk-updated lapsed signals and audited a count; a re-run silently returned a published signal to `draft`. Both are lifecycle transitions and neither was attributable afterwards. | governance |
+| 10 | Signal decision history | No first-class trail comparable to `visit_event` / `scientific_request_event`. The row held a snapshot of the latest decision, not a history. | capability |
+
+### Verified and deliberately left alone
+
+- **Lifecycle state IS the authorization source** for signals, not `published_at`
+  — that column is now stored and returned and gates nothing. Pinned by a test
+  that forges the pre-0311 shape (a publication timestamp on an unreviewed
+  claim) and asserts it stays invisible to consumers and to exports.
+- **No HCO directory report.** Nothing in the export registry or any caller
+  needs one; adding it would be speculative.
+- **The assignee is not forced to be the answerer** in medical affairs. A
+  colleague covering an absent reviewer is legitimate, and the trail records who
+  actually answered.
+- Firewall, `ABSOLUTE_MIN_COHORT = 5`, banding, rounding, complementary
+  suppression, query budgets, narrowing detection, CCR-004 fail-closed: untouched
+  and re-verified.
+
+### New in this pass
+
+| Migration | Contents |
+| --- | --- |
+| `0313_hco_site_governance` | `record_version` on `hco_location` / `hco_department`; append-only `hco_location_revision` and `hco_department_revision`; expiry-sweep partial indexes |
+| `0314_signal_decision_trail` | append-only `aggregated_signal_event` — generation, submission, approval, rejection, publication, withdrawal, expiry, supersession |
+
+Both additive: every column added with a default, no column changes type or
+nullability, no data rewritten.
+
+New endpoints: `PATCH`, `POST :id/verification` and `GET :id/history` on
+`/hco-locations` and `/hco-departments`; `GET /intelligence/signals/:id/history`.
+Changed: `POST /hcps/:id/merge` now requires `reason`; the HCO sweep reports
+organisations, sites and departments separately; credentials carry a derived
+`validity`.
+
+Two design points worth keeping:
+- **`aggregated_signal_event.actor_id` is nullable, and that is load-bearing.**
+  An expiry is the system observing a clock, not a decision by whoever happened
+  to run the sweep; attributing it to them would be a lie of the kind the trail
+  exists to stop. A run is operated by a person, so generation and supersession
+  *are* attributed.
+- **`assertVisitReadable` is deliberately wider than `assertVisitOwnership`.** A
+  call report is about the account — a colleague in the same territory is
+  entitled to it and can already see it through HCP 360. How a rep spent their
+  day is personnel information, so the status trail keeps the narrower rule.
+
+## Previous status — completion pass (0307–0311)
 Branch `claude/jolly-carson-8t7ufe`, merged onto the trusted baseline
 `integration/medcore-v1` (`659b285`).
 
@@ -18,10 +85,7 @@ trusted, and several parts were changed or extended before being used.
 | `0310` Medical affairs | schema only | complete, plus separation of duties made real |
 | `0311` Intelligence signal lifecycle | schema only | complete; the pipeline no longer publishes itself |
 
-**Suite: 1047 tests green** (848 at the baseline, 199 added here). Typecheck,
-build and a from-empty migration run are clean.
-
-## Phase 1 — audit findings (what was actually wrong)
+## Phase 1 — audit findings of the completion pass (what was wrong then)
 
 Traced against the code at `659b285`, not against any earlier summary.
 
@@ -69,7 +133,7 @@ No adverse-event pathway was built.
   by the services.
 
 ## Database changes
-Reserved range **0300–0399**; `0300`–`0312` used.
+Reserved range **0300–0399**; `0300`–`0314` used.
 
 | Migration | Contents |
 | --- | --- |
@@ -80,6 +144,8 @@ Reserved range **0300–0399**; `0300`–`0312` used.
 | `0310_medical_affairs` | assignment, inquiry category, priority, SLA, source channel, escalation with an evidence CHECK, append-only `scientific_request_event` |
 | `0311_intelligence_lifecycle` | `aggregated_signal` lifecycle columns, no-self-approval CHECK, evidenced refusal/withdrawal CHECKs, `pharma_effective_signal_status()` |
 | `0312_pharma_export_log` | append-only export receipts |
+| `0313_hco_site_governance` | `record_version` and append-only revision tables for `hco_location` / `hco_department`; expiry-sweep partial indexes |
+| `0314_signal_decision_trail` | append-only `aggregated_signal_event` |
 
 `0311` deliberately RETRACTS pre-existing signals to `draft`. Grandfathering
 unreviewed claims as published truth is the finding the migration exists to
@@ -166,13 +232,31 @@ implementation owned by Agents 1 + 2 and `clinical_governed` still fail-closed;
 CCR-007 remains DESIGN/PROPOSED with no adverse-event workflow built; CCR-010 is
 untouched.
 
-## Next tasks
-1. HCO verification/expiry for **sites and departments** — the columns and the
-   derived function are in place, but only the organisation has a decision
-   endpoint today.
-2. An HCO directory report, once someone actually needs one. Not added
-   speculatively.
-3. Signal lifecycle history as a first-class trail. Today the decisions are in
-   `audit_log` and `event`; a dedicated table would match `visit_event` and
-   `scientific_request_event`.
-4. CCR-007 remains blocked on approval by Agents 1 + 2.
+## Remaining gaps and risks
+
+Real, and none of them fixable inside this workstream today:
+
+1. **No sweep scheduler.** Three expiry sweeps exist (HCP, HCO+components,
+   signals) and all three must be invoked by a caller. Reads derive expiry so
+   nothing is *wrong* without them, but the stored columns drift until someone
+   runs them. Wiring them to a scheduler crosses into Agent 3's automation
+   domain and needs a CCR.
+2. **Narrowing detection is still per-principal.** Two colluding analysts can
+   difference across their separate histories. A clinic-wide budget would let
+   one analyst exhaust another's quota — a trade-off worth making deliberately,
+   not by default.
+3. **The query budget is a fixed count, not a privacy budget.** A differential-
+   privacy accountant is the principled version; the abstraction is shaped to
+   accept one without an API change.
+4. **A single-manager clinic cannot publish a signal**, because no self-approval
+   needs two distinct `intelligence:publish` holders. Intended governance cost,
+   the same one the content lifecycle pays.
+5. **Escalation requires an actual SLA breach**, so a critical question cannot be
+   escalated while still in window. Urgency has to be expressed at triage.
+6. **The legacy `hcp_hco_affiliation.department` text is still not backfilled**,
+   deliberately — guessing which structured department a free-text string meant
+   is the data invention this platform refuses.
+7. **CCR-007 (adverse events) remains blocked** on Agents 1 + 2. No
+   adverse-event pathway exists and none was built.
+8. **CCR-004 remains fail-closed.** `clinical_governed` throws; its
+   implementation is owned by Agents 1 + 2, not here.

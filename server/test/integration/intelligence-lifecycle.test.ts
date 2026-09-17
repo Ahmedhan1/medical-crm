@@ -540,6 +540,21 @@ describe('governance boundaries hold', () => {
     }
   });
 
+  it('LIFECYCLE STATE gates readability — `published_at` alone does not', async () => {
+    const id = await draftSignal();
+    // Forge the pre-0311 shape: a publication timestamp on a claim nobody
+    // reviewed. If any read path still keyed on `published_at`, this leaks.
+    await getPool().query(
+      `UPDATE aggregated_signal SET published_at = now() WHERE id = $1`,
+      [id],
+    );
+    const consumerList = await ok('GET', '/intelligence/signals', rep);
+    expect(consumerList.signals).toEqual([]);
+    expect((await call('GET', `/intelligence/signals/${id}`, rep)).statusCode).toBe(404);
+    const exported = await ok('POST', '/pharma/reports/intelligence_signals', producer, {});
+    expect(exported.rows).toEqual([]);
+  });
+
   it('a draft never reaches a governed export', async () => {
     const id = await draftSignal();
     const beforePublish = await ok('POST', '/pharma/reports/intelligence_signals', producer, {});
