@@ -157,6 +157,16 @@ export async function hcpRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(created);
   });
 
+  /** Amend or END an affiliation — the counterpart to creating one. */
+  app.patch('/hcps/:id/affiliations/:affiliationId', async (req, reply) => {
+    const { id, affiliationId } = params(
+      z.object({ id: z.string().uuid(), affiliationId: z.string().uuid() }),
+      req.params,
+      'Invalid id',
+    );
+    return reply.send(await hcp.updateAffiliation(principalOf(req), id, affiliationId, req.body));
+  });
+
   app.post('/hcps/:id/locations', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     const created = await hcp.addPracticeLocation(principalOf(req), id, req.body);

@@ -38,6 +38,21 @@ export async function repRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(created);
   });
 
+  /**
+   * Revoke territory scope. The counterpart to creating an assignment, and the
+   * half that was missing — scope could be granted and never taken back.
+   */
+  app.patch('/territories/:id/assignments/:assignmentId', async (req, reply) => {
+    const { id, assignmentId } = params(
+      z.object({ id: z.string().uuid(), assignmentId: z.string().uuid() }),
+      req.params,
+      'Invalid id',
+    );
+    return reply.send(
+      await territory.endTerritoryAssignment(principalOf(req), id, assignmentId, req.body),
+    );
+  });
+
   app.post('/territories/:id/targets', async (req, reply) => {
     const { id } = params(IdParam, req.params, 'Invalid id');
     const created = await territory.targetHcp(principalOf(req), id, req.body);

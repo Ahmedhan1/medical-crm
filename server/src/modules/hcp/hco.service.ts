@@ -9,6 +9,7 @@ import { today } from '../pharma/dates.js';
 import { assertFreeTextClean } from '../pharma/guards.js';
 import { ProvenanceSchema, VerificationStatus } from '../pharma/provenance.js';
 import { territoryScopeFor } from '../pharma/visibility.js';
+import { assertHcoOpen } from './hco.repo.js';
 import * as repo from './hco.repo.js';
 import type {
   Hco,
@@ -367,6 +368,7 @@ export async function updateHco(
   return withTransaction(async (client) => {
     const current = await repo.getHcoForUpdate(client, principal.clinicId, id);
     if (!current) throw new NotFoundError('HCO');
+    assertHcoOpen(current);
 
     const patch: Partial<Record<repo.HcoUpdatableColumn, unknown>> = {};
     const changedFields: string[] = [];
@@ -477,6 +479,8 @@ export async function decideHcoVerification(
   return withTransaction(async (client) => {
     const current = await repo.getHcoForUpdate(client, principal.clinicId, id);
     if (!current) throw new NotFoundError('HCO');
+    // A resolved-away organisation cannot be re-attested.
+    assertHcoOpen(current);
 
     const from = current.provenance.verificationStatus as VerificationState;
     const to = input.verificationStatus as VerificationState;
@@ -737,6 +741,7 @@ export async function addHcoIdentifier(
   return withTransaction(async (client) => {
     const hco = await repo.getHcoById(principal.clinicId, hcoId, client);
     if (!hco) throw new NotFoundError('HCO');
+    assertHcoOpen(hco);
     try {
       const identifier = await repo.insertHcoIdentifier(client, {
         clinicId: principal.clinicId,
@@ -797,6 +802,7 @@ export async function addHcoLocation(
   return withTransaction(async (client) => {
     const hco = await repo.getHcoById(principal.clinicId, hcoId, client);
     if (!hco) throw new NotFoundError('HCO');
+    assertHcoOpen(hco);
 
     if (input.territoryId) {
       const { rows } = await client.query(
@@ -883,6 +889,7 @@ export async function addHcoDepartment(
   return withTransaction(async (client) => {
     const hco = await repo.getHcoById(principal.clinicId, hcoId, client);
     if (!hco) throw new NotFoundError('HCO');
+    assertHcoOpen(hco);
 
     if (input.hcoLocationId) {
       const location = await repo.getHcoLocationById(

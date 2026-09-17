@@ -19,6 +19,8 @@ import {
   verificationExpiryFrom,
   VerificationState,
 } from './verification.js';
+import { assertHcoOpen, getHcoById } from './hco.repo.js';
+import { assertHcpOpen } from './hcp.repo.js';
 import * as repo from './hcp.repo.js';
 import type { Hcp, Specialty } from './hcp.types.js';
 
@@ -447,6 +449,9 @@ export async function setHcpVerification(
   return withTransaction(async (client) => {
     const before = await repo.getHcpForUpdate(client, principal.clinicId, id);
     if (!before) throw new NotFoundError('HCP');
+    // A resolved-away identity cannot be re-attested: the claim would be about
+    // a record nobody is supposed to use again.
+    assertHcpOpen(before);
 
     // Phase 6: the transition must be legal from where the record actually is,
     // and adequately evidenced. `before.provenance.verificationStatus` is the
@@ -612,6 +617,7 @@ export async function addIdentifier(principal: Principal, hcpId: string, raw: un
   return withTransaction(async (client) => {
     const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    assertHcpOpen(hcp);
     try {
       const identifier = await repo.insertHcpIdentifier(client, {
         clinicId: principal.clinicId,
@@ -650,11 +656,13 @@ export async function addAffiliation(principal: Principal, hcpId: string, raw: u
   return withTransaction(async (client) => {
     const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
-    const { rows } = await client.query(`SELECT 1 FROM hco WHERE id = $1 AND clinic_id = $2`, [
-      input.hcoId,
-      principal.clinicId,
-    ]);
-    if (rows.length === 0) throw new NotFoundError('HCO');
+    assertHcpOpen(hcp);
+    // The OTHER side of the relationship is checked too: affiliating someone to
+    // an organisation that has been resolved away would put the relationship on
+    // a record nobody is supposed to use again.
+    const hco = await getHcoById(principal.clinicId, input.hcoId, client);
+    if (!hco) throw new NotFoundError('HCO');
+    assertHcoOpen(hco);
 
     if (input.hcoDepartmentId) {
       // The composite FK already refuses a department belonging to a different
@@ -715,6 +723,7 @@ export async function addPracticeLocation(principal: Principal, hcpId: string, r
   return withTransaction(async (client) => {
     const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    assertHcpOpen(hcp);
     try {
       const location = await repo.insertPracticeLocation(client, {
         clinicId: principal.clinicId,
@@ -760,6 +769,7 @@ export async function addInterest(principal: Principal, hcpId: string, raw: unkn
   return withTransaction(async (client) => {
     const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    assertHcpOpen(hcp);
     await repo.insertInterest(client, {
       clinicId: principal.clinicId,
       hcpId,
@@ -781,6 +791,7 @@ export async function addSpecialtyLink(principal: Principal, hcpId: string, raw:
   return withTransaction(async (client) => {
     const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    assertHcpOpen(hcp);
     const specialty = await repo.getSpecialtyById(principal.clinicId, input.specialtyId, client);
     if (!specialty) throw new NotFoundError('Specialty');
     await repo.linkHcpSpecialty(client, {
@@ -823,6 +834,7 @@ export async function addCredential(principal: Principal, hcpId: string, raw: un
   return withTransaction(async (client) => {
     const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
     if (!hcp) throw new NotFoundError('HCP');
+    assertHcpOpen(hcp);
     try {
       const credential = await repo.insertCredential(client, {
         clinicId: principal.clinicId,
@@ -944,5 +956,87 @@ export async function sweepExpiredVerifications(principal: Principal, limit = 20
       });
     }
     return { expired: expired.length, hcpIds: expired };
+  });
+}
+
+/**
+ * Amend or CLOSE an affiliation.
+ *
+ * The missing half of `addAffiliation`. An affiliation could be created and
+ * never ended, so a physician who left a hospital stayed on its 360 and in its
+ * specialty coverage indefinitely — and because `uq_affiliation_open` keys on
+ * `end_date IS NULL`, the same affiliation could never be recorded a second
+ * time, so someone who returned after a gap was unrepresentable.
+ *
+ * Scoped like every other HCP write: `hcp:write`, the caller's territory, and a
+ * merged record is closed to it.
+ */
+export const UpdateAffiliationSchema = z
+  .object({
+    endDate: DATE_ONLY.optional(),
+    roleTitle: z.string().trim().max(120).optional(),
+    affiliationType: z
+      .enum(['primary', 'secondary', 'academic', 'consulting', 'honorary'])
+      .optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Provide at least one field to change',
+  });
+
+export async function updateAffiliation(
+  principal: Principal,
+  hcpId: string,
+  affiliationId: string,
+  raw: unknown,
+) {
+  requirePermission(principal, Permission.HCP_WRITE);
+  const input = parse(UpdateAffiliationSchema, raw, 'affiliation update');
+  if (input.roleTitle) assertFreeTextClean({ roleTitle: input.roleTitle });
+  await assertHcpInScope(principal, hcpId);
+
+  return withTransaction(async (client) => {
+    const hcp = await repo.getHcpById(principal.clinicId, hcpId, client);
+    if (!hcp) throw new NotFoundError('HCP');
+    assertHcpOpen(hcp);
+
+    const existing = await repo.getAffiliationById(principal.clinicId, affiliationId, client);
+    // Tenancy and ownership before shape: an affiliation belonging to another
+    // HCP is never confirmed to exist.
+    if (!existing || existing.hcpId !== hcpId) throw new NotFoundError('Affiliation');
+    if (input.endDate !== undefined && existing.endDate !== null) {
+      throw new ConflictError('This affiliation has already been ended', {
+        endDate: existing.endDate,
+      });
+    }
+
+    const updated = await repo.updateAffiliation(client, principal.clinicId, affiliationId, hcpId, {
+      endDate: input.endDate ?? null,
+      roleTitle: input.roleTitle ?? null,
+      affiliationType: input.affiliationType,
+    });
+    if (!updated) throw new NotFoundError('Affiliation');
+
+    await emitEvent(client, {
+      clinicId: principal.clinicId,
+      type: EventType.HCP_AFFILIATION_CHANGED,
+      subjectType: 'hcp',
+      subjectId: hcpId,
+      actorId: principal.userId,
+      payload: {
+        affiliationId,
+        hcoId: updated.hcoId,
+        endDate: updated.endDate,
+        affiliationType: updated.affiliationType,
+      },
+    });
+    await auditTx(client, {
+      clinicId: principal.clinicId,
+      actorId: principal.userId,
+      action: 'hcp.affiliation.update',
+      targetType: 'hcp',
+      targetId: hcpId,
+      metadata: { affiliationId, endDate: updated.endDate },
+    });
+    return updated;
   });
 }

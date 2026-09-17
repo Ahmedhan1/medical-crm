@@ -39,6 +39,8 @@ export const PharmaEventType = {
   // Territory & field force
   TERRITORY_CREATED: 'TERRITORY_CREATED',
   TERRITORY_ASSIGNED: 'TERRITORY_ASSIGNED',
+  /** An assignment was dated closed — territory scope revoked (not deleted). */
+  TERRITORY_ASSIGNMENT_ENDED: 'TERRITORY_ASSIGNMENT_ENDED',
   HCP_TARGETED: 'HCP_TARGETED',
   /** A representative's employment/reporting record was created or corrected. */
   FIELD_REP_PROFILE_CHANGED: 'FIELD_REP_PROFILE_CHANGED',

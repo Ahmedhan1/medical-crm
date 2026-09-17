@@ -1,4 +1,5 @@
 import { getPool, type PoolClient } from '../../db/pool.js';
+import { ConflictError } from '../../domain/errors.js';
 import { toDateString } from '../pharma/dates.js';
 import {
   mapProvenance,
@@ -73,6 +74,24 @@ interface HcoRow extends ProvenanceRow {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A merged organisation is CLOSED to new state.
+ *
+ * The HCP side had this rule on exactly one path (`updateHcp`) and the HCO side
+ * had it on none: a resolved-away organisation could still be renamed,
+ * re-verified, and given new sites, departments and identifiers — none of which
+ * the survivor would ever show. Merging only means something if the losing
+ * record stops being used.
+ */
+export function assertHcoOpen(hco: Hco): void {
+  if (hco.operatingStatus === 'merged') {
+    throw new ConflictError(
+      'This organisation was merged; act on the surviving record instead',
+      { mergedIntoHcoId: hco.mergedIntoHcoId },
+    );
+  }
 }
 
 export function mapHco(row: HcoRow): Hco {
