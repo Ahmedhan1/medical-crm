@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { isAppError } from '../domain/errors.js';
 import { getPool } from '../db/pool.js';
@@ -83,9 +84,26 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
     logger,
     trustProxy: true,
     bodyLimit: 1_000_000,
+    // Correlation id (§11 error contract). An opaque random UUID per request,
+    // NOT derived from any client-supplied header (a spoofed/attacker-chosen id
+    // would be log-injection and could collide), and NOT the sequential default
+    // (which leaks request volume and collides across instances/restarts). It
+    // carries no PHI, so it is safe to log, return in the error envelope, and put
+    // in a response header for a clinician to quote to support.
+    genReqId: () => randomUUID(),
   });
 
-  // Consistent, non-leaky error envelope for the whole API.
+  // Surface the correlation id on every response (success or error) so a client
+  // can reference it. Set on request so it is present even when a later hook or
+  // the error handler ends the response.
+  app.addHook('onRequest', async (req, reply) => {
+    reply.header('x-request-id', req.id);
+  });
+
+  // Consistent, non-leaky error envelope for the whole API. Every envelope
+  // carries `request_id` so a client-reported failure can be traced to the exact
+  // server-side log line (Fastify logs the same id as `reqId`) without exposing
+  // any internal detail or PHI.
   app.setErrorHandler(async (err, req, reply) => {
     if (isAppError(err)) {
       if (err.status >= 500) req.log.error({ err }, 'app error');
@@ -109,28 +127,45 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
         reply.header('Retry-After', String(err.retryAfterSeconds));
       }
       return reply.code(err.status).send({
-        error: { code: err.code, message: err.message, details: err.details ?? undefined },
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.details ?? undefined,
+          request_id: req.id,
+        },
       });
     }
     if (err instanceof ZodError) {
       return reply.code(400).send({
-        error: { code: 'validation_error', message: 'Invalid request', details: err.flatten() },
+        error: {
+          code: 'validation_error',
+          message: 'Invalid request',
+          details: err.flatten(),
+          request_id: req.id,
+        },
       });
     }
     if ((err as { validation?: unknown }).validation) {
       return reply.code(400).send({
-        error: { code: 'validation_error', message: (err as Error).message },
+        error: { code: 'validation_error', message: (err as Error).message, request_id: req.id },
       });
     }
     req.log.error({ err }, 'unhandled error');
-    // Never leak internals to the client.
+    // Never leak internals to the client — but give them the request id so the
+    // failure can be traced in the logs.
     return reply.code(500).send({
-      error: { code: 'internal_error', message: 'An unexpected error occurred' },
+      error: {
+        code: 'internal_error',
+        message: 'An unexpected error occurred',
+        request_id: req.id,
+      },
     });
   });
 
-  app.setNotFoundHandler((_req, reply) => {
-    reply.code(404).send({ error: { code: 'not_found', message: 'Route not found' } });
+  app.setNotFoundHandler((req, reply) => {
+    reply
+      .code(404)
+      .send({ error: { code: 'not_found', message: 'Route not found', request_id: req.id } });
   });
 
   // PHI-safe request metrics: count by method + route TEMPLATE + status class.

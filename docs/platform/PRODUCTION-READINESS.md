@@ -19,7 +19,7 @@ evidence. "Partial" = implemented + tested but incomplete for full production.
 | CI | Ready | `.github/workflows/ci.yml`: typecheck, build, migrate-from-empty, full suite (governance/security/backup/PDF) on Postgres + Playwright image | wire required-checks in repo settings | A1 |
 | PDF / Latin | Ready | Agent 2 base-14 renderer (unchanged, default) | Low | A2 |
 | PDF / Arabic (RTL) | Implemented — pending visual sign-off | Chromium+Amiri(OFL) renderer; 7 tests: glyph ink + Unicode round-trip + no `?` + multi-page; sample sent for human sign-off | flips to Ready on sign-off; adds Chromium to BOX (Phase 11) | A1 |
-| Error contract | Partial | consistent `{error:{code,message,details}}`; internals never leaked | no `request_id` yet (§11) | A1 |
+| Error contract | Ready | consistent `{error:{code,message,details,request_id}}`; internals never leaked; opaque per-request UUID on every response (`x-request-id`) and in every envelope, logged as `reqId` for traceability | Low | A1 |
 | Configuration | Ready | zod-validated fail-fast config incl. backup; prod refuses placeholder pepper | Low | A1 |
 | Frontend | Planned | none exists | n/a until Priority 5 | A1 |
 | Design system | Planned | none (no client yet) | n/a until Priority 6 | A1 |
