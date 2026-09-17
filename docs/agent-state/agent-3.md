@@ -420,3 +420,41 @@ contract — fail-closed, not hacked around): server-side promotion of a confirm
 intake draft into the clinical record (CCR-001) and any raw clinical-PHI read
 capability for AI (governed-read CCR). Both remain out of the Agent-3 production
 path by design. CCR-003/004/007/010 untouched.
+
+## Production-readiness pass (deep completion audit @ baseline I-6, 659b285)
+Full re-trace of AI core, Action Guard/tools, receptionist, automation,
+messaging, simulation, PHI, tenant/RBAC. One genuine production bug found and
+fixed; safety-critical test coverage the prompt required was added.
+
+- **CLINICAL-1 (SAFETY, HIGH) — receptionist clinical classifier under-escalated.**
+  `CLINICAL_PATTERNS` in `receptionist/intents.ts` used a TRAILING `\b` on stem
+  prefixes, so `\b(diagnos…)\b` never matched "diagnose"/"diagnosis" and
+  `\b(prescri…)\b` never matched "prescribe"/"prescription" (the stem is followed
+  by more word chars, so the trailing boundary fails). A patient asking
+  "can you diagnose me?" / "should I get this prescription?" was mis-classified
+  ADMINISTRATIVE instead of escalating — an under-escalation of a clinical
+  question, the one thing the receptionist must never do. Fix: match each
+  clinical stem as a WORD PREFIX (leading `\b`, no trailing `\b`), which also
+  catches inflections (vomit→vomiting, treat→treatment, infect→infected).
+  Over-matching only ever OVER-escalates to a human — the fail-safe direction.
+
+### Verified side-effect-free / correct (this pass)
+- `/automations/:id/simulate`: service requires AUTOMATION_READ, loads the rule
+  tenant-scoped, forces the event's clinicId to the principal's, and delegates to
+  a PURE `simulateRule` (imports only types + the pure condition evaluator — no
+  engine/messaging/scheduler/repo/kernel/db). Integration test asserts zero rows
+  added to message_log/scheduled_action after a matching-rule simulate.
+- Structured-output validator is strict/versioned/bounded, PHI-safe issues.
+- Eval runner uses synthetic fixtures, no DB, executes no real tools/actions.
+
+### Tests added
+- `ai-output-schema.test.ts`: +6 negatives (wrong type, missing required field,
+  oversized value [no echo], non-object/malformed, array-bound).
+- `ai-e5.test.ts`: receptionist adversarial suite — 8 medical categories all
+  escalate without advice, a prompt-injection + admin wrapper still escalates
+  (clinical-first), a pure booking request only proposes routing (never mutates).
+- `ai-receptionist-intents.test.ts` (new): 15 pure-function cases locking
+  CLINICAL-1 (inflected clinical terms → clinical; admin stays administrative).
+
+No new migration, no new dependency, no cross-domain change. CCR-003/004/007/010
+untouched.

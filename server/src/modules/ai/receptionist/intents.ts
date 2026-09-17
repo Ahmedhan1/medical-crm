@@ -33,13 +33,19 @@ export interface IntentClassification {
  * Clinical signals. If ANY match, the message is treated as a clinical question
  * and escalated — this list is intentionally broad and checked FIRST.
  */
+// Each clinical stem is matched as a WORD PREFIX (leading \b, NO trailing \b):
+// a trailing \b would (wrongly) require the stem to be a whole word, so
+// `diagnos\b` never matches "diagnose"/"diagnosis" and `prescri\b` never matches
+// "prescribe"/"prescription" — a dangerous under-escalation. Prefix matching also
+// covers inflections (vomit→vomiting, dizz→dizzy, treat→treatment, infect→infected).
+// Over-matching only ever OVER-escalates to a human, which is the fail-safe side.
 const CLINICAL_PATTERNS: RegExp[] = [
-  /\b(symptom|symptoms|pain|ache|aching|fever|cough|bleed|bleeding|rash|swelling|nausea|vomit|dizz|short(ness)? of breath|chest pain)\b/i,
-  /\b(diagnos|prognos|treat(ment)?|therapy|cure)\b/i,
-  /\b(prescri|medication|medicine|dose|dosage|drug|pill|tablet|antibiotic|insulin)\b/i,
-  /\b(should i (take|stop|continue)|is it safe to|side effect|allerg(y|ic))\b/i,
-  /\b(pregnan|infection|infected|blood pressure|sugar level|test results?|lab results?)\b/i,
-  /\b(feel(ing)? (sick|unwell|ill)|emergency|urgent care|worse|getting worse)\b/i,
+  /\b(symptom|pain|ache|aching|fever|cough|bleed|rash|swelling|nausea|vomit|dizz|short(ness)? of breath|chest pain)/i,
+  /\b(diagnos|prognos|treat|therap|cure)/i,
+  /\b(prescri|medication|medicine|dose|dosage|drug|pill|tablet|antibiotic|insulin)/i,
+  /\b(should i (take|stop|continue)|is it safe to|side effect|allerg(y|ic|ies))/i,
+  /\b(pregnan|infection|infected|blood pressure|sugar level|test results?|lab results?)/i,
+  /\b(feel(ing)? (sick|unwell|ill)|emergency|urgent care|worse|getting worse)/i,
 ];
 
 interface AdminRule {

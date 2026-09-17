@@ -45,6 +45,44 @@ describe('validateAiOutput — intake_extraction', () => {
     });
     expect(res.ok).toBe(false);
   });
+
+  it('rejects a wrong-typed value (number where string is required)', () => {
+    const res = validateAiOutput('intake_extraction', {
+      fields: [{ name: 'severity', value: 7 }],
+      citations: [],
+    });
+    expect(res.ok).toBe(false);
+  });
+
+  it('rejects a field missing its required value', () => {
+    const res = validateAiOutput('intake_extraction', {
+      fields: [{ name: 'notes' }],
+      citations: [],
+    });
+    expect(res.ok).toBe(false);
+  });
+
+  it('rejects an oversized value without echoing it (bounded output, PHI-safe)', () => {
+    const huge = 'x'.repeat(5000); // exceeds the 2000-char field bound
+    const res = validateAiOutput('intake_extraction', {
+      fields: [{ name: 'notes', value: huge }],
+      citations: [],
+    });
+    expect(res.ok).toBe(false);
+    const err = res as ValidationErr;
+    expect(err.issues.join(' ')).not.toContain(huge); // never echo the oversized value
+  });
+
+  it('rejects malformed (non-object) output', () => {
+    expect(validateAiOutput('intake_extraction', null).ok).toBe(false);
+    expect(validateAiOutput('intake_extraction', 'not-json').ok).toBe(false);
+    expect(validateAiOutput('intake_extraction', { fields: 'nope', citations: [] }).ok).toBe(false);
+  });
+
+  it('rejects too many fields (array bound enforced)', () => {
+    const fields = Array.from({ length: 51 }, () => ({ name: 'notes', value: 'x' }));
+    expect(validateAiOutput('intake_extraction', { fields, citations: [] }).ok).toBe(false);
+  });
 });
 
 describe('validateAiOutput — summary', () => {
