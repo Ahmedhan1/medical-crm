@@ -10,6 +10,7 @@ let clinicId: string;
 let reception: TestUser;
 let nurse: TestUser;
 let doctor: TestUser;
+let admin: TestUser;
 
 const bearer = (u: TestUser) => ({ authorization: `Bearer ${u.token}` });
 
@@ -19,6 +20,7 @@ beforeEach(async () => {
   reception = await makeUser(clinicId, 'reception', RoleKey.RECEPTION);
   nurse = await makeUser(clinicId, 'nurse', RoleKey.NURSE);
   doctor = await makeUser(clinicId, 'doctor', RoleKey.DOCTOR);
+  admin = await makeUser(clinicId, 'admin', RoleKey.ADMIN);
   app = buildServer();
   await app.ready();
 });
@@ -73,6 +75,27 @@ describe('C005 — treatment episodes', () => {
     expect(episode.endedOn).toBeNull();
     expect(episode.latestResponse).toBeNull();
     expect(episode.responseCount).toBe(0);
+  });
+
+  it('refuses to start an episode on a merged record (must use the survivor)', async () => {
+    const survivorId = await registerPatient('Survivor');
+    const duplicateId = await registerPatient('Duplicate');
+    const merge = await app.inject({
+      method: 'POST',
+      url: `/patients/${survivorId}/merge`,
+      headers: bearer(admin),
+      payload: { sourcePatientId: duplicateId, reason: 'Duplicate registration' },
+    });
+    expect(merge.statusCode).toBe(200);
+
+    // The merged record is a tombstone; a new episode must never land on it and
+    // be orphaned from the survivor's longitudinal reads.
+    const res = await startEpisode(duplicateId, { ...BASE, indication: 'Hypertension' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.details.mergedIntoId).toBe(survivorId);
+
+    // The survivor still accepts the episode.
+    expect((await startEpisode(survivorId, BASE)).statusCode).toBe(201);
   });
 
   it('tracks a longitudinal response series and reports the latest', async () => {

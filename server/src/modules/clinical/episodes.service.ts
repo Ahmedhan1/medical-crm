@@ -198,6 +198,16 @@ export async function startEpisode(
 
   const patient = await getPatientById(principal.clinicId, patientId);
   if (!patient) throw new NotFoundError('Patient');
+  // A merged record is a tombstone that points at the surviving patient; new
+  // clinical work must go there. Every sibling clinical-creation path enforces
+  // this — without it a treatment episode would be written under the merged id
+  // and orphaned from the survivor's longitudinal reads (which are not
+  // lineage-folded), never surfacing in the surviving patient's 360.
+  if (patient.status === 'merged') {
+    throw new ConflictError('This record was merged; start the episode on the surviving patient', {
+      mergedIntoId: patient.mergedIntoId,
+    });
+  }
 
   if (input.encounterId) {
     await assertEncounterBelongsToPatient(principal.clinicId, input.encounterId, patient.id);
