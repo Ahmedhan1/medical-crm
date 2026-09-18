@@ -502,3 +502,68 @@ typecheck, build, Playwright E2E (backend-mocked in-browser). WhatsApp live
 pairing NOT executed here (no live GOWA/WhatsApp in this environment) — the
 adapter contract + lifecycle are fully tested; real device pairing is the only
 live-validation dependency. No new runtime dependency; CCR-004/007/010 untouched.
+
+---
+
+## Final phase — Inventory + Pharma/CRM frontend + FHIR REST (Agent 3)
+
+Closes the remaining Agent-3-owned production gaps: an Inventory domain (not
+previously built), the Pharma/CRM frontend (backend existed, no UI), and a
+governed FHIR REST interoperability layer (mappers existed, no REST). Baseline
+b5e49e9; no E2–E5 backend reimplemented; no Agent-2 (billing/clinical) file
+touched; `server.ts` unchanged.
+
+### Inventory (backend)
+Migration `0207_inventory`: `inventory_location`, `inventory_product`
+(persisted reorder thresholds, batch/expiry flags, negative-stock escape hatch,
+billing REFERENCE metadata only — no financial tables), `inventory_batch`,
+`stock_balance` (generated `batch_key` + hard `on_hand >= 0` CHECK), append-only
+`stock_movement` ledger (RECEIVE/ISSUE/TRANSFER/ADJUSTMENT/RETURN with
+who/what/when/where/how-much/why, signed delta, idempotency key). Module: catalog
+service (products/locations/batches, permission-gated + audited), transactional
+stock service (row-lock per balance so concurrent moves cannot oversell; blocks
+negative stock and issuing an expired batch; dedupes retries), reporting
+(balances, movement history, low-stock vs persisted threshold, valuation). Routes
+under `/inventory`, registered in `pharma.feature.ts`. Permissions
+`inventory:read/manage` + `stock:receive/issue/transfer/adjust` in the pharma
+workstream; ADMIN + PHARMA_MANAGER + PHARMA_DATA_STEWARD operate stock,
+PHARMA_REP reads. 13 integration tests (incl. concurrent-issue row-lock).
+
+### FHIR REST (interoperability)
+`modules/clinical/fhir/rest.service.ts` + `http/routes/fhir.routes.ts`: governed,
+read-only R4 API — `/fhir/metadata` (CapabilityStatement), Patient read/search/
+`$everything`, patient-compartment searches (AllergyIntolerance, Observation,
+MedicationRequest, Procedure, CarePlan, ServiceRequest), Organization.
+`application/fhir+json`, OperationOutcome errors. New `fhir:read` permission
+(automation workstream; DOCTOR + ADMIN) is an ADDITIONAL gate — every read still
+goes through the existing permission-checked clinical services, so the caller
+also needs the clinical read and every load is tenant-scoped; audited. Registered
+in `automation.feature.ts` (NOT the pharma feature — that boundary forbids
+patient data). 11 integration tests.
+
+### Frontend (web)
+Three new domains via the platform registry (only the reserved `main.tsx` slot
+touched): `inventory/` (products + search + create, product detail with balances/
+batches/movements + per-action stock ops, locations, movement ledger, low-stock/
+valuation reports), `pharma/` (drug master list/detail, approved content, report
+catalog, dashboard), `crm/` (HCP directory + detail, HCO directory, field visits
+with status filter — §45: no patient data). EN + AR, RBAC-gated, all loading/
+empty/error/validation states. 9 unit tests + 3 Playwright E2E.
+
+### Pharma-boundary reconciliation (Agent-4 tests, now maintained by Agent 3)
+Extended the pharma role-grant allowlist to recognise `inventory:`/`stock:` as
+the workstream's operational namespace; added `inventory.routes.ts` to the
+audited pharma route set; updated the "FHIR unreachable" assertion (which
+anticipated this) to enforce the real invariant — FHIR is wired outside the
+pharma feature and names no pharma permission. No invariant weakened: a pharma
+role still holds no clinical/AI permission and no pharma file reaches a clinical
+table.
+
+### Validation
+Backend: full suite green; typecheck + build clean; 42 migrations from empty
+(0207 in range). Web: typecheck, 55 unit tests, production build, 10 E2E (1
+backend-only skip). Fresh-DB migration verified. No new runtime dependency. No
+patient data in inventory/pharma/CRM; FHIR never bypasses clinical security.
+Remaining: a dedicated store-keeper/pharmacist RBAC role (broader than ADMIN +
+pharma-ops) is a governance CCR for the role-owner; live FHIR against an external
+consumer is an operational validation step.
