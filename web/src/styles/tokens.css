@@ -1,0 +1,113 @@
+/*
+ * MEDCORE design tokens — one source of truth for color, spacing, typography and
+ * radius. Components reference tokens only, never raw values, so tenant branding
+ * (a clinic's primary color / logo) can be applied by overriding these variables
+ * at :root without touching component code. Dark mode redefines the same tokens.
+ * Layout uses CSS logical properties elsewhere so RTL is structural, not themed.
+ */
+:root {
+  /* Brand — overridable per tenant (branding foundation) */
+  --brand-primary: #1466b8;
+  --brand-primary-hover: #0f5299;
+  --brand-primary-contrast: #ffffff;
+  --brand-accent: #0e9f8f;
+
+  /* Neutrals / surfaces */
+  --color-bg: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f3f7;
+  --color-border: #d9e0e8;
+  --color-border-strong: #b6c1cd;
+  --color-text: #12202e;
+  --color-text-muted: #5b6b7b;
+  --color-text-inverse: #ffffff;
+
+  /* Semantic status */
+  --color-success: #1f9d55;
+  --color-success-bg: #e6f6ec;
+  --color-warning: #b7791f;
+  --color-warning-bg: #fbf3e2;
+  --color-danger: #c53030;
+  --color-danger-bg: #fbe9e9;
+  --color-info: #1466b8;
+  --color-info-bg: #e7f0fa;
+
+  /* Focus ring (accessibility) */
+  --focus-ring: 0 0 0 3px rgba(20, 102, 184, 0.4);
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans Arabic',
+    'Helvetica Neue', Arial, sans-serif;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 26px;
+  --line-tight: 1.25;
+  --line-normal: 1.5;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(18, 32, 46, 0.08);
+  --shadow-md: 0 4px 12px rgba(18, 32, 46, 0.12);
+  --shadow-lg: 0 12px 32px rgba(18, 32, 46, 0.18);
+
+  /* Layout metrics */
+  --sidebar-width: 256px;
+  --topbar-height: 56px;
+  --content-max: 1440px;
+
+  --z-drawer: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+}
+
+:root:not([data-theme='light']) {
+  @media (prefers-color-scheme: dark) {
+    --color-bg: #0d151d;
+    --color-surface: #131f2a;
+    --color-surface-2: #1b2a38;
+    --color-border: #274156;
+    --color-border-strong: #35566f;
+    --color-text: #e7eef5;
+    --color-text-muted: #9db0c2;
+    --color-success-bg: #10261a;
+    --color-warning-bg: #2a2214;
+    --color-danger-bg: #2a1616;
+    --color-info-bg: #12263a;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-bg: #0d151d;
+  --color-surface: #131f2a;
+  --color-surface-2: #1b2a38;
+  --color-border: #274156;
+  --color-border-strong: #35566f;
+  --color-text: #e7eef5;
+  --color-text-muted: #9db0c2;
+  --color-success-bg: #10261a;
+  --color-warning-bg: #2a2214;
+  --color-danger-bg: #2a1616;
+  --color-info-bg: #12263a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+}

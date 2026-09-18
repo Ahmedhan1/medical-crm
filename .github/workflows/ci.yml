@@ -1,0 +1,97 @@
+name: MEDCORE CI
+
+# Governance/security gates run mechanically on every push/PR so architectural
+# drift, PHI-log leaks, boundary breaks, dependency drift, and broken migrations
+# fail here rather than in review. (Platform / Agent 1.)
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # Playwright image ships the Chromium build matching playwright-core, so the
+    # Arabic/RTL PDF regression is exercised (not skipped) in CI.
+    container:
+      image: mcr.microsoft.com/playwright:v1.49.1-jammy
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: medcore_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      # In a job container, the service is reachable by its label as host.
+      TEST_DATABASE_URL: postgres://postgres:postgres@postgres:5432/medcore_test
+      AUTH_PEPPER: ci-pepper-0123456789-abcdef
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Migrations apply from an EMPTY database
+        # Reset via pg (no psql binary): the Playwright container ships Chromium
+        # for the PDF regression but not the Postgres client, so `psql` here fails
+        # with "psql: not found". `reset-schema.ts` performs the identical
+        # DROP/CREATE SCHEMA over the shared pool before the from-empty migrate.
+        run: |
+          DATABASE_URL="$TEST_DATABASE_URL" NODE_ENV=test npx tsx src/db/reset-schema.ts
+          DATABASE_URL="$TEST_DATABASE_URL" NODE_ENV=test npx tsx src/db/migrate.ts
+
+      # Full suite includes the governance/security gates:
+      #  - governance.test.ts  → tenant scoping, dependency allowlist, migration
+      #    ranges, append-only invariants
+      #  - phi-logging / security / rbac-roles → PHI-in-logs, RBAC, isolation
+      #  - pharma-firewall / intelligence-redteam / ai-action-kernel → boundaries
+      #  - backup.test.ts → backup/restore recovery
+      #  - pdf-arabic.test.ts → PDF regression (Chromium present in this image)
+      - name: Full test suite (governance + security + backup + PDF)
+        run: npm test
+
+      # Informational dependency-vuln scan (does not gate on transitive upstream
+      # advisories; the dependency ALLOWLIST is enforced by governance.test.ts).
+      - name: Dependency vulnerability scan (informational)
+        run: npm audit --omit=dev --audit-level=high || true
+
+  # Frontend platform (Agent 1). Separate job so it fails independently of the
+  # backend gate and never weakens it. The Playwright image already has a browser;
+  # shell E2E runs without a backend (routing/RTL/error handling/build smoke).
+  web:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.49.1-jammy
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Production build (bundle smoke)
+        run: npm run build
+      - name: Shell E2E (routing / RBAC redirect / RTL / API error)
+        run: npx playwright test e2e/shell.spec.ts

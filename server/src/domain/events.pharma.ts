@@ -1,0 +1,85 @@
+/**
+ * PHARMA / HCP / DRUG / INTELLIGENCE event types — owned by Agent 4.
+ *
+ * Domain facts for the pharma field product and the governed intelligence
+ * layer. Event payloads follow the same rule as audit metadata: they carry
+ * identifiers and shape, never patient-identifiable data — pharma events
+ * describe HCP engagement and master-data changes only (§45).
+ */
+export const PharmaEventType = {
+  // HCP / HCO master data
+  HCP_CREATED: 'HCP_CREATED',
+  HCP_UPDATED: 'HCP_UPDATED',
+  HCP_VERIFIED: 'HCP_VERIFIED',
+  /** A verification lapsed and was persisted by the expiry sweep (Phase 6). */
+  HCP_VERIFICATION_EXPIRED: 'HCP_VERIFICATION_EXPIRED',
+  HCP_MERGED: 'HCP_MERGED',
+  HCO_CREATED: 'HCO_CREATED',
+  HCO_UPDATED: 'HCO_UPDATED',
+  /** Any verification decision on an organisation, including a refusal. */
+  HCO_VERIFICATION_CHANGED: 'HCO_VERIFICATION_CHANGED',
+  /** Two organisation records resolved to one survivor. */
+  HCO_MERGED: 'HCO_MERGED',
+  HCO_LOCATION_ADDED: 'HCO_LOCATION_ADDED',
+  HCO_LOCATION_UPDATED: 'HCO_LOCATION_UPDATED',
+  /** A verification decision on a SITE, including a refusal (0313). */
+  HCO_LOCATION_VERIFICATION_CHANGED: 'HCO_LOCATION_VERIFICATION_CHANGED',
+  HCO_DEPARTMENT_ADDED: 'HCO_DEPARTMENT_ADDED',
+  HCO_DEPARTMENT_UPDATED: 'HCO_DEPARTMENT_UPDATED',
+  /** A verification decision on a DEPARTMENT, including a refusal (0313). */
+  HCO_DEPARTMENT_VERIFICATION_CHANGED: 'HCO_DEPARTMENT_VERIFICATION_CHANGED',
+  HCP_AFFILIATION_CHANGED: 'HCP_AFFILIATION_CHANGED',
+
+  // Drug / medication master
+  MEDICATION_CREATED: 'MEDICATION_CREATED',
+  MEDICATION_UPDATED: 'MEDICATION_UPDATED',
+  MEDICATION_PRODUCT_CREATED: 'MEDICATION_PRODUCT_CREATED',
+  /** A verification decision on a branded product, including a refusal (0315). */
+  MEDICATION_PRODUCT_VERIFIED: 'MEDICATION_PRODUCT_VERIFIED',
+  MEDICATION_IMPORT_COMPLETED: 'MEDICATION_IMPORT_COMPLETED',
+
+  // Territory & field force
+  TERRITORY_CREATED: 'TERRITORY_CREATED',
+  TERRITORY_ASSIGNED: 'TERRITORY_ASSIGNED',
+  /** An assignment was dated closed — territory scope revoked (not deleted). */
+  TERRITORY_ASSIGNMENT_ENDED: 'TERRITORY_ASSIGNMENT_ENDED',
+  HCP_TARGETED: 'HCP_TARGETED',
+  /** A representative's employment/reporting record was created or corrected. */
+  FIELD_REP_PROFILE_CHANGED: 'FIELD_REP_PROFILE_CHANGED',
+  VISIT_PLANNED: 'VISIT_PLANNED',
+  VISIT_COMPLETED: 'VISIT_COMPLETED',
+  VISIT_CANCELLED: 'VISIT_CANCELLED',
+  CALL_REPORT_SUBMITTED: 'CALL_REPORT_SUBMITTED',
+  SCIENTIFIC_REQUEST_CREATED: 'SCIENTIFIC_REQUEST_CREATED',
+  /** Triaged: assigned (or handed back to the queue) by medical affairs. */
+  SCIENTIFIC_REQUEST_ASSIGNED: 'SCIENTIFIC_REQUEST_ASSIGNED',
+  SCIENTIFIC_REQUEST_ANSWERED: 'SCIENTIFIC_REQUEST_ANSWERED',
+  /** A live request that missed its service level was raised a level. */
+  SCIENTIFIC_REQUEST_ESCALATED: 'SCIENTIFIC_REQUEST_ESCALATED',
+  FOLLOW_UP_CREATED: 'FOLLOW_UP_CREATED',
+  FOLLOW_UP_COMPLETED: 'FOLLOW_UP_COMPLETED',
+
+  // Approved scientific content
+  CONTENT_CREATED: 'CONTENT_CREATED',
+  CONTENT_APPROVED: 'CONTENT_APPROVED',
+  CONTENT_WITHDRAWN: 'CONTENT_WITHDRAWN',
+  CONTENT_ENGAGED: 'CONTENT_ENGAGED',
+
+  // Segmentation & campaigns
+  SEGMENT_CREATED: 'SEGMENT_CREATED',
+  SEGMENT_MEMBER_ASSIGNED: 'SEGMENT_MEMBER_ASSIGNED',
+  CAMPAIGN_CREATED: 'CAMPAIGN_CREATED',
+  CAMPAIGN_TARGET_ADDED: 'CAMPAIGN_TARGET_ADDED',
+
+  // Healthcare intelligence (firewall outcomes are themselves domain facts)
+  INTELLIGENCE_RUN_COMPLETED: 'INTELLIGENCE_RUN_COMPLETED',
+  INTELLIGENCE_SIGNAL_PUBLISHED: 'INTELLIGENCE_SIGNAL_PUBLISHED',
+  INTELLIGENCE_COHORT_SUPPRESSED: 'INTELLIGENCE_COHORT_SUPPRESSED',
+  /** A run refused by query governance (budget or narrowing depth) — Phase 29. */
+  INTELLIGENCE_QUERY_DENIED: 'INTELLIGENCE_QUERY_DENIED',
+  /**
+   * A signal moved through its governed lifecycle (0311). Payload is SHAPE
+   * only — a signal's value never travels in an event.
+   */
+  INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED: 'INTELLIGENCE_SIGNAL_LIFECYCLE_CHANGED',
+} as const;
