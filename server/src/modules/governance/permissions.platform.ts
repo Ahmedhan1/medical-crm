@@ -14,12 +14,14 @@ import { type WorkstreamPermissions } from './roles.js';
  */
 export const PlatformPermission = {
   BACKUP_MANAGE: 'backup:manage', // create/list/verify backups via the admin API
+  LICENSE_MANAGE: 'license:manage', // view license status via the admin API
 } as const;
 
 export const platformPermissions: WorkstreamPermissions = {
   permissions: PlatformPermission,
   descriptions: {
     [PlatformPermission.BACKUP_MANAGE]: 'Create, list and verify database backups',
+    [PlatformPermission.LICENSE_MANAGE]: 'View MEDCORE license status',
   },
   // No explicit roleGrants: ADMIN automatically receives every permission.
   roleGrants: {},

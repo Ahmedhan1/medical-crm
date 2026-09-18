@@ -36,3 +36,13 @@ backups/
 **/backups/
 *.dump
 *.dump.enc
+
+# Installer / operational runtime state (never commit).
+# NOTE: these match ROOT-level runtime dirs only, never the source module
+# server/src/license/ (that is application code and MUST be committed).
+install/logs/
+install/medcore.pid
+/state/
+/license/
+vendor-keys/
+*.pem

@@ -8,13 +8,17 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx src/seed.ts",
+    "seed:admin": "tsx src/seed-admin.ts",
     "backup": "tsx src/backup-cli.ts",
+    "license": "tsx src/license-cli.ts",
+    "license:issuer": "tsx src/license/issuer.ts",
+    "bootstrap": "node ../install/bootstrap.mjs",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
