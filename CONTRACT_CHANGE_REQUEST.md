@@ -45,6 +45,68 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-016 — Final-phase re-org: Agent 3 delivers Inventory + Pharma/CRM UI + FHIR REST
+- Status: PROPOSED
+- Requested by: Agent 3 (final phase)
+- Date: 2026-09-18
+- Affects: Agent 1 (orchestrator/QA — arbiter), Agent 2 (Clinical — FHIR interop
+  boundary), Agent 4 (Pharma — permission/feature/test files)
+- Contract file(s) / cross-workstream files touched:
+  - `server/src/modules/governance/permissions.pharma.ts` (Agent 4) — added
+    `inventory:read/manage` + `stock:receive/issue/transfer/adjust` and granted
+    them to ADMIN (auto) + PHARMA_MANAGER/PHARMA_DATA_STEWARD (operate) /
+    PHARMA_REP (read).
+  - `server/src/http/features/pharma.feature.ts` (Agent 4) — registered
+    `inventoryRoutes` (one `app.register` line).
+  - `server/test/integration/pharma-boundary-audit.test.ts`,
+    `pharma-escalation.test.ts` (Agent 4) — extended the role-grant namespace
+    allowlist to recognise the new `inventory:`/`stock:` operational namespace,
+    added `inventory.routes.ts` to the audited pharma route set, and updated the
+    "FHIR unreachable over HTTP" assertion (which explicitly anticipated FHIR
+    endpoints landing) to enforce "FHIR carries no pharma permission and is not
+    wired in the pharma feature".
+  - `server/src/modules/clinical/fhir/rest.service.ts` + `fhir.routes.ts`
+    (Agent 2 clinical module) — a NEW governed, read-only FHIR R4 REST layer
+    built on Agent 2's existing pure mappers; registered in Agent-3's
+    `automation.feature.ts`, gated by the new `fhir:read` permission (in
+    Agent-3's `permissions.automation.ts`) AND the existing clinical read
+    permissions (it never bypasses the clinical services).
+  - `web/src/main.tsx` — three additive domain-registration imports
+    (inventory/pharma/crm), the same coordinated per-domain pattern already
+    approved under CCR-015 for the clinical domain.
+  - New, unowned-in-§4 module `server/src/modules/inventory/**` + migration
+    `0207_inventory.sql` (Agent-3 range 0200–0299).
+- Change: the operator reassigned this final phase's ownership — Agent 3 delivers
+  Inventory (new), the Pharma/CRM frontend, and the FHIR REST interoperability
+  layer; Agent 2 takes Billing/Finance; Agent 4 audits Agent 3's work afterwards.
+  `AGENTS.md`'s §4 ownership table (Agent 3 = AI/Automation/WhatsApp; Pharma =
+  Agent 4; Clinical = Agent 2) predates this re-org and is stale for this phase.
+  This CCR records the resulting cross-workstream file touches for Agent 1 to
+  ratify at integration (and, if desired, to update the §4 table).
+- Reason: Inventory is operationally pharma-adjacent (product/stock; reuses the
+  drug master); the Pharma/CRM UI sits on Agent 4's existing pharma backend; FHIR
+  REST is clinical interop that necessarily builds on Agent 2's mappers/services.
+  Under the re-org these are all Agent-3 deliverables, so the touches follow the
+  work.
+- Backward compatibility: every touch is additive or invariant-preserving. No
+  existing endpoint/table/role changed shape; no test was skipped, disabled or
+  weakened. The pharma governance invariant is intact and still enforced (a pharma
+  role holds no clinical/AI permission; no pharma file reaches a clinical table;
+  FHIR names no pharma permission). `inventory:`/`stock:` are non-clinical,
+  non-AI operational permissions. FHIR is read-only and re-uses clinical
+  authorization. `server.ts`, the Agent-1 permission/roles/events barrels, and
+  all Agent-2 (billing/clinical logic) files are untouched.
+- Alternative if strict §4 compliance is preferred: move the inventory permission
+  definitions to `permissions.automation.ts` and register `inventoryRoutes` in
+  `automation.feature.ts` (Agent-3-owned), which reverts the pharma
+  permission/feature/test touches; only the FHIR-in-clinical touch would then
+  remain for this CCR. Agent 3 can do this on request.
+- Tests: backend full suite 1369/1369 green (incl. 13 inventory + 11 FHIR
+  integration tests and the reconciled pharma-boundary tests); web typecheck +
+  55 unit + build + 10 E2E green; 42 migrations apply from empty. CI `verify` is
+  red only on the pre-existing platform `pg_dump` backup defect (unrelated).
+- Decision (Agent 1): <pending>
+
 ### CCR-015 — Wire the Clinical frontend domain into the platform entry
 - Status: **APPROVED — implemented at v1 release integration** (Agent 1 added the
   single `import './domains/clinical/register.js'` to `web/src/main.tsx`; additive,
