@@ -38,6 +38,19 @@ const EnvSchema = z.object({
   BACKUP_RETAIN_DAILY: z.coerce.number().int().nonnegative().default(7),
   BACKUP_RETAIN_WEEKLY: z.coerce.number().int().nonnegative().default(4),
   BACKUP_RETAIN_MONTHLY: z.coerce.number().int().nonnegative().default(3),
+
+  // --- WhatsApp / GOWA provider (Agent 3) ---
+  // Base URL of the local GOWA (go-whatsapp-web-multidevice) HTTP bridge. When
+  // unset, the WhatsApp channel falls back to the local no-op provider so the
+  // BOX runs offline with zero external dependency. GOWA is expected to run on
+  // the same box; the URL is deployment config, not per-clinic data.
+  WHATSAPP_GOWA_BASE_URL: z.string().url().optional(),
+  // GOWA HTTP basic-auth credential ("user:pass"). A SECRET: read only here,
+  // passed to the adapter in memory, NEVER stored in the DB, returned by an API,
+  // sent to the frontend, or written to a log.
+  WHATSAPP_GOWA_BASIC_AUTH: z.string().min(3).optional(),
+  // Per-request timeout (ms) for GOWA HTTP calls.
+  WHATSAPP_GOWA_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 export interface BackupConfig {
@@ -55,6 +68,15 @@ export interface AuthThrottleConfig {
   ipMaxPerMinute: number;
 }
 
+export interface WhatsAppConfig {
+  /** true when a GOWA base URL is configured (the channel is live, not no-op). */
+  enabled: boolean;
+  baseUrl?: string;
+  /** Secret — present in memory only, never surfaced by any API/log. */
+  basicAuth?: string;
+  timeoutMs: number;
+}
+
 export type AppConfig = {
   nodeEnv: 'development' | 'test' | 'production';
   host: string;
@@ -65,6 +87,7 @@ export type AppConfig = {
   qrTtlSeconds: number;
   backup: BackupConfig;
   authThrottle: AuthThrottleConfig;
+  whatsapp: WhatsAppConfig;
 };
 
 let cached: AppConfig | null = null;
@@ -108,6 +131,12 @@ export function loadConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfi
       windowSeconds: env.LOGIN_WINDOW_SECONDS,
       lockoutSeconds: env.LOGIN_LOCKOUT_SECONDS,
       ipMaxPerMinute: env.LOGIN_IP_MAX_PER_MINUTE,
+    },
+    whatsapp: {
+      enabled: env.WHATSAPP_GOWA_BASE_URL !== undefined,
+      baseUrl: env.WHATSAPP_GOWA_BASE_URL,
+      basicAuth: env.WHATSAPP_GOWA_BASIC_AUTH,
+      timeoutMs: env.WHATSAPP_GOWA_TIMEOUT_MS,
     },
   };
 }

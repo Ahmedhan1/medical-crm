@@ -12,7 +12,9 @@ import './styles/global.css';
 // see docs/platform/FRONTEND-INTEGRATION.md). Each domain self-registers its nav,
 // routes and i18n via the platform extension points — no other shared-file edits.
 import './domains/clinical/register.js'; // CCR-015 (Agent 2 clinical UX)
-// import './domains/ai/register.js';     // reserved: Agent 3
+import './domains/ai/register.js';         // Agent 3 — review-first AI UX
+import './domains/automation/register.js'; // Agent 3 — automation engine UX
+import './domains/messaging/register.js';  // Agent 3 — WhatsApp setup + consent
 // import './domains/pharma/register.js';  // reserved: Agent 4
 
 const root = document.getElementById('root');
