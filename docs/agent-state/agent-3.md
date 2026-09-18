@@ -458,3 +458,47 @@ fixed; safety-critical test coverage the prompt required was added.
 
 No new migration, no new dependency, no cross-domain change. CCR-003/004/007/010
 untouched.
+
+## Product Closure (v1.0.0-rc1 baseline @ 43dcdc5)
+Product-closure batch: customer-facing WhatsApp/GOWA workflow + operator UI for
+the existing automation, messaging and review-first AI engines. Backend E2–E5
+was NOT reimplemented; this adds the missing product surface on top of it.
+
+### Backend — WhatsApp / GOWA (behind the provider abstraction)
+- `providers/whatsapp/gowa.provider.ts`: GOWA (go-whatsapp-web-multidevice)
+  adapter implementing `MessagingProvider.send` + a `WhatsAppLifecycle`
+  (beginPairing/deviceStatus/disconnect) over an INJECTABLE HTTP transport, so
+  the adapter contract is unit-tested without a live pairing. GOWA API
+  assumptions are isolated + documented in that one file. Never logs/persists the
+  message body, recipient, QR payload, or the basic-auth credential; failures map
+  to generic codes.
+- `providers/whatsapp/registry.ts`: wires GOWA from config; unconfigured → the
+  box keeps the local no-op provider (offline-capable, deterministic tests).
+- `whatsapp.service.ts` + `whatsapp.routes.ts`: status/pair/reconnect/disconnect,
+  MESSAGING-permission gated, clinic-scoped, audited. Migration `0206`
+  (`whatsapp_connection`) stores connection STATE only (masked device number,
+  generic error code) — no credentials, no QR, no bodies. GOWA base URL +
+  basic-auth are env/secret-manager config (`WHATSAPP_GOWA_*`), never in DB or
+  frontend. Consent is still enforced at delivery (opted-out never reaches GOWA).
+
+### Frontend (web/) — three Agent-3 domains, RBAC-filtered, EN+AR
+- `automation/`: rule list, create (event→send_message), enable/disable, rule
+  version, dry-run (no side effects), execution history, failed/dead-letter view
+  with cancel, message delivery log with retry, and quiet-hours/frequency-cap +
+  consent visibility.
+- `ai/`: review-first drafts (intake + summary) with validation state, evidence,
+  and human confirm/reject (with a visible "does NOT write clinical data"
+  notice); AI receptionist console (clinical questions escalate, never answered);
+  AI evaluation health ledger.
+- `messaging/`: WhatsApp setup (status, transient QR pairing, reconnect,
+  disconnect) + patient consent lookup. No credential or message content shown.
+- Registered via the reserved Agent-3 slot in `web/src/main.tsx` (nav orders
+  20/21/22) — no other shared-file edits.
+
+### Validation
+Backend: full suite, typecheck, build, 41 migrations from empty, GOWA adapter +
+lifecycle + consent-at-delivery + tenant-isolation tests. Frontend: 46 unit tests,
+typecheck, build, Playwright E2E (backend-mocked in-browser). WhatsApp live
+pairing NOT executed here (no live GOWA/WhatsApp in this environment) — the
+adapter contract + lifecycle are fully tested; real device pairing is the only
+live-validation dependency. No new runtime dependency; CCR-004/007/010 untouched.
