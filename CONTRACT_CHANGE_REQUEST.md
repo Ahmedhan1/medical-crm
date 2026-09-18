@@ -45,6 +45,49 @@ inside your own feature module; adding a new table in your migration range.
 
 ## Requests
 
+### CCR-016 — Wire in the Billing/Finance workstream (Agent 2)
+- Status: PROPOSED
+- Requested by: Agent 2 (Finance)
+- Date: 2026-09-18
+- Affects: Agent 1 (platform barrels, server bootstrap, governance test), Agent 2 (Finance)
+- Contract file(s) touched (all minimal + additive + backward compatible):
+  1. `server/src/modules/governance/permissions.ts` — merge the new
+     `billingPermissions` module into the `Permission` catalog and `WORKSTREAMS`
+     (three additive lines: import + spread + array entry). New permission keys
+     only; grants go to existing roles (RECEPTION operational, DOCTOR read;
+     ADMIN auto). No RoleKey added, no existing grant changed.
+  2. `server/src/domain/events.ts` — merge `BillingEventType` into the `EventType`
+     union (import + spread). Seven new event types, no existing type changed.
+  3. `server/src/http/server.ts` — `app.register(billingFeature)` (one line),
+     mirroring how the other four features are registered. `server.ts` otherwise
+     unchanged.
+  4. `server/test/platform/governance.test.ts` — declare the reserved migration
+     range `[400, 499, 'billing/finance']` so the new workstream's migrations
+     (0400+) satisfy the "within a reserved range" invariant. The test still
+     enforces uniqueness and range membership — only the registry grew.
+  5. `web/src/main.tsx` — ONE side-effect import in the domain-registration block:
+     `import './domains/finance/register.js';` (the single per-domain line from
+     `docs/platform/FRONTEND-INTEGRATION.md`, like CCR-015). Not yet applied by
+     Agent 2 — this is the platform coordination point.
+- Reason: Billing/Finance is a brand-new workstream. The permission/event catalogs
+  and the HTTP bootstrap are Agent-1-owned barrels whose stated purpose is exactly
+  to "wire in a brand-new workstream module"; a new workstream cannot exist without
+  these additive registrations. The migration-range registry and the frontend entry
+  are the analogous registration points.
+- Backward compatibility: every change is purely additive. No existing permission,
+  role grant, event type, route, migration or test assertion is modified or removed.
+  Billing uses a distinct migration range (0400s), a distinct `/finance/*` route
+  prefix and nav band (40s), and touches no clinical/AI/pharma table or file, so it
+  cannot collide with or regress another workstream. Reverting the five additions
+  fully removes the workstream.
+- Tests: backend billing suite — `test/integration/billing.test.ts` (invoice
+  lifecycle, payments, overpayment/duplicate/idempotency, void/reverse, tenant
+  isolation, reports, audit-no-PHI, DB immutability) + `test/unit/billing-money.test.ts`
+  (integer money maths). Governance/RBAC/security/pharma-firewall suites stay green
+  (116). Frontend finance suite (registration, list, dashboard, money format).
+  Full backend suite, web suite, typecheck, build, fresh migration all green.
+- Decision (Agent 1): <pending>
+
 ### CCR-015 — Wire the Clinical frontend domain into the platform entry
 - Status: **APPROVED — implemented at v1 release integration** (Agent 1 added the
   single `import './domains/clinical/register.js'` to `web/src/main.tsx`; additive,

@@ -12,6 +12,7 @@ import { foundationFeature } from './features/foundation.feature.js';
 import { clinicalFeature } from './features/clinical.feature.js';
 import { automationFeature } from './features/automation.feature.js';
 import { pharmaFeature } from './features/pharma.feature.js';
+import { billingFeature } from './features/billing.feature.js';
 
 /**
  * Request-log serializer (CCR-002, governance rule 9: never put PHI in logs).
@@ -268,6 +269,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   app.register(clinicalFeature); // Agent 2
   app.register(automationFeature); // Agent 3
   app.register(pharmaFeature); // Agent 4
+  app.register(billingFeature); // Agent 2 (Finance)
 
   return app;
 }

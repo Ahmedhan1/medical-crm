@@ -16,6 +16,7 @@ import { platformPermissions, PlatformPermission } from './permissions.platform.
 import { clinicalPermissions, ClinicalPermission } from './permissions.clinical.js';
 import { automationPermissions, AutomationPermission } from './permissions.automation.js';
 import { pharmaPermissions, PharmaPermission } from './permissions.pharma.js';
+import { billingPermissions, BillingPermission } from './permissions.billing.js';
 
 export { RoleKey } from './roles.js';
 
@@ -25,6 +26,7 @@ export const Permission = {
   ...ClinicalPermission,
   ...AutomationPermission,
   ...PharmaPermission,
+  ...BillingPermission,
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];
@@ -34,6 +36,7 @@ const WORKSTREAMS: WorkstreamPermissions[] = [
   clinicalPermissions,
   automationPermissions,
   pharmaPermissions,
+  billingPermissions,
 ];
 
 export const PERMISSION_DESCRIPTIONS: Record<string, string> = Object.assign(

@@ -76,6 +76,7 @@ describe('governance — migration integrity', () => {
     [100, 199, 'clinical'],
     [200, 299, 'automation'],
     [300, 399, 'pharma'],
+    [400, 499, 'billing/finance'],
     [900, 999, 'platform cross-cutting'],
   ];
 
