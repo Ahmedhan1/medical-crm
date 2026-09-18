@@ -1,6 +1,45 @@
 # Agent 4 — Pharma / HCP / HCO / Drug / Medical Affairs / Intelligence — State
 
-## Current Status — PRODUCTION-READINESS PASS DONE
+## Current Status — COMPLETION AUDIT (2026-09-18): NO NEW GAP
+Branch `claude/jolly-carson-8t7ufe` @ HEAD. A fresh completion audit of the whole
+Pharma domain against the MEDCORE scope, run with Agent 3 frozen. Every named
+area was checked against current code, not against prior reports.
+
+**Result: no new production-blocking or governance-critical gap.** No code
+change this pass; the branch was re-verified green on a fresh checkout:
+**1241 tests, 0 skipped**, typecheck, build, fresh-from-empty migration and the
+existing-data upgrade migration all clean; firewall static scan, cross-workstream
+import scan and invariants (`ABSOLUTE_MIN_COHORT = 5`, `available: false`,
+`CHECK (complementary_suppression)`) all intact; `0307`–`0312` byte-identical to
+`aa337a5`.
+
+### Named-area audit
+| Area | Status |
+| --- | --- |
+| HCO / site / department verification endpoints | done (0313) — verify + patch + history on `/hco-locations` and `/hco-departments`; sweep covers all three entities |
+| Signal decision / audit trail | done (0314) — append-only `aggregated_signal_event`, every transition attributed |
+| Intelligence lifecycle consistency | done — no direct edge to `published`; self-approval blocked in service and by `signal_no_self_approval`; derived expiry; withdrawal retained |
+| HCP / HCO verification consistency | done — HCP, HCO, sites, departments, medication and product all drive `pharma_effective_verification` through the one shared lifecycle module |
+| Field-force authorization edge cases | done — ownership vs territory split (`assertVisitOwnership` / `assertVisitReadable`), institutional-visit read hole closed, hierarchy cycle-guarded |
+| Medical Affairs lifecycle / SLA edge cases | done — SLA clock from ask-time, breach derived, escalation only when breached, unexplained-close refused, separation of duties |
+| Reporting / export governance edge cases | done — authorize→scope→cap→allow-list→receipt; HCO directory added last pass; effective-lifecycle filtering |
+
+### Intentionally NOT built (documented, per the audit rule)
+Sub-records — `hcp_credential`, `hcp_identifier`, `hco_identifier`,
+`hcp_practice_location`, `hcp_hco_affiliation` — each carry a `verification_status`
+column (part of the shared provenance shape) with no per-record verify endpoint.
+This is deliberate, not a schema-only omission like the 0315 product case was:
+there is **no documented MEDCORE invariant** that a single credential or
+identifier has an independent review workflow. Each defaults to `unverified`,
+nothing sets it, so it always reads back truthfully; a sub-record inherits trust
+from its master record's verification plus its own `source` / `source_date`
+provenance. The 0315 product WAS built because 0315 stated an explicit invariant
+— a registration is withdrawn independently of the molecule. No such invariant
+exists here, so adding the endpoints would be speculative feature-work, which
+this pass's scope forbids. Revisit only if a scope requirement for per-sub-record
+attestation is stated.
+
+## Previous status — production-readiness pass
 Branch `claude/jolly-carson-8t7ufe`. A final production-readiness audit of the
 whole Pharma surface. Every previously-flagged item was verified against current
 code; eight of nine were already implemented and the ninth — the HCO directory
