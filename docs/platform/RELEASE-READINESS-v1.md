@@ -1,5 +1,30 @@
 # MEDCORE v1 — Release Readiness Report
 
+## Final integration gate (2026-09-18)
+All three completed domain deliverables are on `integration/medcore-v1`:
+- **Agent 2** (`0259f51` / `agent2/clinical-final-hardening`): the four P1 clinical
+  fixes (0114 append-only vitals/observations, encounter-cancel→appointment sync,
+  Patient 360 `recentVitals`, merged-patient treatment-episode guard) are all
+  present and verified; the final audit commit added no new code.
+- **Agent 3** (`b5e49e9`, cherry-picked as `28c6bec`): GOWA WhatsApp provider
+  (config-driven, no-op when unconfigured), `0206_whatsapp_connection` (clinic-
+  scoped, no credentials/QR/message bodies), WhatsApp status/pair/reconnect/
+  disconnect routes, consent-gated delivery, and the AI / Automation / Messaging
+  frontend domains (EN+AR). No new runtime dependency.
+- **Agent 4** (`be1c8f5`): pharma/HCP/intelligence 0307–0315 already integrated;
+  the new commits are docs-only.
+
+**Gate:** backend 1344 tests / 92 files (0 failed / 0 skipped); web 46 unit / 14
+files; web E2E 7 passed / 1 correctly skipped (auth needs a live backend);
+typecheck + build clean (server + web); 41 migrations apply empty → 108 tables
+(order 0001 / 0100–0114 / 0200–0206 / 0300–0315 / 0900–0901); backup → verify →
+restore round-trips 108 tables (incl. `whatsapp_connection`). Security/PHI/cross-
+domain audits clean; cohort floor = 5, CCR-004 fail-closed, Action Guard, Pharma
+Firewall, tenant/territory isolation intact. **GOWA is NOT live-validated** — real
+pairing is a deployment validation step, not a code gate.
+
+
+
 Owner: Agent 1 (Chief Integration & Release). Every item marked **Complete** is
 verified by code and tests in this repository; nothing is marked Complete on
 intent alone.
