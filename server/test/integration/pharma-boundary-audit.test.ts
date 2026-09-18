@@ -67,6 +67,10 @@ const PHARMA_ROUTE_FILES = new Set([
   'medication.routes.ts',
   'pharma-content.routes.ts',
   'pharma-reporting.routes.ts',
+  // Inventory/stock control (Agent 3) is registered in the pharma feature: it is
+  // operational product data with no patient/clinical content, so it is audited
+  // here on the same boundary as the rest of pharma.
+  'inventory.routes.ts',
   'pharma.feature.ts',
 ]);
 const PHARMA_MODULES = ALL_FILES.filter(
@@ -134,14 +138,21 @@ describe('boundary — Pharma cannot reach Clinical', () => {
     }
   });
 
-  it('the FHIR mappers are not reachable over HTTP at all', () => {
-    // They map Patient, Encounter, Observation, MedicationRequest and more. No
-    // route file references them, so today they cannot be an access path for
-    // anyone — pharma included. Recorded for Agent 2: when FHIR endpoints do
-    // land, no pharma permission may appear in their authorization.
-    const routeFiles = ALL_FILES.filter((f) => /http\/(routes|features)\//.test(f));
-    for (const file of routeFiles) {
-      expect(read(file).toLowerCase(), `${file} references fhir`).not.toContain('fhir');
+  it('FHIR REST is exposed outside the pharma feature and never via a pharma permission', () => {
+    // FHIR REST now exists (Agent 3): a governed, read-only R4 API. The prior
+    // assertion (FHIR unreachable over HTTP at all) anticipated exactly this and
+    // recorded the real invariant to hold once endpoints landed — no pharma
+    // permission may appear in their authorization. Enforce that: FHIR is wired
+    // in the automation feature, NOT the pharma feature, and neither the FHIR
+    // routes nor the FHIR service names any pharma permission, so a pharma role
+    // can never reach clinical data through FHIR.
+    expect(read(join(SRC, 'http/features/pharma.feature.ts')).toLowerCase(), 'pharma feature wires fhir').not.toContain('fhir');
+    const pharmaPerms = Object.values(pharmaPermissions.permissions);
+    for (const rel of ['http/routes/fhir.routes.ts', 'modules/clinical/fhir/rest.service.ts']) {
+      const src = read(join(SRC, rel));
+      for (const perm of pharmaPerms) {
+        expect(src.includes(`'${perm}'`), `${rel} references pharma permission ${perm}`).toBe(false);
+      }
     }
   });
 
@@ -155,6 +166,10 @@ describe('boundary — Pharma cannot reach Clinical', () => {
     const pharmaPrefixes = [
       'hcp:', 'hco:', 'medication:', 'territory:', 'visit:', 'callreport:',
       'scientificrequest:', 'content:', 'segment:', 'campaign:', 'intelligence:', 'pharma:',
+      // inventory:/stock: — the pharma workstream's operational (non-clinical)
+      // stock-control namespace. The reverse check below still guarantees the
+      // clinical/automation/platform grant files never name any of these.
+      'inventory:', 'stock:',
     ];
     for (const role of pharmaRoles) {
       const grants = (pharmaPermissions.roleGrants[role] ?? []) as string[];

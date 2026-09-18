@@ -148,12 +148,17 @@ describe('escalation — the account itself', () => {
   it('a rep holds NO clinical permission of any kind', async () => {
     const repGrants = pharmaPermissions.roleGrants[RoleKey.PHARMA_REP] as string[];
     for (const permission of repGrants) {
+      // inventory:/stock: are the OPERATIONAL (non-clinical, non-AI) namespace of
+      // the pharma workstream (stock control). Allowing them keeps this test's
+      // real invariant — a pharma role never holds a clinical or AI permission —
+      // exactly as strict; it only recognises the workstream's new namespace.
       expect(permission.startsWith('hcp:') || permission.startsWith('hco:') ||
         permission.startsWith('medication:') || permission.startsWith('territory:') ||
         permission.startsWith('visit:') || permission.startsWith('callreport:') ||
         permission.startsWith('scientificrequest:') || permission.startsWith('content:') ||
         permission.startsWith('segment:') || permission.startsWith('campaign:') ||
-        permission.startsWith('intelligence:') || permission.startsWith('pharma:')).toBe(true);
+        permission.startsWith('intelligence:') || permission.startsWith('pharma:') ||
+        permission.startsWith('inventory:') || permission.startsWith('stock:')).toBe(true);
     }
   });
 
