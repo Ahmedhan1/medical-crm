@@ -15,7 +15,9 @@ import './domains/clinical/register.js'; // CCR-015 (Agent 2 clinical UX)
 import './domains/ai/register.js';         // Agent 3 — review-first AI UX
 import './domains/automation/register.js'; // Agent 3 — automation engine UX
 import './domains/messaging/register.js';  // Agent 3 — WhatsApp setup + consent
-// import './domains/pharma/register.js';  // reserved: Agent 4
+import './domains/inventory/register.js';  // Agent 3 — inventory / stock control
+import './domains/pharma/register.js';     // Agent 3 — pharma (drug master, content, reporting)
+import './domains/crm/register.js';        // Agent 3 — CRM (HCP/HCO, visits)
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing #root');

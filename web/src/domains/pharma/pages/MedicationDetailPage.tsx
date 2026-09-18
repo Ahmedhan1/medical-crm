@@ -1,0 +1,43 @@
+import { useNavigate, useParams } from 'react-router-dom';
+import { PageHeader } from '../../../components/layout/PageHeader.js';
+import { Button, Badge, Card, ErrorState, Skeleton } from '../../../components/ui/index.js';
+import { useI18n } from '../../../lib/i18n/I18nContext.js';
+import { useQuery } from '../../../lib/api/useQuery.js';
+import { getMedication, type Medication } from '../api/pharma.js';
+
+export function MedicationDetailPage(): JSX.Element {
+  const { id = '' } = useParams();
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const query = useQuery<Medication & Record<string, unknown>>((s) => getMedication(id, s), [id]);
+
+  const row = (label: string, value: string | null | undefined): JSX.Element => (
+    <div style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--mc-border, #eee)' }}>
+      <span style={{ minWidth: 140, color: 'var(--mc-muted, #666)' }}>{label}</span>
+      <span>{value || t('ph.meds.none')}</span>
+    </div>
+  );
+
+  return (
+    <div>
+      <PageHeader
+        title={query.data?.genericName ?? t('ph.meds.title')}
+        actions={<Button variant="ghost" onClick={() => navigate('/pharma/medications')}>{t('ph.meds.back')}</Button>}
+      />
+      <Card>
+        {query.loading ? <Skeleton height={120} /> : query.error ? (
+          <ErrorState title={t('ph.err.load')} body={query.error.message} onRetry={query.refetch} retryLabel={t('common.retry')} />
+        ) : query.data ? (
+          <div>
+            {row(t('ph.meds.detail.atc'), query.data.atcCode)}
+            {row(t('ph.meds.detail.area'), query.data.therapeuticArea)}
+            <div style={{ display: 'flex', gap: 8, padding: '6px 0' }}>
+              <span style={{ minWidth: 140, color: 'var(--mc-muted, #666)' }}>{t('ph.meds.detail.verification')}</span>
+              <Badge tone={query.data.verificationStatus === 'verified' ? 'success' : 'neutral'}>{query.data.verificationStatus}</Badge>
+            </div>
+          </div>
+        ) : null}
+      </Card>
+    </div>
+  );
+}

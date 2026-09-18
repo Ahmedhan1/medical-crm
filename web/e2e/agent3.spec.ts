@@ -8,7 +8,7 @@ import { expect, test, type Page } from '@playwright/test';
  * opt-in via MEDCORE_E2E_BACKEND (see playwright.config.ts).
  */
 
-const PERMS = ['automation:read', 'automation:manage', 'messaging:read', 'messaging:manage', 'ai:draft-review', 'ai:eval-run', 'ai:receptionist'];
+const PERMS = ['automation:read', 'automation:manage', 'messaging:read', 'messaging:manage', 'ai:draft-review', 'ai:eval-run', 'ai:receptionist', 'inventory:read', 'inventory:manage', 'stock:receive', 'hcp:read', 'hco:read', 'visit:read', 'medication:read', 'content:read'];
 
 function json(body: unknown, status = 200) {
   return { status, contentType: 'application/json', body: JSON.stringify(body) };
@@ -52,4 +52,30 @@ test('WhatsApp setup shows a not-configured state offline', async ({ page }) => 
   });
   await page.goto('/messaging/whatsapp');
   await expect(page.getByText(/WhatsApp is not configured/i)).toBeVisible();
+});
+
+test('inventory products page lists a product from the API', async ({ page }) => {
+  await mockBackend(page, {
+    '/inventory/products': { products: [{ id: 'p1', sku: 'GLOVE-M', name: 'Gloves M', category: 'supplies', unitOfMeasure: 'unit', medicationProductId: null, isBatchTracked: false, isExpiryTracked: false, blockExpiredIssue: true, allowNegativeStock: false, reorderThreshold: 20, reorderQuantity: null, isBillable: false, billingCode: null, unitPrice: null, unitCost: null, isActive: true, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }] },
+  });
+  await page.goto('/inventory/products');
+  await expect(page.getByText('Gloves M')).toBeVisible();
+  await expect(page.getByText('GLOVE-M')).toBeVisible();
+});
+
+test('CRM professionals page lists an HCP from the API', async ({ page }) => {
+  await mockBackend(page, {
+    '/hcps': { results: [{ id: 'h1', fullName: 'Sara Ali', title: 'Dr', professionalCategory: 'physician', primarySpecialtyId: null, professionalEmail: 'sara@example.com', professionalPhone: null, status: 'active' }] },
+  });
+  await page.goto('/crm/hcps');
+  await expect(page.getByText('Dr Sara Ali')).toBeVisible();
+});
+
+test('pharma medications page lists the drug master', async ({ page }) => {
+  await mockBackend(page, {
+    '/medications': { results: [{ id: 'm1', genericName: 'Metformin', atcCode: 'A10BA02', therapeuticArea: 'diabetes', verificationStatus: 'verified' }] },
+  });
+  await page.goto('/pharma/medications');
+  await expect(page.getByText('Metformin')).toBeVisible();
+  await expect(page.getByText('A10BA02')).toBeVisible();
 });
