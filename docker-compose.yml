@@ -1,0 +1,58 @@
+# MEDCORE — single-host production stack (MEDCORE BOX / server).
+#
+#   1. cp .env.docker.example .env      # then set real secrets
+#   2. docker compose up -d --build
+#   3. docker compose exec api npm run seed:admin   # one-time admin (prints password)
+#   4. open http://localhost:8080/
+#
+# Data lives in named volumes so it survives image rebuilds/upgrades. Secrets come
+# from the environment/.env, never baked into an image.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medcore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-medcore}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-medcore}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-medcore}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-medcore}
+      AUTH_PEPPER: ${AUTH_PEPPER:?set AUTH_PEPPER in .env}
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      LICENSE_DIR: /data/license
+      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:-}
+      WHATSAPP_GOWA_BASE_URL: ${WHATSAPP_GOWA_BASE_URL:-}
+      WHATSAPP_GOWA_BASIC_AUTH: ${WHATSAPP_GOWA_BASIC_AUTH:-}
+    volumes:
+      - medcore-state:/data
+    # No host port by default — the web tier is the only public surface.
+    expose: ['4000']
+
+  web:
+    build: { context: ., dockerfile: web/Dockerfile }
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_started }
+    ports:
+      - '${MEDCORE_HTTP_PORT:-8080}:80'
+
+volumes:
+  db-data:
+  medcore-state:

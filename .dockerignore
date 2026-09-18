@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+**/.git
+**/.env
+**/.env.*
+**/coverage
+**/test-results
+**/playwright-report
+**/.playwright
+install/logs
+state
+license
+vendor-keys
+*.pem
+*.dump
+*.dump.enc
+**/*.log
