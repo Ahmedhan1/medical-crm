@@ -87,6 +87,20 @@ export const PharmaPermission = {
   INTELLIGENCE_SIGNAL_READ: 'intelligence:signal-read',
   /** Run the firewall pipeline and publish signals — a governance action. */
   INTELLIGENCE_PUBLISH: 'intelligence:publish',
+
+  // --- Inventory / stock control (Agent 3) ----------------------------------
+  // Inventory is operational stock, not patient/clinical data, so it lives with
+  // the pharma/product workstream. Reading stock is separate from mutating it,
+  // and each kind of stock mutation is its own permission so least-privilege can
+  // be applied (a receiving clerk need not be allowed to issue or adjust).
+  INVENTORY_READ: 'inventory:read',
+  /** Create/update products, locations and batches (the catalog). */
+  INVENTORY_MANAGE: 'inventory:manage',
+  STOCK_RECEIVE: 'stock:receive',
+  STOCK_ISSUE: 'stock:issue',
+  STOCK_TRANSFER: 'stock:transfer',
+  /** Correct on-hand up or down with a reason — the most sensitive stock action. */
+  STOCK_ADJUST: 'stock:adjust',
 } as const;
 
 export const pharmaPermissions: WorkstreamPermissions = {
@@ -124,6 +138,12 @@ export const pharmaPermissions: WorkstreamPermissions = {
       'Export pharma/HCP data in bulk (required in addition to the relevant read permission)',
     [PharmaPermission.INTELLIGENCE_SIGNAL_READ]: 'Read published aggregated intelligence signals',
     [PharmaPermission.INTELLIGENCE_PUBLISH]: 'Run the intelligence firewall and publish signals',
+    [PharmaPermission.INVENTORY_READ]: 'View inventory products, stock levels, batches and movements',
+    [PharmaPermission.INVENTORY_MANAGE]: 'Create or update inventory products, locations and batches',
+    [PharmaPermission.STOCK_RECEIVE]: 'Receive stock into a location',
+    [PharmaPermission.STOCK_ISSUE]: 'Issue/consume stock from a location',
+    [PharmaPermission.STOCK_TRANSFER]: 'Transfer stock between locations',
+    [PharmaPermission.STOCK_ADJUST]: 'Adjust on-hand stock with a reason',
   },
   roleGrants: {
     // The field representative: HCP engagement workflow and read access to
@@ -145,6 +165,8 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.SEGMENT_READ,
       PharmaPermission.CAMPAIGN_READ,
       PharmaPermission.INTELLIGENCE_SIGNAL_READ,
+      // A rep can see what is in stock, but never move it.
+      PharmaPermission.INVENTORY_READ,
     ],
 
     // Data steward: HCP/HCO/medication master stewardship (verify, merge, write).
@@ -163,6 +185,13 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.MEDICATION_READ,
       PharmaPermission.MEDICATION_WRITE,
       PharmaPermission.MEDICATION_VERIFY,
+      // Stock stewardship: manage the catalog and operate stock.
+      PharmaPermission.INVENTORY_READ,
+      PharmaPermission.INVENTORY_MANAGE,
+      PharmaPermission.STOCK_RECEIVE,
+      PharmaPermission.STOCK_ISSUE,
+      PharmaPermission.STOCK_TRANSFER,
+      PharmaPermission.STOCK_ADJUST,
     ],
 
     // Medical affairs: scientific content lifecycle and scientific-request
@@ -208,6 +237,13 @@ export const pharmaPermissions: WorkstreamPermissions = {
       PharmaPermission.CAMPAIGN_MANAGE,
       PharmaPermission.INTELLIGENCE_SIGNAL_READ,
       PharmaPermission.INTELLIGENCE_PUBLISH,
+      // Full operational control of inventory and stock.
+      PharmaPermission.INVENTORY_READ,
+      PharmaPermission.INVENTORY_MANAGE,
+      PharmaPermission.STOCK_RECEIVE,
+      PharmaPermission.STOCK_ISSUE,
+      PharmaPermission.STOCK_TRANSFER,
+      PharmaPermission.STOCK_ADJUST,
     ],
   },
 };
