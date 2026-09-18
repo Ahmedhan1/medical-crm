@@ -19,7 +19,7 @@ async function newPatient(user: TestUser = reception, name = 'Billing Patient'):
   return res.json().id;
 }
 
-async function draftInvoice(patientId: string, items: unknown[], user: TestUser = reception) {
+async function draftInvoice(patientId: string, items: object[], user: TestUser = reception) {
   return app.inject({ method: 'POST', url: '/invoices', headers: bearer(user), payload: { patientId, items } });
 }
 
@@ -139,7 +139,7 @@ describe('Billing — payments', () => {
     await app.inject({ method: 'POST', url: `/invoices/${inv.id}/issue`, headers: bearer(reception) });
     return inv.id as string;
   }
-  const pay = (id: string, body: unknown, user: TestUser = reception) =>
+  const pay = (id: string, body: object, user: TestUser = reception) =>
     app.inject({ method: 'POST', url: `/invoices/${id}/payments`, headers: bearer(user), payload: body });
 
   it('records a partial payment then settles to paid', async () => {

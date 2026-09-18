@@ -18,6 +18,7 @@ import './domains/messaging/register.js';  // Agent 3 — WhatsApp setup + conse
 import './domains/inventory/register.js';  // Agent 3 — inventory / stock control
 import './domains/pharma/register.js';     // Agent 3 — pharma (drug master, content, reporting)
 import './domains/crm/register.js';        // Agent 3 — CRM (HCP/HCO, visits)
+import './domains/finance/register.js';    // CCR-016 (Agent 2 billing/finance UX)
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing #root');
