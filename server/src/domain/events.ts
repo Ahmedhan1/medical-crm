@@ -2,6 +2,7 @@ import type { PoolClient } from '../db/pool.js';
 import { ClinicalEventType } from './events.clinical.js';
 import { AutomationEventType } from './events.automation.js';
 import { PharmaEventType } from './events.pharma.js';
+import { BillingEventType } from './events.billing.js';
 
 /**
  * Event catalog BARREL — owned by Agent 1 (Foundation).
@@ -16,6 +17,7 @@ export const EventType = {
   ...ClinicalEventType,
   ...AutomationEventType,
   ...PharmaEventType,
+  ...BillingEventType,
 } as const;
 
 export type EventType = (typeof EventType)[keyof typeof EventType];
