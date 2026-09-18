@@ -10,6 +10,20 @@ live in the integrated branch.
 Suite: **534 tests / 40 files green.** Typecheck, build and a from-empty
 migration run (18 migrations) all clean.
 
+### Final Clinical Completion + Hardening Audit (on `agent2/clinical-final-hardening`)
+A further FINAL audit pass over the entire clinical surface against baseline
+`659b285`, re-verifying the areas probed least in earlier passes — the internal
+FHIR mappers (every domain status for Encounter/Observation/Allergy/
+MedicationRequest/Condition/ServiceRequest/Procedure/CarePlan maps to a valid
+FHIR code, none falls through to `unknown`; terminology is passed through, never
+invented) and audit/event coverage (every clinical service that writes also
+audits). **No new gaps found** — the four P1 defects fixed in Phase 1 remain the
+complete set of genuine issues on this baseline. No code changes were made this
+pass. Re-validated on the identical tree: **835 tests / 65 files green (0 failed,
+0 skipped, sharded); typecheck + build clean; from-empty migration (31, incl.
+0114) clean; backup→verify→restore round-trip green.** Clinical Core:
+PRODUCTION-READY.
+
 ### Phase 1 — Clinical Production Finalization (on `agent2/clinical-phase1-final`)
 Production-final audit of the entire Clinical Core against baseline
 `integration/medcore-v1 @ 659b285`. Four genuine P1 defects fixed (below);
