@@ -37,6 +37,13 @@ export const AutomationPermission = {
   // E5 batch.
   AI_RECEPTIONIST_USE: 'ai:receptionist', // use the administrative AI receptionist
   AI_EVAL_RUN: 'ai:eval-run', // run the AI evaluation suite
+
+  // FHIR interoperability (Agent 3). An ADDITIONAL gate on the governed FHIR
+  // REST API — it does NOT widen access: every FHIR read still goes through the
+  // clinical service that owns the data, so the caller also needs that clinical
+  // read permission (patient:read, observation:read, …). This permission only
+  // decides who may use the interoperability surface at all.
+  FHIR_READ: 'fhir:read',
 } as const;
 
 export const automationPermissions: WorkstreamPermissions = {
@@ -56,6 +63,7 @@ export const automationPermissions: WorkstreamPermissions = {
     [AutomationPermission.AI_ACTION_CONFIRM]: 'Confirm a pending AI action requiring human approval',
     [AutomationPermission.AI_RECEPTIONIST_USE]: 'Use the administrative AI receptionist (non-clinical)',
     [AutomationPermission.AI_EVAL_RUN]: 'Run the AI evaluation suite over synthetic fixtures',
+    [AutomationPermission.FHIR_READ]: 'Use the FHIR interoperability API (in addition to the relevant clinical read permission)',
   },
   roleGrants: {
     // Front desk: sends reminders, captures consent, starts AI intake drafts,
@@ -74,11 +82,13 @@ export const automationPermissions: WorkstreamPermissions = {
       AutomationPermission.AI_DRAFT_REVIEW,
       AutomationPermission.AI_SUMMARY_GENERATE,
     ],
-    // Physician: reviews clinical AI drafts and generates summaries.
+    // Physician: reviews clinical AI drafts, generates summaries, and may use
+    // the FHIR interoperability API (still bounded by their clinical reads).
     [RoleKey.DOCTOR]: [
       AutomationPermission.MESSAGING_READ,
       AutomationPermission.AI_DRAFT_REVIEW,
       AutomationPermission.AI_SUMMARY_GENERATE,
+      AutomationPermission.FHIR_READ,
     ],
   },
 };
